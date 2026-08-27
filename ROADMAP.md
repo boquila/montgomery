@@ -60,6 +60,14 @@ max-detection behavior is implemented, and validation is expanded beyond one par
 
 ## GPU inference path (draft)
 
+Status (2026-08): the initial burn-wgpu path has landed. `gpu = ["burn-wgpu", ...]` (Vulkan, WGSL,
+and Metal shader compilers), the runtime (`Predictor`, `RuntimeModel`, `EndToEndDetector`,
+`run_end_to_end`) is generic over the backend, the CLI selects `--device cpu|gpu` and reports the
+chosen adapter and graphics API, and GPU latency tests mirror the CPU harness. Detections are
+numerically identical to CPU on the reference image. Still open from this draft: batched inference
+(where GPUs should win big), f16 GPU compute, per-backend golden-fixture parity, CI smoke tests,
+and moving preprocessing onto the GPU.
+
 The Flex CPU path is the supported baseline. The first GPU target should make inference meaningfully
 faster without forking the model graphs or the public API. This is a draft; nothing here is
 committed until the M1 backend-selection work starts.
