@@ -10,6 +10,9 @@ task explicitly targets the sibling vendored projects.
   body, split DFL head, native Burnpack loading, and version metadata.
 - `src/models/yolov10/`: experimental YOLOv10n implementation, including the C2f/SCDown/SPPF/PSA/
   C2fCIB body, NMS-free one2one head, native Burnpack loading, and version metadata.
+- `src/models/yolo26/`: experimental YOLO26n implementation, including the C3k2/residual-SPPF/C2PSA
+  body with an attention P5 stage, DFL-free NMS-free end-to-end head, native Burnpack loading, and
+  version metadata.
 - `src/data/letterbox.rs`: model-specific preprocessing and reversible source-image geometry.
 - `src/lib.rs`: `ModelId`, `Predictor`, detection results, NMS integration, and weight packing API.
 - `src/main.rs`: the `predict` and `pack-weights` CLI commands.
@@ -34,6 +37,10 @@ cargo run --release -- predict --model yolov3-tinyu --weights target/yolov3-tiny
 python tools/export_ultralytics_state.py yolov10n.pt target/yolov10n-state.pt
 cargo run --release -- pack-weights --model yolov10n --input target/yolov10n-state.pt --output target/yolov10n-coco-ultralytics-v8.4-boquilens-v1.bpk
 cargo run --release -- predict --model yolov10n --weights target/yolov10n-coco-ultralytics-v8.4-boquilens-v1.bpk --source assets/dog_bike_man.jpg
+
+python tools/export_ultralytics_state.py yolo26n.pt target/yolo26n-state.pt
+cargo run --release -- pack-weights --model yolo26n --input target/yolo26n-state.pt --output target/yolo26n-coco-ultralytics-v8.4-boquilens-v1.bpk
+cargo run --release -- predict --model yolo26n --weights target/yolo26n-coco-ultralytics-v8.4-boquilens-v1.bpk --source assets/dog_bike_man.jpg
 ```
 
 Python/PyTorch is a development-time conversion dependency only. Normal inference is Rust/Burn.
@@ -55,8 +62,8 @@ When the external checkpoint and fixtures are present, also run the ignored pari
 cargo test --locked -- --ignored
 ```
 
-Regenerate those fixtures with `tools/export_ultralytics_fixtures.py`. Generated checkpoints,
-fixtures, images, and build output belong under `target/` and must not be committed.
+Regenerate those fixtures with the per-model `tools/export_*_fixtures.py` scripts. Generated
+checkpoints, fixtures, images, and build output belong under `target/` and must not be committed.
 
 ## Invariants
 
@@ -65,7 +72,9 @@ fixtures, images, and build output belong under `target/` and must not be commit
 - YOLOX uses its existing top-left/raw-pixel transform. The Ultralytics-family models use
   Ultralytics-style stride-aligned rectangular letterboxing and RGB values normalized to `[0, 1]`.
 - YOLOv10n is NMS-free: its one2one head output is top-300 selected and confidence-filtered like
-  Ultralytics' end-to-end postprocess, not passed through non-maximum suppression.
+  Ultralytics' end-to-end postprocess, not passed through non-maximum suppression. YOLO26n shares
+  that postprocess and is additionally DFL-free: the box tower emits the four XYXY side distances
+  directly, decoded anchor-relative and scaled by the feature strides.
 - Keep model graph code independent of CLI, filesystem, rendering, and image decoding.
 - Keep `ModelId` and CLI model names synchronized when adding a model.
 - Preserve the explicit stable/experimental distinction in user-facing docs.
@@ -81,5 +90,4 @@ Artifacts derived from them inherit AGPL-3.0. Keep provenance and license statem
 ## Scope direction
 
 The next product work is a native weight distribution channel, `max_detections`, batching, and
-YOLOX training/loss parity. Do not jump to YOLO26 until the current model/engine abstractions and
-licensing decision are settled.
+YOLOX training/loss parity.

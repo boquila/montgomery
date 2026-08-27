@@ -1,112 +1,65 @@
 # boquilens
 
-`boquilens` is an object-detection MVP in pure Rust, powered by
-[Burn](https://burn.dev). It runs **YOLOX-Nano** with pretrained COCO-80 weights and now has
-experimental native **YOLOv3-Tiny-Ultralytics** (`yolov3-tinyu`) and **YOLOv10n** (`yolov10n`)
-inference paths. It provides both a Rust API and a command-line program.
+Object detection in pure Rust, powered by [Burn](https://burn.dev). The full inference path—model
+graph, preprocessing, decoding, and post-processing—runs natively in Rust with no Python, PyTorch,
+or ONNX Runtime.
 
-The model forward pass, box decoding, confidence filtering, and class-aware non-maximum suppression
-run through Rust/Burn. Python, PyTorch, and ONNX Runtime are not runtime dependencies.
+![Detections drawn by boquilens on the bundled sample image](assets/dog_bike_man-detections.png)
 
-## Run it
+## Models
 
-Requirements: a current stable Rust toolchain and network access on the first run to cache the
-pretrained weights.
+Every model runs **object detection** on COCO-80 classes at 640 px input. The only runtime mode is
+**Predict** (via the CLI and the Rust API); training and validation are out of scope. Experimental
+models additionally support a one-time `pack-weights` conversion into boquilens' native Burnpack
+format.
+
+| Model         | Status       | Task   | Modes                  | nano | tiny | n | s | m | l | x | Weights                                  |
+| ------------- | ------------ | ------ | ---------------------- | ---- | ---- | - | - | - | - | - | ---------------------------------------- |
+| YOLOX-Nano    | stable       | Detect | Predict                | ✓    | —    | — | — | — | — | — | official `.pth`, auto-downloaded         |
+| YOLOv3-Tiny-U | experimental | Detect | Predict                | —    | ✓    | — | — | — | — | — | one-time `.bpk` pack                     |
+| YOLOv10n      | experimental | Detect | Predict                | —    | —    | ✓ | — | — | — | — | one-time `.bpk` pack                     |
+| YOLO26n       | experimental | Detect | Predict                | —    | —    | ✓ | — | — | — | — | one-time `.bpk` pack                     |
+
+One variant per model today; the remaining scales are future work. YOLOX ships Apache-2.0 weights
+downloaded from the official release. Ultralytics-family weights are AGPL-3.0, and the native
+artifacts derived from them inherit that license (see [NOTICE](NOTICE)).
+
+Verified v1 artifacts:
+
+| Model         | Bytes      | SHA-256                                                            |
+| ------------- | ---------: | ------------------------------------------------------------------ |
+| yolov3-tinyu  | 24,411,296 | `52AD28C04D234F500387E9C874A52447F6A107490968BF9A23C653DDCB14DBBA` |
+| yolov10n      |  4,779,424 | `8A672F4924F52E89F7DF95C689C66CF157A96674CE1ADF3C2CF6A025D5C9C44B` |
+| yolo26n       |  5,016,992 | `5FB09D89850E2ECB75C0580893239DEF9BB130E95A228FB319675F267B5B24C6` |
+
+### Preparing experimental weights
+
+One-time conversion of an official Ultralytics checkpoint (Python is a conversion-time dependency
+only); substitute the model name for `yolov3-tinyu` or `yolov10n`:
+
+```console
+python -m pip install torch ultralytics
+python -c "from ultralytics import YOLO; YOLO('yolo26n.pt')"
+python tools/export_ultralytics_state.py yolo26n.pt target/yolo26n-state.pt
+cargo run --release -- pack-weights --model yolo26n --input target/yolo26n-state.pt --output target/yolo26n-coco-ultralytics-v8.4-boquilens-v1.bpk
+```
+
+After that, inference only needs the `.bpk` artifact and Rust.
+
+## Usage
 
 ```console
 cargo run --release -- predict --model yolox-nano --source assets/dog_bike_man.jpg
+cargo run --release -- predict --model yolo26n --weights target/yolo26n-coco-ultralytics-v8.4-boquilens-v1.bpk --source image.jpg --json --confidence 0.30
+cargo run -- --help
 ```
 
-The command prints detections and saves `assets/dog_bike_man-detections.png`. For your own image and
-machine-readable output:
+Detections are printed as a table or JSON and an annotated PNG is written next to the input
+(`--output` overrides). Boxes are unnormalized, continuous `XYXY` pixel edges in the original
+source image, clipped to its bounds and sorted by confidence; the JSON output carries matching
+coordinate metadata.
 
-```console
-cargo run --release -- predict --model yolox-nano --source path/to/image.jpg --json --confidence 0.30 --iou 0.45
-```
-
-Use `--output result.png` to choose the annotated image path. Run `cargo run -- --help` for all
-options. An already-downloaded official-format checkpoint can be selected with
-`--weights path/to/yolox_nano.pth`; official downloads are SHA-256 verified before loading.
-
-### Experimental YOLOv3-Tiny-U inference
-
-`yolov3-tinyu` was chosen as the smallest practical Ultralytics port: it has a short two-scale
-backbone while exercising the same anchor-free, objectness-free split head and DFL box decode used
-by newer Ultralytics detectors. The body, head, decode, preprocessing, and NMS execute in
-Rust/Burn—there is no Python runtime or ONNX Runtime in the inference path.
-
-Full Ultralytics `.pt` files contain pickled Python model objects that Burn cannot safely import.
-Artifact maintainers perform the Python extraction once, then pack the result into boquilens'
-versioned native Burnpack format:
-
-```console
-python -m pip install torch ultralytics
-python -c "from ultralytics import YOLO; YOLO('yolov3-tinyu.pt')"
-python tools/export_ultralytics_state.py yolov3-tinyu.pt target/yolov3-tinyu-state.pt
-cargo run --release -- pack-weights --model yolov3-tinyu --input target/yolov3-tinyu-state.pt --output target/yolov3-tinyu-coco-ultralytics-v8.4-boquilens-v1.bpk
-cargo run --release -- predict --model yolov3-tinyu --weights target/yolov3-tinyu-coco-ultralytics-v8.4-boquilens-v1.bpk --source assets/dog_bike_man.jpg
-```
-
-The resulting v1 artifact is 24,411,296 bytes. The verified local release candidate has SHA-256
-`52AD28C04D234F500387E9C874A52447F6A107490968BF9A23C653DDCB14DBBA`; the CLI prints the size and
-checksum whenever it packs an artifact. Normal loading and inference use only the `.bpk` file and
-Rust/Burn. No distribution URL is wired in yet; the publishing channel is the remaining step, not a
-licensing one.
-
-Golden tests now compare P4/P5 body features, raw regression/classification outputs, DFL-decoded
-XYXY boxes, and decoded scores against tensors generated by Ultralytics. On identical preprocessed
-pixels they pass at tight numerical tolerances. The native resize path matches OpenCV-style
-half-pixel geometry with mean absolute pixel error about 0.107 and maximum error 2; on the bundled
-image the final boxes differ from the Ultralytics reference by less than one source pixel while
-returning the same person, dog, and bicycle detections.
-
-Ultralytics states that its trained models, including these official weights, are AGPL-3.0 by
-default. boquilens is now also AGPL-3.0, so the weights and the derived native artifacts can be
-redistributed under the same license. The checkpoint is still external and is not bundled with
-boquilens until a publishing channel exists. See [NOTICE](NOTICE).
-
-### Experimental YOLOv10n inference
-
-`yolov10n` is the first Ultralytics-family model with the modern architecture stack: C2f blocks,
-SCDown separable downsampling, SPPF, position-sensitive attention (PSA), and a C2fCIB neck, all
-implemented as native Burn modules. Only the NMS-free **one2one** head branch is implemented, which
-is exactly the branch official Ultralytics inference decodes; the training-only one2many branch is
-not loaded. Because the one2one head is trained to be NMS-free, predictions are selected by
-top-300 score and filtered by confidence, mirroring Ultralytics' end-to-end postprocess—no
-non-maximum suppression runs.
-
-The weight workflow matches the YOLOv3-Tiny-U one:
-
-```console
-python -m pip install torch ultralytics
-python -c "from ultralytics import YOLO; YOLO('yolov10n.pt')"
-python tools/export_ultralytics_state.py yolov10n.pt target/yolov10n-state.pt
-cargo run --release -- pack-weights --model yolov10n --input target/yolov10n-state.pt --output target/yolov10n-coco-ultralytics-v8.4-boquilens-v1.bpk
-cargo run --release -- predict --model yolov10n --weights target/yolov10n-coco-ultralytics-v8.4-boquilens-v1.bpk --source assets/dog_bike_man.jpg
-```
-
-The resulting v1 artifact is 4,779,424 bytes. The verified local release candidate has SHA-256
-`8A672F4924F52E89F7DF95C689C66CF157A96674CE1ADF3C2CF6A025D5C9C44B`. On the bundled image the
-native path detects the same person, dog, and bicycle as Ultralytics with confidences within 0.1%
-and final boxes within one source pixel. The artifact inherits the AGPL-3.0 license of the official
-checkpoint; see [NOTICE](NOTICE).
-
-## Output coordinates
-
-Detection boxes are **unnormalized `XYXY` coordinates in pixels of the original source image**:
-
-```text
-[xmin, ymin, xmax, ymax]
-```
-
-The values are continuous box edges, not integer pixel indices. The origin is the image's top-left
-outer corner. `(xmin, ymin)` is the top-left edge and `(xmax, ymax)` is the bottom-right edge;
-`xmax == image_width` and `ymax == image_height` are valid. Coordinates are mapped back through the
-model-specific letterbox transform and clipped to `[0, width] × [0, height]`. They are never
-normalized. Human-readable output labels these values
-`xyxy_px`; JSON includes `coordinate_format`, `coordinate_units`, and `coordinate_space` metadata.
-
-## Rust API
+### Rust API
 
 ```rust,no_run
 use boquilens::{PredictOptions, Predictor};
@@ -121,62 +74,36 @@ fn main() -> boquilens::Result<()> {
 }
 ```
 
-## MVP scope
+## Performance
 
-Included now:
-
-- YOLOX-Nano inference with official COCO pretrained weights
-- a boquilens-owned native Burn implementation of the backbone, neck, head, decode, and NMS
-- Burn flexible backend (uses the best available supported runtime)
-- JPEG, PNG, and WebP inputs
-- COCO labels, JSON output, confidence filtering, and class-aware NMS
-- checksum-verified official downloads and explicit local checkpoint paths
-- annotated image output
-- experimental native YOLOv3-Tiny-U body, split head, DFL decode, golden parity fixtures, and
-  versioned Burnpack weights
-- experimental native YOLOv10n body (C2f, SCDown, SPPF, PSA, C2fCIB), NMS-free one2one head, DFL
-  decode, golden parity fixtures, and versioned Burnpack weights
-
-Deliberately deferred:
-
-- training and fine-tuning
-- YOLO26 and other modern model ports
-- batching, video, streams, and richer source ingestion
-- letterboxing and production-grade augmentation/preprocessing
-- GPU benchmarking and deployment packaging
-
-YOLOX remains the permissively licensed stable slice. YOLOv3-Tiny-U was the smaller architecture
-probe for the Ultralytics model family; YOLOv10n extends the same approach to the modern
-architecture stack. Neither introduces an external Rust YOLO crate, but use of Ultralytics
-checkpoints has separate licensing obligations.
-
-See [ROADMAP.md](ROADMAP.md) for the staged path from this vertical slice to a training-capable,
-multi-model toolkit.
+- **CPU today.** Single-image, batch-1, 640 px inference through Burn's Flex backend on the CPU.
+  This is the supported and tested path.
+- **GPU not yet.** Burn ships GPU backends, but boquilens has not wired, benchmarked, or packaged
+  them; the CLI currently runs wherever the Flex backend runs.
+- **Numbers at release.** Latency and throughput benchmarks (CPU and GPU, per model) will be
+  published with the first release; treat nothing in this README as a benchmark.
 
 ## Development
 
 ```console
 cargo fmt --check
-cargo test
-cargo clippy --all-targets -- -D warnings
+cargo test --locked
+cargo clippy --locked --all-targets -- -D warnings
+cargo check --locked --no-default-features --lib
 ```
 
-To regenerate and execute the external Ultralytics parity fixtures:
+Golden parity fixtures are generated per model against the official Ultralytics checkpoints and
+consumed by the ignored tests:
 
 ```console
-python tools/export_ultralytics_fixtures.py target/yolov3-tinyu.pt assets/dog_bike_man.jpg target
-cargo test matches_ultralytics_golden_tensors -- --ignored
-cargo test measures_ultralytics_preprocessing_fixture_parity -- --ignored
-python tools/export_yolov10_fixtures.py target/yolov10n.pt assets/dog_bike_man.jpg target
-cargo test yolov10 -- --ignored
+python tools/export_yolo26_fixtures.py target/yolo26n.pt assets/dog_bike_man.jpg target
+cargo test --locked -- --ignored
 ```
 
-`cargo check --no-default-features --lib` also verifies that the native architecture can be built
-without the weight downloader/importer.
+See [AGENTS.md](AGENTS.md) for the full model-porting workflow and invariants.
 
 ## License
 
-boquilens is licensed under [AGPL-3.0](LICENSE). The YOLOX path was adapted from Apache-2.0 code
-([LICENSE-APACHE](LICENSE-APACHE)), and the YOLOX architecture plus its official pretrained weights
-are Apache-2.0. Ultralytics architectures and official checkpoints are AGPL-3.0, which is now the
-project license as well. See [NOTICE](NOTICE) for full provenance.
+boquilens is [AGPL-3.0](LICENSE). The YOLOX path derives from Apache-2.0 code
+([LICENSE-APACHE](LICENSE-APACHE)) and uses official Apache-2.0 weights; Ultralytics architectures
+and checkpoints are AGPL-3.0. Full provenance in [NOTICE](NOTICE).

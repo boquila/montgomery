@@ -47,7 +47,7 @@ struct PredictArgs {
     #[arg(long)]
     source: PathBuf,
 
-    /// Model architecture and scale to run: yolox-nano, yolov3-tinyu, or yolov10n.
+    /// Model architecture and scale to run: yolox-nano, yolov3-tinyu, yolov10n, or yolo26n.
     #[arg(long)]
     model: ModelId,
 
