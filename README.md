@@ -87,12 +87,46 @@ fn main() -> boquilens::Result<()> {
 
 ## Performance
 
-- **CPU today.** Single-image, batch-1, 640 px inference through Burn's Flex backend on the CPU.
-  This is the supported and tested path.
-- **GPU not yet.** Burn ships GPU backends, but boquilens has not wired, benchmarked, or packaged
-  them; the CLI currently runs wherever the Flex backend runs.
-- **Numbers at release.** Latency and throughput benchmarks (CPU and GPU, per model) will be
-  published with the first release; treat nothing in this README as a benchmark.
+Single-image, batch-1 inference at 640 px input: model forward, head decode, and result sync, on
+Burn's Flex CPU backend in release mode. Artifacts store f16 weights that are upcast and computed in
+f32. Each number is the median of 10 timed runs after 3 warmup runs, measured sequentially (one test
+at a time) via:
+
+```console
+cargo test --locked --release measures_single_inference_latency -- --ignored --nocapture --test-threads 1
+```
+
+The Ultralytics column is the official PyTorch runtime on the same machine and methodology
+(batch 1, 640 px, fp32 CPU, fused conv+bn, 16 torch threads, 3 warmups + 10 timed runs), measured
+with the development-only tool:
+
+```console
+& target\.venv\Scripts\python.exe tools\bench_ultralytics_cpu.py target\yolov10n.pt ...
+```
+
+Reference machine: AMD Ryzen 9 9950X3D (16C/32T), 32 GB RAM, Windows 11. Absolute numbers move with
+hardware and library releases; treat them as a relative scale across variants, not a benchmark claim.
+
+| Model    | boquilens (ms) | Ultralytics PyTorch (ms) | Ratio |
+| -------- | -------------: | -----------------------: | ----: |
+| yolov10n |          129.1 |                     19.0 |  6.8x |
+| yolov10s |          241.0 |                     32.1 |  7.5x |
+| yolov10m |          454.7 |                     62.8 |  7.2x |
+| yolov10b |          594.0 |                     88.4 |  6.7x |
+| yolov10l |          735.7 |                    122.2 |  6.0x |
+| yolov10x |          939.6 |                    169.8 |  5.5x |
+| yolo26n  |          116.2 |                     22.5 |  5.2x |
+| yolo26s  |          237.1 |                     42.9 |  5.5x |
+| yolo26m  |          478.0 |                     85.2 |  5.6x |
+| yolo26l  |          619.3 |                    109.7 |  5.6x |
+| yolo26x  |          975.2 |                    196.8 |  5.0x |
+
+- **CPU today.** The numbers above are the supported and tested path: Burn's Flex backend on the
+  CPU. Preprocessing and top-k postprocessing are not included and add a small constant per image.
+  Flex currently trails fused PyTorch CPU inference by roughly 5-7.5x; closing that gap (kernel
+  fusion, threading) is CPU engineering work on top of Burn, independent of the model graphs.
+- **GPU next.** Burn ships GPU backends; the draft path (burn-wgpu over Vulkan/Metal/DX12, with
+  burn-cuda as a later NVIDIA-only option) is sketched in [ROADMAP.md](ROADMAP.md).
 
 ## Development
 

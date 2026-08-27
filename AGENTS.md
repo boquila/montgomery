@@ -21,7 +21,8 @@ end.
 - `src/data/letterbox.rs`: model-specific preprocessing and reversible source-image geometry.
 - `src/lib.rs`: `ModelId`, `Predictor`, detection results, NMS integration, and weight packing API.
 - `src/main.rs`: the `predict` and `pack-weights` CLI commands.
-- `tools/`: development-only Ultralytics checkpoint conversion and golden-fixture generators.
+- `tools/`: development-only Ultralytics checkpoint conversion, golden-fixture generators, and the
+  PyTorch CPU benchmark used for the README performance comparison.
 
 ## Fast path
 
@@ -63,6 +64,18 @@ When the external checkpoint and fixtures are present, also run the ignored pari
 ```console
 cargo test --locked -- --ignored
 ```
+
+Single-image batch-1 inference latency per variant (release build, Flex CPU backend, writes the
+numbers used by the README's performance table):
+
+```console
+cargo test --locked --release measures_single_inference_latency -- --ignored --nocapture --test-threads 1
+```
+
+The `--test-threads 1` flag is load-bearing: the parallel default makes the latency tests contend
+for CPU and inflates the medians. The README compares those numbers against the official PyTorch
+runtime measured with `tools/bench_ultralytics_cpu.py` (same machine, same methodology, fused
+conv+bn) using the conversion venv.
 
 Regenerate those fixtures with the per-family `tools/export_{ultralytics,yolov10,yolo26}_fixtures.py`
 scripts, passing `--model <id>` to select the detect scale. Generated checkpoints, fixtures, images,

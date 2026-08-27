@@ -684,6 +684,62 @@ mod tests {
         };
     }
 
+    macro_rules! latency_test {
+        ($fn_name:ident, $config:ty, $id:literal) => {
+            /// Measure single-image batch-1 inference latency (forward, decode, and result sync)
+            /// with the packed native artifact on the Flex CPU backend. Run with
+            /// `cargo test --release <id> -- --ignored --nocapture` after the weight-prep loop.
+            #[test]
+            #[ignore]
+            fn $fn_name() {
+                let checkpoint = std::path::PathBuf::from(format!(
+                    "target/{}-coco-ultralytics-v8.4-boquilens-v1.bpk",
+                    $id
+                ));
+                assert!(
+                    checkpoint.exists(),
+                    "pack the {} artifact with pack-weights first",
+                    $id
+                );
+                let worker = std::thread::Builder::new()
+                    .stack_size(64 * 1024 * 1024)
+                    .spawn(move || {
+                        let device = Default::default();
+                        let mut model = <$config>::default().init::<Flex>(&device);
+                        model.load_burnpack_weights(checkpoint).unwrap();
+                        let input = Tensor::<Flex, 4>::zeros([1, 3, 640, 640], &device);
+                        const WARMUP_RUNS: usize = 3;
+                        const TIMED_RUNS: usize = 10;
+
+                        for _ in 0..WARMUP_RUNS {
+                            let output = model.forward(input.clone());
+                            let _ = output.boxes.sum().into_data();
+                            let _ = output.scores.sum().into_data();
+                        }
+                        let mut samples = Vec::with_capacity(TIMED_RUNS);
+                        for _ in 0..TIMED_RUNS {
+                            let started = std::time::Instant::now();
+                            let output = model.forward(input.clone());
+                            // Force result completion so the sample includes the full compute, not
+                            // just kernel dispatch (a no-op on CPU, load-bearing on GPU).
+                            let _ = output.boxes.sum().into_data();
+                            let _ = output.scores.sum().into_data();
+                            samples.push(started.elapsed().as_secs_f64() * 1e3);
+                        }
+                        samples.sort_by(|a, b| a.total_cmp(b));
+                        let median = samples[samples.len() / 2];
+                        let min = samples[0];
+                        println!(
+                            "{:>9}: {:>7.1} ms median, {:>7.1} ms min  (single image, batch 1, 640 px, {TIMED_RUNS} runs)",
+                            $id, median, min,
+                        );
+                    })
+                    .unwrap();
+                worker.join().unwrap();
+            }
+        };
+    }
+
     checkpoint_test!(
         yolov10n_imports_official_checkpoint_and_runs_forward,
         Yolov10NConfig,
@@ -742,6 +798,37 @@ mod tests {
     );
     golden_test!(
         yolov10x_matches_ultralytics_golden_tensors,
+        Yolov10XConfig,
+        "yolov10x"
+    );
+
+    latency_test!(
+        yolov10n_measures_single_inference_latency,
+        Yolov10NConfig,
+        "yolov10n"
+    );
+    latency_test!(
+        yolov10s_measures_single_inference_latency,
+        Yolov10SConfig,
+        "yolov10s"
+    );
+    latency_test!(
+        yolov10m_measures_single_inference_latency,
+        Yolov10MConfig,
+        "yolov10m"
+    );
+    latency_test!(
+        yolov10b_measures_single_inference_latency,
+        Yolov10BConfig,
+        "yolov10b"
+    );
+    latency_test!(
+        yolov10l_measures_single_inference_latency,
+        Yolov10LConfig,
+        "yolov10l"
+    );
+    latency_test!(
+        yolov10x_measures_single_inference_latency,
         Yolov10XConfig,
         "yolov10x"
     );

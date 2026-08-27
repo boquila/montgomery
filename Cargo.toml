@@ -8,11 +8,13 @@ license = "AGPL-3.0"
 [features]
 default = ["pretrained"]
 pretrained = ["burn/network", "dep:burn-store", "dep:dirs", "dep:sha2"]
+gpu = ["burn/wgpu", "dep:burn-wgpu"]
 
 [dependencies]
 burn = { version = "=0.21.0-pre.4", default-features = false }
 burn-flex = "=0.21.0-pre.4"
 burn-store = { version = "=0.21.0-pre.4", default-features = false, features = ["std", "pytorch", "burnpack", "memmap"], optional = true }
+burn-wgpu = { version = "=0.21.0-pre.4", optional = true }
 clap = { version = "4", features = ["derive"] }
 dirs = { version = "6", optional = true }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }

@@ -58,6 +58,58 @@ max-detection behavior is implemented, and validation is expanded beyond one par
   engine.
 - Publish the library and CLI from a reproducible lockfile; add Windows/Linux/macOS CI.
 
+## GPU inference path (draft)
+
+The Flex CPU path is the supported baseline. The first GPU target should make inference meaningfully
+faster without forking the model graphs or the public API. This is a draft; nothing here is
+committed until the M1 backend-selection work starts.
+
+### Backend choice
+
+Recommendation: **burn-wgpu** (the WebGPU stack) first — not raw Vulkan, not CUDA.
+
+- Burn has no raw-Vulkan backend. The Vulkan path in Burn *is* burn-wgpu: wgpu runs on Vulkan on
+  Windows and Linux, Metal on macOS, and falls back to DX12/GL, all from one Rust codebase.
+- burn-wgpu is cross-vendor (NVIDIA, AMD, Intel), needs no proprietary SDK or redistributable
+  runtime, and the same code later opens a WebGPU/wasm target.
+- burn-cuda (CubeCL/CUDA) is the peak-throughput option for NVIDIA-only deployments, but it couples
+  the build to the CUDA toolkit and splits the artifact/binary matrix. Revisit only if measured
+  wgpu numbers on RTX-class hardware fall short of product needs.
+- burn-tch (libtorch bindings) is rejected: it reintroduces the PyTorch runtime the project exists
+  to avoid.
+
+### Migration plan
+
+1. **Feature-gate the backend.** Add `gpu = ["dep:burn-wgpu"]` pinned to the same `0.21.0-pre.x`
+   line. CPU stays the default so `cargo check --no-default-features` and binary size stay clean.
+2. **Generalize the runtime over the backend.** `Predictor`, `RuntimeModel`, `EndToEndDetector`,
+   and `end2end_topk_detections` are concrete over `Flex` today. Make them generic over
+   `B: Backend` (the model structs already are), keep a `Predictor<Flex>` type alias so the public
+   API and existing call sites do not churn, and let the CLI construct `Predictor<Wgpu>`.
+3. **Device selection and reporting.** `--device cpu|gpu` plus an optional adapter index; log the
+   wgpu adapter name and backend (Vulkan/DX12/Metal) actually chosen. This completes the M1 item
+   "report the backend actually chosen".
+4. **Weights.** Artifacts are f16 Burnpack; `HalfPrecisionAdapter` upcasts on load. First milestone
+   is f32 compute on GPU (matching CPU numerics), then measure f16 compute where `shader-f16` is
+   supported by the adapter.
+5. **Warmup and autotune.** The first GPU forward compiles pipelines and autotunes kernels, so
+   cold-start dominates run one. The latency harness already warms up; extend it to report cold
+   start separately from steady state and warm the device inside the predictor constructor.
+6. **Parity per backend.** The golden-fixture tests are Flex-typed; parameterize the harness over
+   the backend, keep the 2e-4 tolerance on CPU, and allow a documented, larger tolerance on GPU
+   (autotuned kernels are not bit-comparable).
+7. **Postprocessing stays on CPU at first.** Letterbox, decode, and top-k are cheap; move
+   resize/letterbox onto GPU textures only after batch-1 forward numbers justify it.
+8. **Benchmarks.** Re-run `measures_single_inference_latency` under the gpu feature and add a
+   per-device column to the README tables. Batching (M1) is where GPUs should win big, so add
+   batch-N rows rather than judging GPU on batch-1 alone.
+9. **CI.** Smoke-test wgpu against a software adapter (lavapipe/ANGLE) for compile and parity only;
+   real-GPU timing runs stay on maintained hardware, nightly or manual.
+
+Known risks: wgpu kernel efficiency on the small-channel early stages, memory ceilings on headless
+or integrated adapters for the x scales, autotune cache portability across drivers, and uneven
+`shader-f16` support across vendors.
+
 ## M2 — one trainable detector
 
 Finish the YOLOX vertical first because its license is permissive and the inference implementation
