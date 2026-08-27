@@ -1,0 +1,29 @@
+boquilens
+Copyright 2026 boquilens contributors
+
+boquilens is distributed under the GNU Affero General Public License v3.0 (LICENSE).
+
+The native YOLOX Burn model implementation in src/models/yolox was initially adapted from
+tracel-ai/models/yolox-burn at revision ec1b9e42e6692ef2b95f85c4ba783e07cd3d19af.
+That project is distributed under the MIT OR Apache-2.0 licenses; this derivative uses the
+Apache-2.0 option (LICENSE-APACHE).
+
+The YOLOX architecture and COCO pretrained model originate from Megvii's YOLOX project:
+https://github.com/Megvii-BaseDetection/YOLOX
+The original implementation and pretrained weights are distributed under Apache-2.0.
+
+The experimental src/models/yolov3_tiny and src/models/yolov10 implementations interoperate with
+the public YOLOv3-Tiny-Ultralytics and YOLOv10n architectures and official checkpoints. They were
+authored as native Burn code; boquilens does not bundle Ultralytics Python code or model weights.
+tools/export_ultralytics_state.py and tools/export_yolov10_fixtures.py use an installed Ultralytics
+package at conversion time to extract tensor state from a checkpoint.
+Ultralytics states that its software, architectures, and trained model weights are offered under
+AGPL-3.0 by default, with separate commercial licensing available:
+https://www.ultralytics.com/license
+Because boquilens is AGPL-3.0, checkpoints and the derived native artifacts may be redistributed
+under the same license. Users supplying or publishing an Ultralytics checkpoint remain responsible
+for satisfying the license applicable to that model and their use case.
+
+The bundled sample image is "Man with Bike and Pet Dog circa 1900" (archive ref DDX1319-2-3),
+by East Riding Archives, obtained through Wikimedia Commons/Flickr Commons:
+https://commons.wikimedia.org/wiki/File:Man_with_Bike_and_Pet_Dog_circa_1900_%28archive_ref_DDX1319-2-3%29_%2826507570321%29.jpg

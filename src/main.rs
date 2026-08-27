@@ -1,0 +1,169 @@
+use std::path::PathBuf;
+
+use boquilens::{ModelId, PredictOptions, Predictor, annotate, pack_weights};
+use clap::{Args as ClapArgs, Parser, Subcommand};
+use serde::Serialize;
+
+#[derive(Debug, Parser)]
+#[command(
+    name = "boquilens",
+    version,
+    about = "Object detection in Rust with Burn"
+)]
+struct Args {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Debug, Subcommand)]
+enum Command {
+    /// Run object detection on an image.
+    Predict(PredictArgs),
+    /// Pack imported tensor state into a versioned native Burnpack artifact.
+    PackWeights(PackWeightsArgs),
+}
+
+#[derive(Debug, ClapArgs)]
+struct PackWeightsArgs {
+    /// Model architecture represented by the checkpoint.
+    #[arg(long)]
+    model: ModelId,
+
+    /// Tensor-only imported checkpoint produced by the model-specific development bridge.
+    #[arg(long)]
+    input: PathBuf,
+
+    /// Native output artifact; must end in .bpk and must not already exist.
+    #[arg(long)]
+    output: PathBuf,
+}
+
+#[derive(Debug, ClapArgs)]
+#[command(
+    after_long_help = "BOUNDING BOXES:\n  Output coordinates are unnormalized, continuous XYXY pixel edges in the source image.\n  (xmin, ymin) is the top-left edge; (xmax, ymax) is the bottom-right edge.\n  Values are clipped to [0, width] x [0, height]."
+)]
+struct PredictArgs {
+    /// Input JPEG, PNG, or WebP image.
+    #[arg(long)]
+    source: PathBuf,
+
+    /// Model architecture and scale to run: yolox-nano, yolov3-tinyu, or yolov10n.
+    #[arg(long)]
+    model: ModelId,
+
+    /// Local checkpoint. YOLOX accepts official .pth; Ultralytics-family models prefer native .bpk.
+    #[arg(long)]
+    weights: Option<PathBuf>,
+
+    /// Annotated output image (defaults to <input-stem>-detections.png).
+    #[arg(short, long)]
+    output: Option<PathBuf>,
+
+    /// Minimum object confidence.
+    #[arg(long, default_value_t = 0.25)]
+    confidence: f32,
+
+    /// Intersection-over-union threshold used by NMS.
+    #[arg(long, default_value_t = 0.45)]
+    iou: f32,
+
+    /// Print detections as JSON instead of a compact table.
+    #[arg(long)]
+    json: bool,
+}
+
+fn default_output(input: &std::path::Path) -> PathBuf {
+    let stem = input
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("prediction");
+    input.with_file_name(format!("{stem}-detections.png"))
+}
+
+fn main() -> boquilens::Result<()> {
+    let args = Args::parse();
+    match args.command {
+        Command::Predict(args) => predict(args),
+        Command::PackWeights(args) => {
+            let packed = pack_weights(args.model, &args.input, &args.output)?;
+            eprintln!(
+                "Packed {} weights into {} ({} bytes, SHA-256 {})",
+                args.model,
+                packed.path.display(),
+                packed.bytes,
+                packed.sha256,
+            );
+            Ok(())
+        }
+    }
+}
+
+fn predict(args: PredictArgs) -> boquilens::Result<()> {
+    let output = args.output.unwrap_or_else(|| default_output(&args.source));
+
+    eprintln!("Loading {} COCO weights with Burn...", args.model);
+    let options = PredictOptions {
+        confidence: args.confidence,
+        iou: args.iou,
+    };
+    let predictor = match args.weights {
+        Some(checkpoint) => Predictor::from_checkpoint(args.model, checkpoint, options)?,
+        None => Predictor::new(args.model, options)?,
+    };
+    let (image, detections) = predictor.predict_path(&args.source)?;
+
+    if args.json {
+        #[derive(Serialize)]
+        struct JsonOutput<'a> {
+            coordinate_format: &'static str,
+            coordinate_units: &'static str,
+            coordinate_space: &'static str,
+            detections: &'a [boquilens::Detection],
+        }
+
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&JsonOutput {
+                coordinate_format: "xyxy",
+                coordinate_units: "pixels",
+                coordinate_space: "source_image",
+                detections: &detections,
+            })?
+        );
+    } else if detections.is_empty() {
+        println!("No objects detected.");
+    } else {
+        for detection in &detections {
+            println!(
+                "{:<16} {:>5.1}%  xyxy_px=[{:>6.1}, {:>6.1}, {:>6.1}, {:>6.1}]",
+                detection.class_name,
+                detection.confidence * 100.0,
+                detection.xmin,
+                detection.ymin,
+                detection.xmax,
+                detection.ymax,
+            );
+        }
+    }
+
+    annotate(&image, &detections).save(&output)?;
+    eprintln!(
+        "Saved {} detections to {}",
+        detections.len(),
+        output.display()
+    );
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn derives_default_output_path() {
+        assert_eq!(
+            default_output(std::path::Path::new("photos/dog.jpg")),
+            PathBuf::from("photos/dog-detections.png")
+        );
+    }
+}
