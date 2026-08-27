@@ -13,16 +13,18 @@ Every model runs **object detection** on COCO-80 classes at 640 px input. The on
 models additionally support a one-time `pack-weights` conversion into boquilens' native Burnpack
 format.
 
-| Model         | Status       | Task   | Modes                  | nano | tiny | n | s | m | l | x | Weights                                  |
-| ------------- | ------------ | ------ | ---------------------- | ---- | ---- | - | - | - | - | - | ---------------------------------------- |
-| YOLOX-Nano    | stable       | Detect | Predict                | ✓    | —    | — | — | — | — | — | official `.pth`, auto-downloaded         |
-| YOLOv3-Tiny-U | experimental | Detect | Predict                | —    | ✓    | — | — | — | — | — | one-time `.bpk` pack                     |
-| YOLOv10n      | experimental | Detect | Predict                | —    | —    | ✓ | — | — | — | — | one-time `.bpk` pack                     |
-| YOLO26n       | experimental | Detect | Predict                | —    | —    | ✓ | — | — | — | — | one-time `.bpk` pack                     |
+| Model    | Status       | Task   | Modes   | Variants | Weights                          |
+| -------- | ------------ | ------ | ------- | -------- | -------------------------------- |
+| YOLOX    | stable       | Detect | Predict | nano     | official `.pth`, auto-downloaded |
+| YOLOv3   | experimental | Detect | Predict | tiny-u   | one-time `.bpk` pack             |
+| YOLOv10  | experimental | Detect | Predict | n        | one-time `.bpk` pack             |
+| YOLO26   | experimental | Detect | Predict | n        | one-time `.bpk` pack             |
 
-One variant per model today; the remaining scales are future work. YOLOX ships Apache-2.0 weights
-downloaded from the official release. Ultralytics-family weights are AGPL-3.0, and the native
-artifacts derived from them inherit that license (see [NOTICE](NOTICE)).
+Variant naming follows each family (YOLOX scales as nano/tiny/s/m/l/x, v3 ships a tiny model, and
+the modern families use n/s/m/l/x). One variant per model today; the rest are future work. Pass the
+variant-suffixed CLI name: `yolox-nano`, `yolov3-tinyu`, `yolov10n`, `yolo26n`. YOLOX ships
+Apache-2.0 weights downloaded from the official release. Ultralytics-family weights are AGPL-3.0,
+and the native artifacts derived from them inherit that license (see [NOTICE](NOTICE)).
 
 Verified v1 artifacts:
 
