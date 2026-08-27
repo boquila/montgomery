@@ -1,8 +1,21 @@
 use std::path::PathBuf;
 
 use boquilens::{ModelId, PredictOptions, Predictor, annotate, pack_weights};
-use clap::{Args as ClapArgs, Parser, Subcommand};
+#[cfg(feature = "gpu")]
+use burn::backend::Wgpu;
+use burn::tensor::{Device, backend::Backend};
+use burn_flex::Flex;
+use clap::{Args as ClapArgs, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum DeviceSelection {
+    /// Burn Flex backend on the CPU (default).
+    Cpu,
+    /// Burn Wgpu backend on the GPU: Vulkan/DX12 on Windows and Linux, Metal on macOS. Requires
+    /// building with `--features gpu`.
+    Gpu,
+}
 
 #[derive(Debug, Parser)]
 #[command(
@@ -56,6 +69,10 @@ struct PredictArgs {
     #[arg(long)]
     weights: Option<PathBuf>,
 
+    /// Compute device for inference.
+    #[arg(long, value_enum, default_value = "cpu")]
+    device: DeviceSelection,
+
     /// Annotated output image (defaults to <input-stem>-detections.png).
     #[arg(short, long)]
     output: Option<PathBuf>,
@@ -100,16 +117,43 @@ fn main() -> boquilens::Result<()> {
 }
 
 fn predict(args: PredictArgs) -> boquilens::Result<()> {
-    let output = args.output.unwrap_or_else(|| default_output(&args.source));
-
-    eprintln!("Loading {} COCO weights with Burn...", args.model);
     let options = PredictOptions {
         confidence: args.confidence,
         iou: args.iou,
     };
-    let predictor = match args.weights {
-        Some(checkpoint) => Predictor::from_checkpoint(args.model, checkpoint, options)?,
-        None => Predictor::new(args.model, options)?,
+    match args.device {
+        DeviceSelection::Cpu => run_predict::<Flex>(&args, options, Device::<Flex>::default()),
+        #[cfg(feature = "gpu")]
+        DeviceSelection::Gpu => {
+            let (device, adapter) = boquilens::default_wgpu_device();
+            eprintln!("GPU adapter: {adapter}");
+            run_predict::<Wgpu>(&args, options, device)
+        }
+        #[cfg(not(feature = "gpu"))]
+        DeviceSelection::Gpu => Err(
+            "GPU inference requires building boquilens with the gpu feature: \
+             cargo build --release --features gpu"
+                .into(),
+        ),
+    }
+}
+
+fn run_predict<B: Backend>(
+    args: &PredictArgs,
+    options: PredictOptions,
+    device: Device<B>,
+) -> boquilens::Result<()> {
+    let output = args
+        .output
+        .clone()
+        .unwrap_or_else(|| default_output(&args.source));
+
+    eprintln!("Loading {} COCO weights with Burn...", args.model);
+    let predictor: Predictor<B> = match &args.weights {
+        Some(checkpoint) => {
+            Predictor::from_checkpoint_on_device(args.model, checkpoint.clone(), device, options)?
+        }
+        None => Predictor::new_on_device(args.model, options, device)?,
     };
     let (image, detections) = predictor.predict_path(&args.source)?;
 

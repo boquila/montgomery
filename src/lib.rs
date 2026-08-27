@@ -2,7 +2,9 @@
 //!
 //! The stable MVP supports YOLOX-Nano trained on COCO, with experimental native
 //! YOLOv3-Tiny-Ultralytics, YOLOv10 (n/s/m/b/l/x), and YOLO26 (n/s/m/l/x) inference paths. Model
-//! inference and post-processing run from Rust; no Python runtime or ONNX runtime is involved.
+//! inference and post-processing run from Rust — on the Flex CPU backend by default, or on the
+//! Wgpu GPU backend (Vulkan/DX12/Metal) when built with the `gpu` feature. No Python runtime or
+//! ONNX runtime is involved.
 
 extern crate alloc;
 
@@ -162,27 +164,31 @@ impl PredictOptions {
 }
 
 #[cfg_attr(not(feature = "pretrained"), allow(dead_code))]
-enum RuntimeModel {
-    Yolox(Box<Yolox<Flex>>),
-    Yolov3Tiny(Box<Yolov3Tiny<Flex>>),
-    Yolov10N(Box<crate::models::yolov10::Yolov10N<Flex>>),
-    Yolov10S(Box<crate::models::yolov10::Yolov10S<Flex>>),
-    Yolov10M(Box<crate::models::yolov10::Yolov10M<Flex>>),
-    Yolov10B(Box<crate::models::yolov10::Yolov10B<Flex>>),
-    Yolov10L(Box<crate::models::yolov10::Yolov10L<Flex>>),
-    Yolov10X(Box<crate::models::yolov10::Yolov10X<Flex>>),
-    Yolo26N(Box<crate::models::yolo26::Yolo26N<Flex>>),
-    Yolo26S(Box<crate::models::yolo26::Yolo26S<Flex>>),
-    Yolo26M(Box<crate::models::yolo26::Yolo26M<Flex>>),
-    Yolo26L(Box<crate::models::yolo26::Yolo26L<Flex>>),
-    Yolo26X(Box<crate::models::yolo26::Yolo26X<Flex>>),
+enum RuntimeModel<B: Backend> {
+    Yolox(Box<Yolox<B>>),
+    Yolov3Tiny(Box<Yolov3Tiny<B>>),
+    Yolov10N(Box<crate::models::yolov10::Yolov10N<B>>),
+    Yolov10S(Box<crate::models::yolov10::Yolov10S<B>>),
+    Yolov10M(Box<crate::models::yolov10::Yolov10M<B>>),
+    Yolov10B(Box<crate::models::yolov10::Yolov10B<B>>),
+    Yolov10L(Box<crate::models::yolov10::Yolov10L<B>>),
+    Yolov10X(Box<crate::models::yolov10::Yolov10X<B>>),
+    Yolo26N(Box<crate::models::yolo26::Yolo26N<B>>),
+    Yolo26S(Box<crate::models::yolo26::Yolo26S<B>>),
+    Yolo26M(Box<crate::models::yolo26::Yolo26M<B>>),
+    Yolo26L(Box<crate::models::yolo26::Yolo26L<B>>),
+    Yolo26X(Box<crate::models::yolo26::Yolo26X<B>>),
 }
 
-/// A ready-to-run object detector using Burn's flexible backend.
-pub struct Predictor {
+/// A ready-to-run object detector over a Burn backend.
+///
+/// The backend is a type parameter: [`Flex`] on CPU, or `Wgpu` for GPU inference (Vulkan/DX12 on
+/// Windows and Linux, Metal on macOS) when built with the `gpu` feature. Constructors resolve the
+/// backend's default device; the `_on_device` variants accept an explicit device.
+pub struct Predictor<B: Backend> {
     model_id: ModelId,
-    model: RuntimeModel,
-    device: Device<Flex>,
+    model: RuntimeModel<B>,
+    device: Device<B>,
     options: PredictOptions,
 }
 
@@ -195,17 +201,18 @@ pub type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 /// builds, so the graph is built in the worker thread.
 /// A model construction-and-load closure handed to the large-stack loader worker.
 #[cfg(feature = "pretrained")]
-type ModelLoader = Box<dyn FnOnce(&Device<Flex>) -> Result<RuntimeModel> + Send>;
+type ModelLoader<B> = Box<dyn FnOnce(&Device<B>) -> Result<RuntimeModel<B>> + Send>;
 
 #[cfg(feature = "pretrained")]
-fn load_ultralytics_checkpoint(
+fn load_ultralytics_checkpoint<B: Backend>(
     model_id: ModelId,
     checkpoint: PathBuf,
-) -> Result<(RuntimeModel, Device<Flex>)> {
+    device: Device<B>,
+) -> Result<RuntimeModel<B>> {
     macro_rules! load_variant {
         ($config:ty, $variant:path) => {
-            move |device: &Device<Flex>| -> Result<RuntimeModel> {
-                let mut model = <$config>::default().init::<Flex>(device);
+            move |device: &Device<B>| -> Result<RuntimeModel<B>> {
+                let mut model = <$config>::default().init::<B>(device);
                 if checkpoint.extension().and_then(|value| value.to_str()) == Some("bpk") {
                     model.load_burnpack_weights(&checkpoint)?;
                 } else {
@@ -215,7 +222,7 @@ fn load_ultralytics_checkpoint(
             }
         };
     }
-    let loader: ModelLoader = match model_id {
+    let loader: ModelLoader<B> = match model_id {
         ModelId::Yolov3TinyU => Box::new(load_variant!(Yolov3TinyConfig, RuntimeModel::Yolov3Tiny)),
         ModelId::Yolov10N => Box::new(load_variant!(Yolov10NConfig, RuntimeModel::Yolov10N)),
         ModelId::Yolov10S => Box::new(load_variant!(Yolov10SConfig, RuntimeModel::Yolov10S)),
@@ -235,11 +242,7 @@ fn load_ultralytics_checkpoint(
     let worker = std::thread::Builder::new()
         .name("boquilens-model-loader".into())
         .stack_size(64 * 1024 * 1024)
-        .spawn(move || {
-            let device = Default::default();
-            let model = loader(&device)?;
-            Ok((model, device))
-        })?;
+        .spawn(move || loader(&device))?;
     worker
         .join()
         .map_err(|_| format!("{model_id} model loader thread panicked"))?
@@ -247,15 +250,15 @@ fn load_ultralytics_checkpoint(
 
 /// Uniform end-to-end detection entry point shared by every YOLOv10/YOLO26 scale variant, so the
 /// runtime can dispatch to any of them without naming the concrete scale type.
-trait EndToEndDetector {
-    fn detect(&self, input: Tensor<Flex, 4>) -> (Tensor<Flex, 3>, Tensor<Flex, 3>);
+trait EndToEndDetector<B: Backend> {
+    fn detect(&self, input: Tensor<B, 4>) -> (Tensor<B, 3>, Tensor<B, 3>);
 }
 
 macro_rules! impl_end_to_end_detector {
-    ($($model:ty),+ $(,)?) => {
+    ($family:ident: [$($model:ident),+ $(,)?]) => {
         $(
-            impl EndToEndDetector for $model {
-                fn detect(&self, input: Tensor<Flex, 4>) -> (Tensor<Flex, 3>, Tensor<Flex, 3>) {
+            impl<B: Backend> EndToEndDetector<B> for crate::models::$family::$model<B> {
+                fn detect(&self, input: Tensor<B, 4>) -> (Tensor<B, 3>, Tensor<B, 3>) {
                     let output = self.forward(input);
                     (output.boxes, output.scores)
                 }
@@ -264,30 +267,19 @@ macro_rules! impl_end_to_end_detector {
     };
 }
 
-impl<M: EndToEndDetector> EndToEndDetector for Box<M> {
-    fn detect(&self, input: Tensor<Flex, 4>) -> (Tensor<Flex, 3>, Tensor<Flex, 3>) {
+impl_end_to_end_detector!(yolov10: [Yolov10N, Yolov10S, Yolov10M, Yolov10B, Yolov10L, Yolov10X]);
+impl_end_to_end_detector!(yolo26: [Yolo26N, Yolo26S, Yolo26M, Yolo26L, Yolo26X]);
+
+impl<B: Backend, M: EndToEndDetector<B>> EndToEndDetector<B> for Box<M> {
+    fn detect(&self, input: Tensor<B, 4>) -> (Tensor<B, 3>, Tensor<B, 3>) {
         (**self).detect(input)
     }
 }
 
-impl_end_to_end_detector!(
-    crate::models::yolov10::Yolov10N<Flex>,
-    crate::models::yolov10::Yolov10S<Flex>,
-    crate::models::yolov10::Yolov10M<Flex>,
-    crate::models::yolov10::Yolov10B<Flex>,
-    crate::models::yolov10::Yolov10L<Flex>,
-    crate::models::yolov10::Yolov10X<Flex>,
-    crate::models::yolo26::Yolo26N<Flex>,
-    crate::models::yolo26::Yolo26S<Flex>,
-    crate::models::yolo26::Yolo26M<Flex>,
-    crate::models::yolo26::Yolo26L<Flex>,
-    crate::models::yolo26::Yolo26X<Flex>,
-);
-
 /// Decode normalized end-to-end one2one predictions for any scale variant.
-fn run_end_to_end(
-    model: &impl EndToEndDetector,
-    input: Tensor<Flex, 4>,
+fn run_end_to_end<B: Backend>(
+    model: &impl EndToEndDetector<B>,
+    input: Tensor<B, 4>,
     max_detections: usize,
     confidence_threshold: f32,
 ) -> Vec<Vec<Vec<BoundingBox>>> {
@@ -295,12 +287,23 @@ fn run_end_to_end(
     end2end_topk_detections(boxes, scores, max_detections, confidence_threshold)
 }
 
-impl Predictor {
-    /// Load a catalog model with its official pretrained weights.
+impl<B: Backend> Predictor<B> {
+    /// Load a catalog model with its official pretrained weights on the backend's default device.
     #[cfg(feature = "pretrained")]
     pub fn new(model_id: ModelId, options: PredictOptions) -> Result<Self> {
+        Self::new_on_device(model_id, options, Device::<B>::default())
+    }
+
+    /// Load a catalog model with its official pretrained weights on an explicit device.
+    #[cfg(feature = "pretrained")]
+    pub fn new_on_device(
+        model_id: ModelId,
+        options: PredictOptions,
+        device: Device<B>,
+    ) -> Result<Self> {
+        let options = options.validate()?;
         match model_id {
-            ModelId::YoloxNano => Self::load_yolox_nano(model_id, options),
+            ModelId::YoloxNano => Self::load_yolox_nano_on_device(model_id, options, device),
             ModelId::Yolov3TinyU
             | ModelId::Yolov10N
             | ModelId::Yolov10S
@@ -320,7 +323,7 @@ impl Predictor {
         }
     }
 
-    /// Load a model from a supported PyTorch state checkpoint on disk.
+    /// Load a model from a supported PyTorch state checkpoint on the backend's default device.
     ///
     /// YOLOX accepts its official checkpoint directly. The Ultralytics-family models require the
     /// tensor-only state produced by `tools/export_ultralytics_state.py` because Burn's pickle
@@ -331,6 +334,17 @@ impl Predictor {
         checkpoint: impl Into<PathBuf>,
         options: PredictOptions,
     ) -> Result<Self> {
+        Self::from_checkpoint_on_device(model_id, checkpoint, Device::<B>::default(), options)
+    }
+
+    /// Load a model from a supported PyTorch state checkpoint on an explicit device.
+    #[cfg(feature = "pretrained")]
+    pub fn from_checkpoint_on_device(
+        model_id: ModelId,
+        checkpoint: impl Into<PathBuf>,
+        device: Device<B>,
+        options: PredictOptions,
+    ) -> Result<Self> {
         let options = options.validate()?;
         let checkpoint = checkpoint.into();
         match model_id {
@@ -338,16 +352,18 @@ impl Predictor {
                 let worker = std::thread::Builder::new()
                     .name("boquilens-model-loader".into())
                     .stack_size(64 * 1024 * 1024)
-                    .spawn(move || {
-                        let device = Default::default();
-                        let mut model: Yolox<Flex> = Yolox::yolox_nano(COCO_CLASSES.len(), &device);
-                        model.load_pytorch_weights(checkpoint)?;
-                        Ok::<_, Box<dyn Error + Send + Sync>>((
-                            RuntimeModel::Yolox(Box::new(model)),
-                            device,
-                        ))
+                    .spawn({
+                        let device = device.clone();
+                        move || {
+                            let mut model: Yolox<B> =
+                                Yolox::yolox_nano(COCO_CLASSES.len(), &device);
+                            model.load_pytorch_weights(checkpoint)?;
+                            Ok::<_, Box<dyn Error + Send + Sync>>(RuntimeModel::Yolox(Box::new(
+                                model,
+                            )))
+                        }
                     })?;
-                let (model, device) = worker
+                let model = worker
                     .join()
                     .map_err(|_| "YOLOX model loader thread panicked")??;
                 Ok(Self {
@@ -358,7 +374,7 @@ impl Predictor {
                 })
             }
             _ => {
-                let (model, device) = load_ultralytics_checkpoint(model_id, checkpoint)?;
+                let model = load_ultralytics_checkpoint(model_id, checkpoint, device.clone())?;
                 Ok(Self {
                     model_id,
                     model,
@@ -376,23 +392,25 @@ impl Predictor {
     }
 
     #[cfg(feature = "pretrained")]
-    fn load_yolox_nano(model_id: ModelId, options: PredictOptions) -> Result<Self> {
-        let options = options.validate()?;
+    fn load_yolox_nano_on_device(
+        model_id: ModelId,
+        options: PredictOptions,
+        device: Device<B>,
+    ) -> Result<Self> {
         // Constructing this deeply nested module can exceed the small default main-thread stack
         // on Windows in debug builds. Keep that platform detail out of the public API.
         let worker = std::thread::Builder::new()
             .name("boquilens-model-loader".into())
             .stack_size(64 * 1024 * 1024)
-            .spawn(|| {
-                let device = Default::default();
-                let model: Yolox<Flex> =
-                    Yolox::yolox_nano_pretrained(weights::YoloxNano::Coco, &device)?;
-                Ok::<_, Box<dyn Error + Send + Sync>>((
-                    RuntimeModel::Yolox(Box::new(model)),
-                    device,
-                ))
+            .spawn({
+                let device = device.clone();
+                move || {
+                    let model: Yolox<B> =
+                        Yolox::yolox_nano_pretrained(weights::YoloxNano::Coco, &device)?;
+                    Ok::<_, Box<dyn Error + Send + Sync>>(RuntimeModel::Yolox(Box::new(model)))
+                }
             })?;
-        let (model, device) = worker
+        let model = worker
             .join()
             .map_err(|_| "YOLOX model loader thread panicked")??;
         Ok(Self {
@@ -671,9 +689,9 @@ fn image_to_tensor<B: Backend>(image: DynamicImage, device: &Device<B>) -> Tenso
 /// strongest (anchor, class) pairs among them, and finally apply the confidence threshold. No
 /// non-maximum suppression is applied because the one2one head is trained to emit one prediction
 /// per object.
-fn end2end_topk_detections(
-    boxes: Tensor<Flex, 3>,
-    scores: Tensor<Flex, 3>,
+fn end2end_topk_detections<B: Backend>(
+    boxes: Tensor<B, 3>,
+    scores: Tensor<B, 3>,
     max_detections: usize,
     confidence_threshold: f32,
 ) -> Vec<Vec<Vec<BoundingBox>>> {
@@ -728,6 +746,29 @@ fn end2end_topk_detections(
         batches.push(per_class);
     }
     batches
+}
+
+/// Resolve the default wgpu device, reporting the graphics adapter and API actually chosen.
+///
+/// The first call initializes the wgpu runtime (adapter selection, shader compiler setup) and the
+/// returned description names the physical adapter, the graphics backend (Vulkan, DX12, Metal,
+/// OpenGL, or WebGPU), and the driver. Every later operation on the same device reuses that
+/// runtime.
+#[cfg(feature = "gpu")]
+pub fn default_wgpu_device() -> (burn::backend::wgpu::WgpuDevice, String) {
+    use burn::backend::wgpu::{RuntimeOptions, WgpuDevice, graphics::AutoGraphicsApi, init_setup};
+    use std::sync::OnceLock;
+
+    // The wgpu runtime registers one compute client per device per process; re-initializing an
+    // already-registered device panics, so resolve the default device exactly once and share it.
+    static DEVICE: OnceLock<(WgpuDevice, String)> = OnceLock::new();
+    DEVICE
+        .get_or_init(|| {
+            let device = WgpuDevice::default();
+            let setup = init_setup::<AutoGraphicsApi>(&device, RuntimeOptions::default());
+            (device, format!("{:?}", setup.adapter.get_info()))
+        })
+        .clone()
 }
 
 /// Draw detection rectangles on a copy of the image.

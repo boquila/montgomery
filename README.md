@@ -104,29 +104,39 @@ with the development-only tool:
 & target\.venv\Scripts\python.exe tools\bench_ultralytics_cpu.py target\yolov10n.pt ...
 ```
 
+The GPU column runs the same harness on Burn's Wgpu backend (built with `--features gpu`), on an
+NVIDIA GeForce RTX 5080 selected through Vulkan (driver 610.47), f16 artifacts computed in f32:
+
+```console
+cargo test --locked --release --features gpu measures_single_inference_latency_gpu -- --ignored --nocapture --test-threads 1
+```
+
 Reference machine: AMD Ryzen 9 9950X3D (16C/32T), 32 GB RAM, Windows 11. Absolute numbers move with
 hardware and library releases; treat them as a relative scale across variants, not a benchmark claim.
 
-| Model    | boquilens (ms) | Ultralytics PyTorch (ms) | Ratio |
-| -------- | -------------: | -----------------------: | ----: |
-| yolov10n |          129.1 |                     19.0 |  6.8x |
-| yolov10s |          241.0 |                     32.1 |  7.5x |
-| yolov10m |          454.7 |                     62.8 |  7.2x |
-| yolov10b |          594.0 |                     88.4 |  6.7x |
-| yolov10l |          735.7 |                    122.2 |  6.0x |
-| yolov10x |          939.6 |                    169.8 |  5.5x |
-| yolo26n  |          116.2 |                     22.5 |  5.2x |
-| yolo26s  |          237.1 |                     42.9 |  5.5x |
-| yolo26m  |          478.0 |                     85.2 |  5.6x |
-| yolo26l  |          619.3 |                    109.7 |  5.6x |
-| yolo26x  |          975.2 |                    196.8 |  5.0x |
+| Model    | boquilens CPU (ms) | boquilens GPU (ms) | GPU vs CPU | Ultralytics PyTorch CPU (ms) |
+| -------- | -----------------: | -----------------: | ---------: | ---------------------------: |
+| yolov10n |              129.1 |               10.6 |      12.2x |                         19.0 |
+| yolov10s |              241.0 |               19.8 |      12.2x |                         32.1 |
+| yolov10m |              454.7 |               43.5 |      10.5x |                         62.8 |
+| yolov10b |              594.0 |               64.1 |       9.3x |                         88.4 |
+| yolov10l |              735.7 |               86.9 |       8.5x |                        122.2 |
+| yolov10x |              939.6 |               94.8 |       9.9x |                        169.8 |
+| yolo26n  |              116.2 |                9.3 |      12.5x |                         22.5 |
+| yolo26s  |              237.1 |               21.0 |      11.3x |                         42.9 |
+| yolo26m  |              478.0 |               53.5 |       8.9x |                         85.2 |
+| yolo26l  |              619.3 |               66.1 |       9.4x |                        109.7 |
+| yolo26x  |              975.2 |              124.8 |       7.8x |                        196.8 |
 
-- **CPU today.** The numbers above are the supported and tested path: Burn's Flex backend on the
-  CPU. Preprocessing and top-k postprocessing are not included and add a small constant per image.
-  Flex currently trails fused PyTorch CPU inference by roughly 5-7.5x; closing that gap (kernel
-  fusion, threading) is CPU engineering work on top of Burn, independent of the model graphs.
-- **GPU next.** Burn ships GPU backends; the draft path (burn-wgpu over Vulkan/Metal/DX12, with
-  burn-cuda as a later NVIDIA-only option) is sketched in [ROADMAP.md](ROADMAP.md).
+- **CPU.** The CPU columns are the always-available path: Burn's Flex backend. Preprocessing and
+  top-k postprocessing are not included and add a small constant per image. Flex currently trails
+  fused PyTorch CPU inference by roughly 5-7.5x; closing that gap (kernel fusion, threading) is CPU
+  engineering work on top of Burn, independent of the model graphs.
+- **GPU.** The `gpu` feature (burn-wgpu over Vulkan/DX12 on Windows and Linux, Metal on macOS)
+  enables `--device gpu` in the CLI and the GPU latency tests above. Detections are numerically
+  identical to the CPU path on the reference image (f32 compute on both). The first GPU forward
+  compiles kernels and autotunes, so cold start is much slower than steady state; the harness
+  excludes it via warmup runs.
 
 ## Development
 

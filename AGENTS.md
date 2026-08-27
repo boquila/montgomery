@@ -77,6 +77,18 @@ for CPU and inflates the medians. The README compares those numbers against the 
 runtime measured with `tools/bench_ultralytics_cpu.py` (same machine, same methodology, fused
 conv+bn) using the conversion venv.
 
+GPU numbers (Wgpu backend, requires the gpu feature) come from the `_gpu` variants of the same
+harness; the CLI selects the backend with `--device cpu|gpu` (gpu builds print the chosen adapter
+and graphics API on stderr):
+
+```console
+cargo test --locked --release --features gpu measures_single_inference_latency_gpu -- --ignored --nocapture --test-threads 1
+cargo run --locked --release --features gpu -- predict --model yolo26n --device gpu --weights target/yolo26n-coco-ultralytics-v8.4-boquilens-v1.bpk --source assets/dog_bike_man.jpg
+```
+
+When touching the runtime or a backend boundary, also spot-check GPU/CPU parity by diffing
+`--json` detections between `--device cpu` and `--device gpu` on the reference image.
+
 Regenerate those fixtures with the per-family `tools/export_{ultralytics,yolov10,yolo26}_fixtures.py`
 scripts, passing `--model <id>` to select the detect scale. Generated checkpoints, fixtures, images,
 and build output belong under `target/` and must not be committed.

@@ -8,7 +8,7 @@ license = "AGPL-3.0"
 [features]
 default = ["pretrained"]
 pretrained = ["burn/network", "dep:burn-store", "dep:dirs", "dep:sha2"]
-gpu = ["burn/wgpu", "dep:burn-wgpu"]
+gpu = ["burn/wgpu", "dep:burn-wgpu", "burn-wgpu/vulkan", "burn-wgpu/webgpu", "burn-wgpu/metal"]
 
 [dependencies]
 burn = { version = "=0.21.0-pre.4", default-features = false }
