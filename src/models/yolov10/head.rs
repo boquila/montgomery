@@ -159,22 +159,43 @@ impl<B: Backend> Yolov10Head<B> {
     }
 }
 
-#[derive(Debug, Default)]
-pub struct Yolov10HeadConfig;
+#[derive(Debug)]
+pub struct Yolov10HeadConfig {
+    p3_channels: usize,
+    p4_channels: usize,
+    p5_channels: usize,
+    box_channels: usize,
+    cls_channels: usize,
+}
 
 impl Yolov10HeadConfig {
+    /// Declare the head for one scale from its P3/P4/P5 input widths.
+    ///
+    /// `v10Detect` derives the box tower width as `max(16, ch[0] / 4, reg_max * 4)` and the light
+    /// classification tower width as `max(ch[0], min(nc, 100))`; with `reg_max = 16` and
+    /// `nc = 80` the box width is 64 except at x scale (ch[0] = 320) where it is 80.
+    pub fn new(p3_channels: usize, p4_channels: usize, p5_channels: usize) -> Self {
+        let box_channels = (16).max(p3_channels / 4).max(4 * REG_MAX);
+        let cls_channels = p3_channels.max(NUM_CLASSES.min(100));
+        Self {
+            p3_channels,
+            p4_channels,
+            p5_channels,
+            box_channels,
+            cls_channels,
+        }
+    }
+
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov10Head<B> {
-        // Detect's box width is max(16, ch[0] / 4, reg_max * 4) and the light classification
-        // width is max(ch[0], min(nc, 100)); with ch[0] = 64 and nc = 80 both resolve to 64/80.
         let config = |input_channels: usize| DetectionBranchConfig {
             input_channels,
-            box_channels: 4 * REG_MAX,
-            cls_channels: NUM_CLASSES,
+            box_channels: self.box_channels,
+            cls_channels: self.cls_channels,
         };
         Yolov10Head {
-            p3: config(64).init(device),
-            p4: config(128).init(device),
-            p5: config(256).init(device),
+            p3: config(self.p3_channels).init(device),
+            p4: config(self.p4_channels).init(device),
+            p5: config(self.p5_channels).init(device),
         }
     }
 }
@@ -203,7 +224,7 @@ fn make_anchors<B: Backend>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::yolov10::body::Yolov10BodyConfig;
+    use crate::models::yolov10::body::Yolov10BodyNConfig;
     use burn_flex::Flex;
 
     #[test]
@@ -212,8 +233,8 @@ mod tests {
             .stack_size(64 * 1024 * 1024)
             .spawn(|| {
                 let device = Default::default();
-                let body = Yolov10BodyConfig.init::<Flex>(&device);
-                let head = Yolov10HeadConfig.init::<Flex>(&device);
+                let body = Yolov10BodyNConfig.init::<Flex>(&device);
+                let head = Yolov10HeadConfig::new(64, 128, 256).init::<Flex>(&device);
                 let input = Tensor::zeros([1, 3, 64, 64], &device);
                 let output = head.forward(body.forward(input));
                 assert_eq!(output.boxes.dims(), [1, 84, 4]);

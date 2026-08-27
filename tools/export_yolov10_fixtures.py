@@ -1,5 +1,6 @@
-"""Export reproducible YOLOv10n preprocessing and tensor parity fixtures.
+"""Export reproducible YOLOv10 preprocessing and tensor parity fixtures.
 
+Covers every detect scale (n/s/m/b/l/x): pass ``--model yolov10s`` with the matching checkpoint.
 The generated files belong in ``target/`` and are intentionally not committed: they are derived
 from an external Ultralytics checkpoint. The Rust ignored tests consume them to distinguish image
 preprocessing drift from model-graph drift.
@@ -47,7 +48,10 @@ def main() -> None:
     parser.add_argument("checkpoint", type=Path)
     parser.add_argument("image", type=Path)
     parser.add_argument("output_dir", type=Path)
+    parser.add_argument("--model", default="yolov10n", help="detect scale being exported")
     args = parser.parse_args()
+    if not args.model.startswith("yolov10"):
+        raise ValueError(f"{args.model} is not a YOLOv10 detect scale")
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     source_bgr = cv2.imread(str(args.image), cv2.IMREAD_COLOR)
@@ -57,8 +61,8 @@ def main() -> None:
     prepared_bgr = LetterBox((640, 640), auto=True, stride=32)(image=source_bgr)
     prepared_rgb = prepared_bgr[..., ::-1].copy()
 
-    source_path = args.output_dir / "yolov10n-source-reference.png"
-    input_path = args.output_dir / "yolov10n-preprocessed-reference.png"
+    source_path = args.output_dir / f"{args.model}-source-reference.png"
+    input_path = args.output_dir / f"{args.model}-preprocessed-reference.png"
     Image.fromarray(source_rgb).save(source_path)
     Image.fromarray(prepared_rgb).save(input_path)
 
@@ -96,12 +100,12 @@ def main() -> None:
     }
     fixture = {
         "format": "boquilens-ultralytics-golden-v1",
-        "model": "yolov10n",
+        "model": args.model,
         "checkpoint_sha256": file_sha256(args.checkpoint),
         "input_sha256": file_sha256(input_path),
         "tensors": {name: summarize(tensor) for name, tensor in tensors.items()},
     }
-    fixture_path = args.output_dir / "yolov10n-golden-v1.json"
+    fixture_path = args.output_dir / f"{args.model}-golden-v1.json"
     fixture_path.write_text(json.dumps(fixture, indent=2) + "\n", encoding="utf-8")
     print(f"wrote {fixture_path}")
     for name, tensor in tensors.items():

@@ -1,8 +1,8 @@
 //! A small, end-to-end object detection API built on [Burn](https://burn.dev).
 //!
 //! The stable MVP supports YOLOX-Nano trained on COCO, with experimental native
-//! YOLOv3-Tiny-Ultralytics, YOLOv10n, and YOLO26n inference paths. Model inference and
-//! post-processing run from Rust; no Python runtime or ONNX runtime is involved.
+//! YOLOv3-Tiny-Ultralytics, YOLOv10 (n/s/m/b/l/x), and YOLO26 (n/s/m/l/x) inference paths. Model
+//! inference and post-processing run from Rust; no Python runtime or ONNX runtime is involved.
 
 extern crate alloc;
 
@@ -14,15 +14,19 @@ use std::path::PathBuf;
 use std::{error::Error, fmt, path::Path, str::FromStr};
 
 use crate::data::LetterboxedImage;
+use crate::models::yolo26::head::MAX_DETECTIONS as YOLO26_MAX_DETECTIONS;
 #[cfg(feature = "pretrained")]
-use crate::models::yolo26::Yolo26Config;
-use crate::models::yolo26::{Yolo26, head::MAX_DETECTIONS as YOLO26_MAX_DETECTIONS};
+use crate::models::yolo26::{
+    Yolo26LConfig, Yolo26MConfig, Yolo26NConfig, Yolo26SConfig, Yolo26XConfig,
+};
 use crate::models::yolov3_tiny::Yolov3Tiny;
 #[cfg(feature = "pretrained")]
 use crate::models::yolov3_tiny::Yolov3TinyConfig;
+use crate::models::yolov10::head::MAX_DETECTIONS as YOLOV10_MAX_DETECTIONS;
 #[cfg(feature = "pretrained")]
-use crate::models::yolov10::Yolov10Config;
-use crate::models::yolov10::{Yolov10, head::MAX_DETECTIONS as YOLOV10_MAX_DETECTIONS};
+use crate::models::yolov10::{
+    Yolov10BConfig, Yolov10LConfig, Yolov10MConfig, Yolov10NConfig, Yolov10SConfig, Yolov10XConfig,
+};
 #[cfg(feature = "pretrained")]
 use crate::models::yolox::weights;
 use crate::models::yolox::{Yolox, boxes::BoundingBox, boxes::nms};
@@ -44,7 +48,16 @@ pub enum ModelId {
     YoloxNano,
     Yolov3TinyU,
     Yolov10N,
+    Yolov10S,
+    Yolov10M,
+    Yolov10B,
+    Yolov10L,
+    Yolov10X,
     Yolo26N,
+    Yolo26S,
+    Yolo26M,
+    Yolo26L,
+    Yolo26X,
 }
 
 impl ModelId {
@@ -53,7 +66,16 @@ impl ModelId {
             Self::YoloxNano => "yolox-nano",
             Self::Yolov3TinyU => "yolov3-tinyu",
             Self::Yolov10N => "yolov10n",
+            Self::Yolov10S => "yolov10s",
+            Self::Yolov10M => "yolov10m",
+            Self::Yolov10B => "yolov10b",
+            Self::Yolov10L => "yolov10l",
+            Self::Yolov10X => "yolov10x",
             Self::Yolo26N => "yolo26n",
+            Self::Yolo26S => "yolo26s",
+            Self::Yolo26M => "yolo26m",
+            Self::Yolo26L => "yolo26l",
+            Self::Yolo26X => "yolo26x",
         }
     }
 }
@@ -72,9 +94,19 @@ impl FromStr for ModelId {
             "yolox-nano" | "yolox_nano" | "nano" => Ok(Self::YoloxNano),
             "yolov3-tinyu" | "yolov3_tinyu" => Ok(Self::Yolov3TinyU),
             "yolov10n" | "yolov10-nano" => Ok(Self::Yolov10N),
+            "yolov10s" | "yolov10-small" => Ok(Self::Yolov10S),
+            "yolov10m" | "yolov10-medium" => Ok(Self::Yolov10M),
+            "yolov10b" | "yolov10-balanced" => Ok(Self::Yolov10B),
+            "yolov10l" | "yolov10-large" => Ok(Self::Yolov10L),
+            "yolov10x" | "yolov10-xlarge" => Ok(Self::Yolov10X),
             "yolo26n" | "yolo26-nano" => Ok(Self::Yolo26N),
+            "yolo26s" | "yolo26-small" => Ok(Self::Yolo26S),
+            "yolo26m" | "yolo26-medium" => Ok(Self::Yolo26M),
+            "yolo26l" | "yolo26-large" => Ok(Self::Yolo26L),
+            "yolo26x" | "yolo26-xlarge" => Ok(Self::Yolo26X),
             _ => Err(format!(
-                "unknown model '{value}'; available models: yolox-nano, yolov3-tinyu, yolov10n, yolo26n"
+                "unknown model '{value}'; available models: yolox-nano, yolov3-tinyu, \
+                 yolov10n/s/m/b/l/x, yolo26n/s/m/l/x"
             )),
         }
     }
@@ -133,8 +165,17 @@ impl PredictOptions {
 enum RuntimeModel {
     Yolox(Box<Yolox<Flex>>),
     Yolov3Tiny(Box<Yolov3Tiny<Flex>>),
-    Yolov10(Box<Yolov10<Flex>>),
-    Yolo26(Box<Yolo26<Flex>>),
+    Yolov10N(Box<crate::models::yolov10::Yolov10N<Flex>>),
+    Yolov10S(Box<crate::models::yolov10::Yolov10S<Flex>>),
+    Yolov10M(Box<crate::models::yolov10::Yolov10M<Flex>>),
+    Yolov10B(Box<crate::models::yolov10::Yolov10B<Flex>>),
+    Yolov10L(Box<crate::models::yolov10::Yolov10L<Flex>>),
+    Yolov10X(Box<crate::models::yolov10::Yolov10X<Flex>>),
+    Yolo26N(Box<crate::models::yolo26::Yolo26N<Flex>>),
+    Yolo26S(Box<crate::models::yolo26::Yolo26S<Flex>>),
+    Yolo26M(Box<crate::models::yolo26::Yolo26M<Flex>>),
+    Yolo26L(Box<crate::models::yolo26::Yolo26L<Flex>>),
+    Yolo26X(Box<crate::models::yolo26::Yolo26X<Flex>>),
 }
 
 /// A ready-to-run object detector using Burn's flexible backend.
@@ -147,13 +188,131 @@ pub struct Predictor {
 
 pub type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 
+/// Construct the requested Ultralytics-family model inside a large-stack worker and load either
+/// its native Burnpack artifact or its tensor-only PyTorch state.
+///
+/// Deep module construction overflows the small default main-thread stack on Windows in debug
+/// builds, so the graph is built in the worker thread.
+/// A model construction-and-load closure handed to the large-stack loader worker.
+#[cfg(feature = "pretrained")]
+type ModelLoader = Box<dyn FnOnce(&Device<Flex>) -> Result<RuntimeModel> + Send>;
+
+#[cfg(feature = "pretrained")]
+fn load_ultralytics_checkpoint(
+    model_id: ModelId,
+    checkpoint: PathBuf,
+) -> Result<(RuntimeModel, Device<Flex>)> {
+    macro_rules! load_variant {
+        ($config:ty, $variant:path) => {
+            move |device: &Device<Flex>| -> Result<RuntimeModel> {
+                let mut model = <$config>::default().init::<Flex>(device);
+                if checkpoint.extension().and_then(|value| value.to_str()) == Some("bpk") {
+                    model.load_burnpack_weights(&checkpoint)?;
+                } else {
+                    model.load_pytorch_weights(&checkpoint)?;
+                }
+                Ok($variant(Box::new(model)))
+            }
+        };
+    }
+    let loader: ModelLoader = match model_id {
+        ModelId::Yolov3TinyU => Box::new(load_variant!(Yolov3TinyConfig, RuntimeModel::Yolov3Tiny)),
+        ModelId::Yolov10N => Box::new(load_variant!(Yolov10NConfig, RuntimeModel::Yolov10N)),
+        ModelId::Yolov10S => Box::new(load_variant!(Yolov10SConfig, RuntimeModel::Yolov10S)),
+        ModelId::Yolov10M => Box::new(load_variant!(Yolov10MConfig, RuntimeModel::Yolov10M)),
+        ModelId::Yolov10B => Box::new(load_variant!(Yolov10BConfig, RuntimeModel::Yolov10B)),
+        ModelId::Yolov10L => Box::new(load_variant!(Yolov10LConfig, RuntimeModel::Yolov10L)),
+        ModelId::Yolov10X => Box::new(load_variant!(Yolov10XConfig, RuntimeModel::Yolov10X)),
+        ModelId::Yolo26N => Box::new(load_variant!(Yolo26NConfig, RuntimeModel::Yolo26N)),
+        ModelId::Yolo26S => Box::new(load_variant!(Yolo26SConfig, RuntimeModel::Yolo26S)),
+        ModelId::Yolo26M => Box::new(load_variant!(Yolo26MConfig, RuntimeModel::Yolo26M)),
+        ModelId::Yolo26L => Box::new(load_variant!(Yolo26LConfig, RuntimeModel::Yolo26L)),
+        ModelId::Yolo26X => Box::new(load_variant!(Yolo26XConfig, RuntimeModel::Yolo26X)),
+        ModelId::YoloxNano => {
+            return Err("YOLOX accepts its official .pth checkpoint directly and is loaded without the Ultralytics state bridge".into());
+        }
+    };
+    let worker = std::thread::Builder::new()
+        .name("boquilens-model-loader".into())
+        .stack_size(64 * 1024 * 1024)
+        .spawn(move || {
+            let device = Default::default();
+            let model = loader(&device)?;
+            Ok((model, device))
+        })?;
+    worker
+        .join()
+        .map_err(|_| format!("{model_id} model loader thread panicked"))?
+}
+
+/// Uniform end-to-end detection entry point shared by every YOLOv10/YOLO26 scale variant, so the
+/// runtime can dispatch to any of them without naming the concrete scale type.
+trait EndToEndDetector {
+    fn detect(&self, input: Tensor<Flex, 4>) -> (Tensor<Flex, 3>, Tensor<Flex, 3>);
+}
+
+macro_rules! impl_end_to_end_detector {
+    ($($model:ty),+ $(,)?) => {
+        $(
+            impl EndToEndDetector for $model {
+                fn detect(&self, input: Tensor<Flex, 4>) -> (Tensor<Flex, 3>, Tensor<Flex, 3>) {
+                    let output = self.forward(input);
+                    (output.boxes, output.scores)
+                }
+            }
+        )+
+    };
+}
+
+impl<M: EndToEndDetector> EndToEndDetector for Box<M> {
+    fn detect(&self, input: Tensor<Flex, 4>) -> (Tensor<Flex, 3>, Tensor<Flex, 3>) {
+        (**self).detect(input)
+    }
+}
+
+impl_end_to_end_detector!(
+    crate::models::yolov10::Yolov10N<Flex>,
+    crate::models::yolov10::Yolov10S<Flex>,
+    crate::models::yolov10::Yolov10M<Flex>,
+    crate::models::yolov10::Yolov10B<Flex>,
+    crate::models::yolov10::Yolov10L<Flex>,
+    crate::models::yolov10::Yolov10X<Flex>,
+    crate::models::yolo26::Yolo26N<Flex>,
+    crate::models::yolo26::Yolo26S<Flex>,
+    crate::models::yolo26::Yolo26M<Flex>,
+    crate::models::yolo26::Yolo26L<Flex>,
+    crate::models::yolo26::Yolo26X<Flex>,
+);
+
+/// Decode normalized end-to-end one2one predictions for any scale variant.
+fn run_end_to_end(
+    model: &impl EndToEndDetector,
+    input: Tensor<Flex, 4>,
+    max_detections: usize,
+    confidence_threshold: f32,
+) -> Vec<Vec<Vec<BoundingBox>>> {
+    let (boxes, scores) = model.detect(input / 255.0);
+    end2end_topk_detections(boxes, scores, max_detections, confidence_threshold)
+}
+
 impl Predictor {
     /// Load a catalog model with its official pretrained weights.
     #[cfg(feature = "pretrained")]
     pub fn new(model_id: ModelId, options: PredictOptions) -> Result<Self> {
         match model_id {
             ModelId::YoloxNano => Self::load_yolox_nano(model_id, options),
-            ModelId::Yolov3TinyU | ModelId::Yolov10N | ModelId::Yolo26N => Err(format!(
+            ModelId::Yolov3TinyU
+            | ModelId::Yolov10N
+            | ModelId::Yolov10S
+            | ModelId::Yolov10M
+            | ModelId::Yolov10B
+            | ModelId::Yolov10L
+            | ModelId::Yolov10X
+            | ModelId::Yolo26N
+            | ModelId::Yolo26S
+            | ModelId::Yolo26M
+            | ModelId::Yolo26L
+            | ModelId::Yolo26X => Err(format!(
                 "{} currently requires --weights with a boquilens .bpk artifact; see the README's one-time weight preparation",
                 model_id
             )
@@ -198,80 +357,8 @@ impl Predictor {
                     options,
                 })
             }
-            ModelId::Yolov3TinyU => {
-                let worker = std::thread::Builder::new()
-                    .name("boquilens-model-loader".into())
-                    .stack_size(64 * 1024 * 1024)
-                    .spawn(move || {
-                        let device = Default::default();
-                        let mut model = Yolov3TinyConfig.init::<Flex>(&device);
-                        if checkpoint.extension().and_then(|value| value.to_str()) == Some("bpk") {
-                            model.load_burnpack_weights(&checkpoint)?;
-                        } else {
-                            model.load_pytorch_weights(&checkpoint)?;
-                        }
-                        Ok::<_, Box<dyn Error + Send + Sync>>((
-                            RuntimeModel::Yolov3Tiny(Box::new(model)),
-                            device,
-                        ))
-                    })?;
-                let (model, device) = worker
-                    .join()
-                    .map_err(|_| "YOLOv3-Tiny-U model loader thread panicked")??;
-                Ok(Self {
-                    model_id,
-                    model,
-                    device,
-                    options,
-                })
-            }
-            ModelId::Yolov10N => {
-                let worker = std::thread::Builder::new()
-                    .name("boquilens-model-loader".into())
-                    .stack_size(64 * 1024 * 1024)
-                    .spawn(move || {
-                        let device = Default::default();
-                        let mut model = Yolov10Config.init::<Flex>(&device);
-                        if checkpoint.extension().and_then(|value| value.to_str()) == Some("bpk") {
-                            model.load_burnpack_weights(&checkpoint)?;
-                        } else {
-                            model.load_pytorch_weights(&checkpoint)?;
-                        }
-                        Ok::<_, Box<dyn Error + Send + Sync>>((
-                            RuntimeModel::Yolov10(Box::new(model)),
-                            device,
-                        ))
-                    })?;
-                let (model, device) = worker
-                    .join()
-                    .map_err(|_| "YOLOv10n model loader thread panicked")??;
-                Ok(Self {
-                    model_id,
-                    model,
-                    device,
-                    options,
-                })
-            }
-            ModelId::Yolo26N => {
-                let worker = std::thread::Builder::new()
-                    .name("boquilens-model-loader".into())
-                    .stack_size(64 * 1024 * 1024)
-                    .spawn(move || {
-                        let device = Default::default();
-                        let mut model = Yolo26Config.init::<Flex>(&device);
-                        if checkpoint.extension().and_then(|value| value.to_str()) == Some("bpk") {
-                            model.load_burnpack_weights(&checkpoint)?;
-                        } else {
-                            model.load_pytorch_weights(&checkpoint)?;
-                        }
-                        Ok::<_, Box<dyn Error + Send + Sync>>((
-                            RuntimeModel::Yolo26(Box::new(model)),
-                            device,
-                        ))
-                    })?;
-                let (model, device) = worker
-                    .join()
-                    .map_err(|_| "YOLO26n model loader thread panicked")??;
+            _ => {
+                let (model, device) = load_ultralytics_checkpoint(model_id, checkpoint)?;
                 Ok(Self {
                     model_id,
                     model,
@@ -325,9 +412,18 @@ impl Predictor {
     pub fn predict(&self, image: &DynamicImage) -> Vec<Detection> {
         let prepared = match &self.model {
             RuntimeModel::Yolox(_) => LetterboxedImage::yolox(image, INPUT_SIZE),
-            RuntimeModel::Yolov3Tiny(_) | RuntimeModel::Yolov10(_) | RuntimeModel::Yolo26(_) => {
-                LetterboxedImage::ultralytics(image, INPUT_SIZE, 32)
-            }
+            RuntimeModel::Yolov3Tiny(_)
+            | RuntimeModel::Yolov10N(_)
+            | RuntimeModel::Yolov10S(_)
+            | RuntimeModel::Yolov10M(_)
+            | RuntimeModel::Yolov10B(_)
+            | RuntimeModel::Yolov10L(_)
+            | RuntimeModel::Yolov10X(_)
+            | RuntimeModel::Yolo26N(_)
+            | RuntimeModel::Yolo26S(_)
+            | RuntimeModel::Yolo26M(_)
+            | RuntimeModel::Yolo26L(_)
+            | RuntimeModel::Yolo26X(_) => LetterboxedImage::ultralytics(image, INPUT_SIZE, 32),
         };
         let input = image_to_tensor(prepared.image().clone(), &self.device).unsqueeze::<4>();
         let boxes_by_class = match &self.model {
@@ -361,29 +457,59 @@ impl Predictor {
                     self.options.confidence,
                 )
             }
-            RuntimeModel::Yolov10(model) => {
-                // Same RGB normalization as YOLOv3-Tiny-U. The one2one head is trained NMS-free;
-                // official inference selects the top-scoring detections and filters by
-                // confidence without non-maximum suppression.
-                let output = model.forward(input / 255.0);
-                end2end_topk_detections(
-                    output.boxes,
-                    output.scores,
-                    YOLOV10_MAX_DETECTIONS,
-                    self.options.confidence,
-                )
-            }
-            RuntimeModel::Yolo26(model) => {
+            RuntimeModel::Yolov10N(model) => run_end_to_end(
+                model,
+                input,
+                YOLOV10_MAX_DETECTIONS,
+                self.options.confidence,
+            ),
+            RuntimeModel::Yolov10S(model) => run_end_to_end(
+                model,
+                input,
+                YOLOV10_MAX_DETECTIONS,
+                self.options.confidence,
+            ),
+            RuntimeModel::Yolov10M(model) => run_end_to_end(
+                model,
+                input,
+                YOLOV10_MAX_DETECTIONS,
+                self.options.confidence,
+            ),
+            RuntimeModel::Yolov10B(model) => run_end_to_end(
+                model,
+                input,
+                YOLOV10_MAX_DETECTIONS,
+                self.options.confidence,
+            ),
+            RuntimeModel::Yolov10L(model) => run_end_to_end(
+                model,
+                input,
+                YOLOV10_MAX_DETECTIONS,
+                self.options.confidence,
+            ),
+            RuntimeModel::Yolov10X(model) => run_end_to_end(
+                model,
+                input,
+                YOLOV10_MAX_DETECTIONS,
+                self.options.confidence,
+            ),
+            RuntimeModel::Yolo26N(model) => {
                 // YOLO26 is end-to-end like YOLOv10 and consumes the same RGB normalization. Its
                 // DFL-free one2one head is likewise decoded by top-score selection and a
                 // confidence filter with no non-maximum suppression.
-                let output = model.forward(input / 255.0);
-                end2end_topk_detections(
-                    output.boxes,
-                    output.scores,
-                    YOLO26_MAX_DETECTIONS,
-                    self.options.confidence,
-                )
+                run_end_to_end(model, input, YOLO26_MAX_DETECTIONS, self.options.confidence)
+            }
+            RuntimeModel::Yolo26S(model) => {
+                run_end_to_end(model, input, YOLO26_MAX_DETECTIONS, self.options.confidence)
+            }
+            RuntimeModel::Yolo26M(model) => {
+                run_end_to_end(model, input, YOLO26_MAX_DETECTIONS, self.options.confidence)
+            }
+            RuntimeModel::Yolo26L(model) => {
+                run_end_to_end(model, input, YOLO26_MAX_DETECTIONS, self.options.confidence)
+            }
+            RuntimeModel::Yolo26X(model) => {
+                run_end_to_end(model, input, YOLO26_MAX_DETECTIONS, self.options.confidence)
             }
         };
 
@@ -439,7 +565,8 @@ pub fn pack_weights(
 ) -> Result<PackedWeights> {
     if matches!(model_id, ModelId::YoloxNano) {
         return Err(
-            "native weight packing is currently implemented only for yolov3-tinyu, yolov10n, and yolo26n"
+            "native weight packing is currently implemented only for the Ultralytics-family models \
+             (yolov3-tinyu, yolov10n/s/m/b/l/x, and yolo26n/s/m/l/x)"
                 .into(),
         );
     }
@@ -468,25 +595,30 @@ pub fn pack_weights(
         .stack_size(64 * 1024 * 1024)
         .spawn(move || {
             let device = Default::default();
+            macro_rules! pack_variant {
+                ($config:ty) => {{
+                    let mut model = <$config>::default().init::<Flex>(&device);
+                    model.load_pytorch_weights(&input)?;
+                    model.save_burnpack_weights(&output)?;
+                }};
+            }
             match model_id {
-                ModelId::Yolov3TinyU => {
-                    let mut model = Yolov3TinyConfig.init::<Flex>(&device);
-                    model.load_pytorch_weights(&input)?;
-                    model.save_burnpack_weights(&output)?;
-                }
-                ModelId::Yolov10N => {
-                    let mut model = Yolov10Config.init::<Flex>(&device);
-                    model.load_pytorch_weights(&input)?;
-                    model.save_burnpack_weights(&output)?;
-                }
-                ModelId::Yolo26N => {
-                    let mut model = Yolo26Config.init::<Flex>(&device);
-                    model.load_pytorch_weights(&input)?;
-                    model.save_burnpack_weights(&output)?;
-                }
+                ModelId::Yolov3TinyU => pack_variant!(Yolov3TinyConfig),
+                ModelId::Yolov10N => pack_variant!(Yolov10NConfig),
+                ModelId::Yolov10S => pack_variant!(Yolov10SConfig),
+                ModelId::Yolov10M => pack_variant!(Yolov10MConfig),
+                ModelId::Yolov10B => pack_variant!(Yolov10BConfig),
+                ModelId::Yolov10L => pack_variant!(Yolov10LConfig),
+                ModelId::Yolov10X => pack_variant!(Yolov10XConfig),
+                ModelId::Yolo26N => pack_variant!(Yolo26NConfig),
+                ModelId::Yolo26S => pack_variant!(Yolo26SConfig),
+                ModelId::Yolo26M => pack_variant!(Yolo26MConfig),
+                ModelId::Yolo26L => pack_variant!(Yolo26LConfig),
+                ModelId::Yolo26X => pack_variant!(Yolo26XConfig),
                 ModelId::YoloxNano => {
                     return Err(
-                        "native weight packing is currently implemented only for yolov3-tinyu, yolov10n, and yolo26n"
+                        "native weight packing is currently implemented only for the Ultralytics-family models \
+                         (yolov3-tinyu, yolov10n/s/m/b/l/x, and yolo26n/s/m/l/x)"
                             .into(),
                     );
                 }
@@ -767,7 +899,16 @@ mod tests {
         assert_eq!("nano".parse(), Ok(ModelId::YoloxNano));
         assert_eq!("yolov3-tinyu".parse(), Ok(ModelId::Yolov3TinyU));
         assert_eq!("yolov10n".parse(), Ok(ModelId::Yolov10N));
+        assert_eq!("yolov10s".parse(), Ok(ModelId::Yolov10S));
+        assert_eq!("yolov10m".parse(), Ok(ModelId::Yolov10M));
+        assert_eq!("yolov10b".parse(), Ok(ModelId::Yolov10B));
+        assert_eq!("yolov10l".parse(), Ok(ModelId::Yolov10L));
+        assert_eq!("yolov10x".parse(), Ok(ModelId::Yolov10X));
         assert_eq!("yolo26n".parse(), Ok(ModelId::Yolo26N));
+        assert_eq!("yolo26s".parse(), Ok(ModelId::Yolo26S));
+        assert_eq!("yolo26m".parse(), Ok(ModelId::Yolo26M));
+        assert_eq!("yolo26l".parse(), Ok(ModelId::Yolo26L));
+        assert_eq!("yolo26x".parse(), Ok(ModelId::Yolo26X));
         assert!("yolo26".parse::<ModelId>().is_err());
     }
 
@@ -778,26 +919,29 @@ mod tests {
             pack_weights(ModelId::YoloxNano, "unused.pt", "unused.bpk")
                 .unwrap_err()
                 .to_string()
-                .contains("only for yolov3-tinyu, yolov10n, and yolo26n")
+                .contains("Ultralytics-family models")
         );
-        assert!(
-            pack_weights(ModelId::Yolov3TinyU, "unused.pt", "unused.bin")
-                .unwrap_err()
-                .to_string()
-                .contains(".bpk extension")
-        );
-        assert!(
-            pack_weights(ModelId::Yolov10N, "unused.pt", "unused.bin")
-                .unwrap_err()
-                .to_string()
-                .contains(".bpk extension")
-        );
-        assert!(
-            pack_weights(ModelId::Yolo26N, "unused.pt", "unused.bin")
-                .unwrap_err()
-                .to_string()
-                .contains(".bpk extension")
-        );
+        for model_id in [
+            ModelId::Yolov3TinyU,
+            ModelId::Yolov10N,
+            ModelId::Yolov10S,
+            ModelId::Yolov10M,
+            ModelId::Yolov10B,
+            ModelId::Yolov10L,
+            ModelId::Yolov10X,
+            ModelId::Yolo26N,
+            ModelId::Yolo26S,
+            ModelId::Yolo26M,
+            ModelId::Yolo26L,
+            ModelId::Yolo26X,
+        ] {
+            assert!(
+                pack_weights(model_id, "unused.pt", "unused.bin")
+                    .unwrap_err()
+                    .to_string()
+                    .contains(".bpk extension")
+            );
+        }
     }
 
     #[test]

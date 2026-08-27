@@ -152,23 +152,44 @@ impl<B: Backend> Yolo26Head<B> {
     }
 }
 
-#[derive(Debug, Default)]
-pub struct Yolo26HeadConfig;
+#[derive(Debug)]
+pub struct Yolo26HeadConfig {
+    p3_channels: usize,
+    p4_channels: usize,
+    p5_channels: usize,
+    box_channels: usize,
+    cls_channels: usize,
+}
 
 impl Yolo26HeadConfig {
+    /// Declare the head for one scale from its P3/P4/P5 input widths.
+    ///
+    /// `Detect` derives the box tower width as `max(16, ch[0] / 4, reg_max * 4)` and the light
+    /// classification tower width as `max(ch[0], min(nc, 100))`; with `reg_max = 1` and
+    /// `nc = 80` this resolves to box widths 16/32/64/96 and cls widths 80/128/256/384 across the
+    /// n/s/m-l/x scales.
+    pub fn new(p3_channels: usize, p4_channels: usize, p5_channels: usize) -> Self {
+        let box_channels = (16).max(p3_channels / 4).max(4 * REG_MAX);
+        let cls_channels = p3_channels.max(NUM_CLASSES.min(100));
+        Self {
+            p3_channels,
+            p4_channels,
+            p5_channels,
+            box_channels,
+            cls_channels,
+        }
+    }
+
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo26Head<B> {
-        // Detect's box width is max(16, ch[0] / 4, reg_max * 4) and the light classification
-        // width is max(ch[0], min(nc, 100)); with ch[0] = 64, reg_max = 1 and nc = 80 these
-        // resolve to 16/80.
         let config = |input_channels: usize| DetectionBranchConfig {
             input_channels,
-            box_channels: 16,
-            cls_channels: NUM_CLASSES,
+            box_channels: self.box_channels,
+            cls_channels: self.cls_channels,
         };
         Yolo26Head {
-            p3: config(64).init(device),
-            p4: config(128).init(device),
-            p5: config(256).init(device),
+            p3: config(self.p3_channels).init(device),
+            p4: config(self.p4_channels).init(device),
+            p5: config(self.p5_channels).init(device),
         }
     }
 }
@@ -197,7 +218,7 @@ fn make_anchors<B: Backend>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::yolo26::body::Yolo26BodyConfig;
+    use crate::models::yolo26::body::Yolo26BodyNConfig;
     use burn_flex::Flex;
 
     #[test]
@@ -206,8 +227,8 @@ mod tests {
             .stack_size(64 * 1024 * 1024)
             .spawn(|| {
                 let device = Default::default();
-                let body = Yolo26BodyConfig.init::<Flex>(&device);
-                let head = Yolo26HeadConfig.init::<Flex>(&device);
+                let body = Yolo26BodyNConfig.init::<Flex>(&device);
+                let head = Yolo26HeadConfig::new(64, 128, 256).init::<Flex>(&device);
                 let input = Tensor::zeros([1, 3, 64, 64], &device);
                 let output = head.forward(body.forward(input));
                 assert_eq!(output.boxes.dims(), [1, 84, 4]);

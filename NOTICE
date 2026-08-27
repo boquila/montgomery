@@ -13,9 +13,9 @@ https://github.com/Megvii-BaseDetection/YOLOX
 The original implementation and pretrained weights are distributed under Apache-2.0.
 
 The experimental src/models/yolov3_tiny, src/models/yolov10, and src/models/yolo26 implementations
-interoperate with the public YOLOv3-Tiny-Ultralytics, YOLOv10n, and YOLO26n architectures and
-official checkpoints. They were authored as native Burn code; boquilens does not bundle Ultralytics
-Python code or model weights. tools/export_ultralytics_state.py and the per-model
+interoperate with the public YOLOv3-Tiny-Ultralytics, YOLOv10 (n/s/m/b/l/x), and YOLO26 (n/s/m/l/x)
+architectures and official checkpoints. They were authored as native Burn code; boquilens does not
+bundle Ultralytics Python code or model weights. tools/export_ultralytics_state.py and the per-model
 export_*_fixtures.py scripts use an installed Ultralytics package at conversion time to extract
 tensor state from a checkpoint.
 Ultralytics states that its software, architectures, and trained model weights are offered under

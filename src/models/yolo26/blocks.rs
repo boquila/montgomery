@@ -314,14 +314,18 @@ pub(super) struct C3k2C3kConfig {
 }
 
 impl C3k2C3kConfig {
+    /// `expansion` is C3k2's `e` argument, which sizes the shell's hidden width. The neck and
+    /// P4/P5 backbone stages keep Ultralytics' default 0.5 while the early backbone stages of the
+    /// m/l/x scales force `c3k` on with the YAML's 0.25 expansion.
     pub(super) fn new(
         in_channels: usize,
         out_channels: usize,
         repeats: usize,
         shortcut: bool,
+        expansion: f32,
     ) -> Self {
         Self {
-            shell: C3k2Shell::new(in_channels, out_channels, repeats, 0.5),
+            shell: C3k2Shell::new(in_channels, out_channels, repeats, expansion),
             shortcut,
         }
     }
@@ -640,7 +644,8 @@ mod tests {
                 let out = c3k2.forward(Tensor::zeros([1, 32, 40, 40], &device));
                 assert_eq!(out.dims(), [1, 64, 40, 40]);
 
-                let c3k2_c3k: C3k2C3k<Flex> = C3k2C3kConfig::new(128, 128, 1, true).init(&device);
+                let c3k2_c3k: C3k2C3k<Flex> =
+                    C3k2C3kConfig::new(128, 128, 1, true, 0.5).init(&device);
                 let out = c3k2_c3k.forward(Tensor::zeros([1, 128, 20, 20], &device));
                 assert_eq!(out.dims(), [1, 128, 20, 20]);
 

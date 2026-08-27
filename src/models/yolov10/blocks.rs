@@ -171,7 +171,7 @@ impl BottleneckConfig {
 /// `cv1.1.*`, ...) that the official checkpoint uses for its `nn.Sequential`.
 type CibTower<B> = (Conv<B>, Conv<B>, RepVggDw<B>, Conv<B>, Conv<B>);
 
-/// Ultralytics `CIB` (Compact Inverted Block) with a large-kernel depth-wise center.
+/// Ultralytics `CIB` (Compact Inverted Block) with the large-kernel depth-wise center (`lk=True`).
 #[derive(Module, Debug)]
 pub struct Cib<B: Backend> {
     cv1: CibTower<B>,
@@ -207,6 +207,56 @@ impl CibConfig {
                 ConvConfig::new(c, c, 3, 1).depthwise().init(device),
                 ConvConfig::new(c, 2 * c, 1, 1).init(device),
                 RepVggDwConfig::new(2 * c).init(device),
+                ConvConfig::new(2 * c, c, 1, 1).init(device),
+                ConvConfig::new(c, c, 3, 1).depthwise().init(device),
+            ),
+            add: self.shortcut,
+        }
+    }
+}
+
+/// The `lk=False` CIB tower: the center is a plain depth-wise convolution instead of the fused
+/// `RepVGGDW`, which also changes the checkpoint key paths (`cv1.2.conv.*` with no `conv1`).
+type CibDwTower<B> = (Conv<B>, Conv<B>, Conv<B>, Conv<B>, Conv<B>);
+
+/// Ultralytics `CIB` (Compact Inverted Block) with the plain depth-wise center (`lk=False`).
+///
+/// This is the variant the s/m/b/l/x checkpoints build; only YOLOv10n/s pass `lk=True`.
+#[derive(Module, Debug)]
+pub struct CibDw<B: Backend> {
+    cv1: CibDwTower<B>,
+    add: bool,
+}
+
+impl<B: Backend> CibDw<B> {
+    pub fn forward(&self, input: Tensor<B, 4>) -> Tensor<B, 4> {
+        let (dw_0, pw_0, dw_center, pw_1, dw_1) = &self.cv1;
+        let x = dw_0.forward(input.clone());
+        let x = pw_0.forward(x);
+        let x = dw_center.forward(x);
+        let x = pw_1.forward(x);
+        let x = dw_1.forward(x);
+        if self.add { input + x } else { x }
+    }
+}
+
+pub(super) struct CibDwConfig {
+    channels: usize,
+    shortcut: bool,
+}
+
+impl CibDwConfig {
+    pub(super) fn new(channels: usize, shortcut: bool) -> Self {
+        Self { channels, shortcut }
+    }
+
+    pub(super) fn init<B: Backend>(&self, device: &Device<B>) -> CibDw<B> {
+        let c = self.channels;
+        CibDw {
+            cv1: (
+                ConvConfig::new(c, c, 3, 1).depthwise().init(device),
+                ConvConfig::new(c, 2 * c, 1, 1).init(device),
+                ConvConfig::new(2 * c, 2 * c, 3, 1).depthwise().init(device),
                 ConvConfig::new(2 * c, c, 1, 1).init(device),
                 ConvConfig::new(c, c, 3, 1).depthwise().init(device),
             ),
@@ -340,6 +390,57 @@ impl C2fCibConfig {
             .map(|_| CibConfig::new(self.common.hidden, self.common.shortcut).init(device))
             .collect();
         C2fCib { cv1, cv2, m }
+    }
+}
+
+/// Ultralytics `C2fCIB` with the plain depth-wise CIB chain (`lk=False`), used by the
+/// s/m/b/l/x-scale bodies.
+#[derive(Module, Debug)]
+pub struct C2fCibDw<B: Backend> {
+    cv1: Conv<B>,
+    cv2: Conv<B>,
+    m: Vec<CibDw<B>>,
+}
+
+impl<B: Backend> C2fCibDw<B> {
+    pub fn forward(&self, input: Tensor<B, 4>) -> Tensor<B, 4> {
+        let y = self.cv1.forward(input);
+        let [batch, channels, height, width] = y.dims();
+        let half = channels / 2;
+        let skip = y.clone().slice([0..batch, 0..half, 0..height, 0..width]);
+        let mut hidden = y.slice([0..batch, half..channels, 0..height, 0..width]);
+        // The bottleneck chain consumes the second chunk, mirroring torch's `m(y[-1])`.
+        let mut outputs = vec![skip, hidden.clone()];
+        for cib in &self.m {
+            hidden = cib.forward(hidden);
+            outputs.push(hidden.clone());
+        }
+        self.cv2.forward(Tensor::cat(outputs, 1))
+    }
+}
+
+pub(super) struct C2fCibDwConfig {
+    common: C2fCommon,
+}
+
+impl C2fCibDwConfig {
+    pub(super) fn new(
+        in_channels: usize,
+        out_channels: usize,
+        repeats: usize,
+        shortcut: bool,
+    ) -> Self {
+        Self {
+            common: C2fCommon::new(in_channels, out_channels, repeats, shortcut),
+        }
+    }
+
+    pub(super) fn init<B: Backend>(&self, device: &Device<B>) -> C2fCibDw<B> {
+        let (cv1, cv2) = self.common.init_conv(device);
+        let m = (0..self.common.repeats)
+            .map(|_| CibDwConfig::new(self.common.hidden, self.common.shortcut).init(device))
+            .collect();
+        C2fCibDw { cv1, cv2, m }
     }
 }
 
@@ -595,6 +696,11 @@ mod tests {
 
                 let cib_block: C2fCib<Flex> = C2fCibConfig::new(384, 256, 1, true).init(&device);
                 let out = cib_block.forward(Tensor::zeros([1, 384, 20, 20], &device));
+                assert_eq!(out.dims(), [1, 256, 20, 20]);
+
+                let cib_dw_block: C2fCibDw<Flex> =
+                    C2fCibDwConfig::new(384, 256, 1, true).init(&device);
+                let out = cib_dw_block.forward(Tensor::zeros([1, 384, 20, 20], &device));
                 assert_eq!(out.dims(), [1, 256, 20, 20]);
 
                 let sc_down: ScDown<Flex> = ScDownConfig::new(128, 128, 3, 2).init(&device);
