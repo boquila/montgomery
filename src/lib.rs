@@ -12,11 +12,11 @@
 extern crate alloc;
 
 mod data;
+#[cfg(feature = "onnx")]
+pub mod export;
 pub mod models;
 #[cfg(feature = "training")]
 pub mod training;
-#[cfg(feature = "onnx")]
-pub mod export;
 
 #[cfg(feature = "pretrained")]
 use std::path::PathBuf;

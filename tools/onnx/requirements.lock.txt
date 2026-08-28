@@ -1,0 +1,9 @@
+# Dedicated development-time ONNX export environment. Never installed by the Rust CLI.
+# Python >=3.11,<3.15
+torch==2.13.0
+numpy==2.4.6
+safetensors==0.6.2
+onnx==1.20.1
+onnxruntime==1.23.2
+# Optional; required only with --simplify.
+onnxslim==0.1.82

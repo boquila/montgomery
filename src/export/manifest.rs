@@ -68,6 +68,7 @@ pub struct BridgeManifest {
 pub struct PublishedArtifact {
     pub path: std::path::PathBuf,
     pub sidecar: std::path::PathBuf,
+    pub external_data: Option<std::path::PathBuf>,
     pub sha256: String,
     pub bytes: u64,
 }

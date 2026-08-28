@@ -48,6 +48,15 @@ Ultralytics is distributed under AGPL-3.0. The adapted implementation is modifie
 data containers, deterministic worker-independent random streams, and record/replay diagnostics.
 Ultralytics does not endorse boquilens.
 
+The development-only tools/onnx exporter reconstructs Ultralytics-family graphs from the pinned
+sibling Ultralytics checkout at revision 461196cf09175b64c9b9bd8babebf081c0540520 and reconstructs
+YOLOX graphs from an explicit official 0.1.1rc0 checkout. Those sources are used only while
+producing and validating an ONNX artifact and are not bundled into the Rust runtime. Exported
+artifacts retain the architecture and checkpoint license/provenance recorded in their embedded
+metadata and JSON sidecar: Ultralytics-family artifacts are AGPL-3.0 by default (or the separately
+licensed terms applicable to the supplied model), while official YOLOX artifacts retain
+Apache-2.0 provenance. ONNX export does not relicense user datasets or checkpoints.
+
 The classification RandAugment policy structure and RandomErasing/RandomResizedCrop behavior are
 adapted from torchvision, distributed under the BSD 3-Clause License. The applicable license text
 is included in LICENSE-TORCHVISION. PyTorch and torchvision do not endorse boquilens.

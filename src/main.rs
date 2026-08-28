@@ -1,5 +1,9 @@
-﻿use std::path::PathBuf;
+use std::path::PathBuf;
 
+#[cfg(feature = "onnx")]
+use boquilens::export::{
+    CheckpointState, ExternalDataPolicy, OnnxExportOptions, OnnxPrecision, OnnxProfile, export_onnx,
+};
 use boquilens::{
     ModelId, PredictOptions, Predictor, annotate, annotate_segmentation, pack_weights,
 };
@@ -36,6 +40,64 @@ enum Command {
     Predict(PredictArgs),
     /// Pack imported tensor state into a versioned native Burnpack artifact.
     PackWeights(PackWeightsArgs),
+    /// Export the exact loaded Burn model weights to a validated portable ONNX artifact.
+    #[cfg(feature = "onnx")]
+    ExportOnnx(ExportOnnxArgs),
+}
+
+#[cfg(feature = "onnx")]
+#[derive(Debug, ClapArgs)]
+struct ExportOnnxArgs {
+    /// Model architecture represented by the checkpoint.
+    #[arg(long)]
+    model: ModelId,
+    /// Local trusted checkpoint: native .bpk, tensor-only .pt, or official YOLOX .pth.
+    #[arg(long)]
+    weights: PathBuf,
+    /// Final ONNX path. A missing .onnx suffix is added explicitly.
+    #[arg(long)]
+    output: PathBuf,
+    /// Square size or H,W. Detect/segment dimensions must be divisible by 32.
+    #[arg(long)]
+    imgsz: Option<String>,
+    /// Fixed batch size (dynamic batch is gated separately).
+    #[arg(long, default_value_t = 1)]
+    batch: usize,
+    #[arg(long)]
+    dynamic_batch: bool,
+    #[arg(long)]
+    dynamic_spatial: bool,
+    #[arg(long, default_value_t = 17)]
+    opset: u32,
+    #[arg(long, value_enum, default_value = "portable")]
+    profile: OnnxProfile,
+    #[arg(long, value_enum, default_value = "fp32")]
+    precision: OnnxPrecision,
+    #[arg(long, value_enum, default_value = "auto")]
+    external_data: ExternalDataPolicy,
+    /// Exact Python executable from the locked export environment.
+    #[arg(long)]
+    python: Option<PathBuf>,
+    /// Official YOLOX 0.1.1rc0 checkout (YOLOX only).
+    #[arg(long)]
+    yolox_repo: Option<PathBuf>,
+    /// Select EMA or raw model state when a future training checkpoint contains both.
+    #[arg(long, value_enum, default_value = "ema")]
+    checkpoint_state: CheckpointState,
+    #[arg(long)]
+    simplify: bool,
+    #[arg(long)]
+    force: bool,
+    #[arg(long)]
+    keep_intermediate: bool,
+    #[arg(long)]
+    reproducible: bool,
+    /// Skip PyTorch/ORT numerical comparison. Structural validation always remains mandatory.
+    #[arg(long)]
+    no_verify: bool,
+    /// Print the resulting artifact record as JSON.
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Debug, ClapArgs)]
@@ -123,6 +185,62 @@ fn main() -> boquilens::Result<()> {
             );
             Ok(())
         }
+        #[cfg(feature = "onnx")]
+        Command::ExportOnnx(args) => export_onnx_command(args),
+    }
+}
+
+#[cfg(feature = "onnx")]
+fn export_onnx_command(args: ExportOnnxArgs) -> boquilens::Result<()> {
+    let mut options = OnnxExportOptions::for_model(args.model, args.output);
+    if let Some(imgsz) = &args.imgsz {
+        let (height, width) = parse_imgsz(imgsz)?;
+        options.input_shape = [args.batch, 3, height, width];
+    } else {
+        options.input_shape[0] = args.batch;
+    }
+    options.profile = args.profile;
+    options.opset = args.opset;
+    options.precision = args.precision;
+    options.dynamic_batch = args.dynamic_batch;
+    options.dynamic_spatial = args.dynamic_spatial;
+    options.external_data = args.external_data;
+    options.verify = !args.no_verify;
+    options.python = args.python;
+    options.yolox_repo = args.yolox_repo;
+    options.checkpoint_state = args.checkpoint_state;
+    options.simplify = args.simplify;
+    options.force = args.force;
+    options.keep_intermediate = args.keep_intermediate;
+    options.reproducible = args.reproducible;
+    let artifact = export_onnx(args.model, &args.weights, options)?;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&artifact)?);
+    } else {
+        eprintln!(
+            "Exported {} to {} ({} bytes, SHA-256 {}); sidecar {}",
+            args.model,
+            artifact.path.display(),
+            artifact.bytes,
+            artifact.sha256,
+            artifact.sidecar.display()
+        );
+    }
+    Ok(())
+}
+
+#[cfg(feature = "onnx")]
+fn parse_imgsz(value: &str) -> boquilens::Result<(usize, usize)> {
+    let parts = value
+        .split([',', 'x', 'X'])
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(str::parse::<usize>)
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    match parts.as_slice() {
+        [size] => Ok((*size, *size)),
+        [height, width] => Ok((*height, *width)),
+        _ => Err("--imgsz must be one integer or H,W".into()),
     }
 }
 

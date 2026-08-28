@@ -39,9 +39,9 @@ pub(crate) fn write_snapshot(
 
     macro_rules! save {
         ($model:expr) => {
-            $model.save_into(&mut store).map_err(|error| {
-                format!("snapshot materialization failed: {error}")
-            })?
+            $model
+                .save_into(&mut store)
+                .map_err(|error| format!("snapshot materialization failed: {error}"))?
         };
     }
     match &predictor.model {
@@ -113,7 +113,7 @@ pub(crate) fn write_snapshot(
         .iter()
         .map(|(name, tensor)| TensorAuditEntry {
             name: name.clone(),
-            shape: tensor.shape.dims.clone(),
+            shape: tensor.shape.iter().copied().collect(),
             dtype: format!("{:?}", tensor.dtype).to_lowercase(),
         })
         .collect::<Vec<_>>();

@@ -41,6 +41,44 @@ including deterministic detect/segment/classify augmentation; it does not add a 
 CLI yet. See [AUGMENTATION_COMPATIBILITY.md](AUGMENTATION_COMPATIBILITY.md) for the pinned oracle,
 supported policies, and parity methodology.
 
+## ONNX export
+
+The default build includes an offline `export-onnx` bridge. Rust first loads the requested
+checkpoint into the exact boquilens architecture and snapshots those loaded parameters to
+SafeTensors. A pinned, repository-owned Python adapter then reconstructs the matching reference
+graph, loads every inference tensor strictly, exports ONNX, runs the ONNX checker and strict shape
+inference, executes the graph with ONNX Runtime CPU, compares deterministic inputs, and publishes
+the ONNX file plus `<model>.onnx.json` sidecar atomically. Python is needed only to produce the
+artifact; consuming the result does not require Python, PyTorch, Burn, or boquilens.
+
+Create the dedicated environment explicitly (the command never installs packages or downloads a
+model):
+
+```powershell
+python -m venv target/.venv
+target/.venv/Scripts/python.exe -m pip install -r tools/onnx/requirements.lock.txt
+```
+
+Ultralytics-family export requires the pinned sibling checkout at `../ultralytics`, revision
+`461196cf09175b64c9b9bd8babebf081c0540520`. YOLOX requires the official `0.1.1rc0` checkout at
+`target/yolox-ref/YOLOX-0.1.1rc0` or `--yolox-repo`. Source paths and package versions are checked
+before loading the model; a floating installed `ultralytics` wheel is not used.
+
+```powershell
+cargo run --locked --release -- export-onnx `
+  --model yolo26n `
+  --weights target/yolo26n-coco-ultralytics-v8.4-boquilens-v1.bpk `
+  --output target/yolo26n.onnx
+```
+
+The required portable profile takes float32 RGB NCHW tensors and leaves confidence filtering,
+NMS/top-k policy, source-image coordinate reversal, and mask assembly outside the graph. Use
+`--profile ultralytics` for the pinned Ultralytics-compatible packed layout. Fixed FP32 is the
+validated baseline; dynamic axes, FP16, and the separate `end2end` profile fail clearly until
+their own parity gates land. The sidecar is the normative input/output, preprocessing,
+postprocessing, validation, hash, and license contract. Exporting a checkpoint does not change the
+license of its architecture or weights; see [NOTICE](NOTICE).
+
 YOLO11, YOLOv8, and YOLO12 are the modern detect families whose predictions pass through classic
 class-aware non-maximum suppression (the others are NMS-free end-to-end); YOLOv8's head keeps the
 legacy full-3x3-conv classification towers while YOLO11/YOLO12 use the light DWConv flavor, and

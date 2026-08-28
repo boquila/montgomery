@@ -38,11 +38,24 @@ fn head_index(spec: ExportSpec) -> usize {
 }
 
 fn classification_rules(spec: ExportSpec, rules: &mut Vec<(String, String)>) {
-    let head = if spec.family == ExportFamily::Yolov8 { 9 } else { 10 };
+    let head = if spec.family == ExportFamily::Yolov8 {
+        9
+    } else {
+        10
+    };
     rules.extend([
-        ("^head\\.conv\\.conv\\.(.+)$".into(), format!("model.{head}.conv.conv.$1")),
-        ("^head\\.conv\\.bn\\.(.+)$".into(), format!("model.{head}.conv.bn.$1")),
-        ("^head\\.linear\\.(.+)$".into(), format!("model.{head}.linear.$1")),
+        (
+            "^head\\.conv\\.conv\\.(.+)$".into(),
+            format!("model.{head}.conv.conv.$1"),
+        ),
+        (
+            "^head\\.conv\\.bn\\.(.+)$".into(),
+            format!("model.{head}.conv.bn.$1"),
+        ),
+        (
+            "^head\\.linear\\.(.+)$".into(),
+            format!("model.{head}.linear.$1"),
+        ),
     ]);
 }
 
@@ -58,13 +71,12 @@ fn detection_rules(spec: ExportSpec, burn_head: &str, rules: &mut Vec<(String, S
     } else {
         "cv3"
     };
-    let levels = [("p3", 0usize), ("p4", 1), ("p5", 2)];
-    let available = if spec.family == ExportFamily::Yolov3Tiny {
-        &levels[1..]
+    let levels = if spec.family == ExportFamily::Yolov3Tiny {
+        vec![("p4", 0usize), ("p5", 1)]
     } else {
-        &levels[..]
+        vec![("p3", 0usize), ("p4", 1), ("p5", 2)]
     };
-    for (level, index) in available {
+    for (level, index) in levels {
         let box_names: &[(&str, usize)] = if spec.family == ExportFamily::Yolov3Tiny {
             &[("box_0", 0), ("box_1", 1), ("box_2", 2)]
         } else {
