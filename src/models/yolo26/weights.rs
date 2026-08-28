@@ -13,6 +13,27 @@ pub fn coco_artifact_filename(model: &str) -> String {
     format!("{model}-coco-ultralytics-v8.4-boquilens-v1.bpk")
 }
 
+/// The training dataset tag an official checkpoint was trained on, inferred from its task suffix:
+/// detection/segmentation/pose ride COCO, classification is ImageNet-1k, and OBB is DOTA-v1.
+pub fn dataset_tag(model: &str) -> &'static str {
+    if model.ends_with("-cls") {
+        "imagenet1k"
+    } else if model.ends_with("-obb") {
+        "dotav1"
+    } else {
+        "coco"
+    }
+}
+
+/// Recommended filename for the native artifact of any scale/task variant
+/// (e.g. `yolo26n-cls-imagenet1k-ultralytics-v8.4-boquilens-v1.bpk`).
+pub fn artifact_filename(model: &str) -> String {
+    format!(
+        "{model}-{}-ultralytics-v8.4-boquilens-v1.bpk",
+        dataset_tag(model)
+    )
+}
+
 /// A verified local release candidate produced during a v1 parity pass.
 ///
 /// Distribution URLs are intentionally absent until the AGPL artifacts are published from a

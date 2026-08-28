@@ -102,6 +102,12 @@ impl LetterboxedImage {
 
     /// Match Ultralytics' single-image rectangular inference letterbox: round the resized
     /// dimensions, reduce padding to the configured stride, center the image, and fill with 114.
+    ///
+    /// The resize deliberately stays on the hand-rolled cv2-equivalent bilinear sampler:
+    /// `fast_image_resize`'s U8 kernels quantize weights more coarsely than cv2 and fall outside
+    /// the preprocessing-parity budget of `measures_ultralytics_preprocessing_fixture_parity`,
+    /// while its parity-preserving U16 pipeline is slower than this loop (PERF_NOTES.md, the
+    /// letterbox evaluation).
     pub(crate) fn ultralytics(source: &DynamicImage, size: usize, stride: usize) -> Self {
         let source_width = source.width();
         let source_height = source.height();
@@ -157,6 +163,36 @@ impl LetterboxedImage {
             map_y(bbox[3]),
         ]
     }
+}
+
+/// Match Ultralytics' classification inference transform (`classify_transforms`): resize the
+/// shortest edge to `size` with anti-aliased bilinear filtering (torchvision `T.Resize` with an
+/// int size truncates the long-edge dimension), then a centered `size x size` crop.
+///
+/// The normalization constants of the official transform are identity, so callers only need RGB
+/// values scaled to `[0, 1]`. Classification models carry no geometry: nothing is padded, so
+/// there is no source-image mapping.
+pub(crate) fn classify_transform(source: &DynamicImage, size: usize) -> DynamicImage {
+    let source_width = source.width();
+    let source_height = source.height();
+    let short = source_width.min(source_height);
+    let long = source_width.max(source_height);
+    let new_long = (size as f64 * long as f64 / short as f64) as u32;
+    let (resized_width, resized_height) = if source_width <= source_height {
+        (size as u32, new_long)
+    } else {
+        (new_long, size as u32)
+    };
+    let mut resized = resize_fir(
+        source,
+        resized_width,
+        resized_height,
+        fir::ResizeAlg::Convolution(fir::FilterType::Bilinear),
+    );
+    let crop = size.min(resized.width().min(resized.height()) as usize) as u32;
+    let left = (resized.width() - crop) / 2;
+    let top = (resized.height() - crop) / 2;
+    DynamicImage::ImageRgb8(imageops::crop(&mut resized, left, top, crop, crop).to_image())
 }
 
 #[cfg(test)]

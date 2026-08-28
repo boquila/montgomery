@@ -16,7 +16,7 @@ pub mod models;
 use std::path::PathBuf;
 use std::{error::Error, fmt, path::Path, str::FromStr};
 
-use crate::data::LetterboxedImage;
+use crate::data::{IMAGENET_CLASSES, LetterboxedImage, classify_transform};
 #[cfg(feature = "pretrained")]
 use crate::models::yolo11::{
     Yolo11LConfig, Yolo11MConfig, Yolo11NConfig, Yolo11SConfig, Yolo11SegNConfig, Yolo11SegSConfig,
@@ -25,6 +25,7 @@ use crate::models::yolo11::{
 use crate::models::yolo26::head::MAX_DETECTIONS as YOLO26_MAX_DETECTIONS;
 #[cfg(feature = "pretrained")]
 use crate::models::yolo26::{
+    Yolo26ClsLConfig, Yolo26ClsMConfig, Yolo26ClsNConfig, Yolo26ClsSConfig, Yolo26ClsXConfig,
     Yolo26LConfig, Yolo26MConfig, Yolo26NConfig, Yolo26SConfig, Yolo26XConfig,
 };
 use crate::models::yolov3_tiny::Yolov3Tiny;
@@ -48,6 +49,14 @@ use sha2::{Digest, Sha256};
 
 /// The square input size used by the currently supported pretrained models.
 pub const INPUT_SIZE: usize = 640;
+
+/// The square input size used by the YOLO26-cls classification models (Ultralytics' classify
+/// default; the official checkpoints were trained at 224 px).
+pub const CLASSIFY_INPUT_SIZE: usize = 224;
+
+/// Number of ranked classes returned by [`Predictor::predict_classification`] (Ultralytics'
+/// `probs.top5` convention).
+pub const CLASSIFICATION_TOP_K: usize = 5;
 
 /// Stable identifier for a model architecture/scale in the boquilens catalog.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -79,6 +88,11 @@ pub enum ModelId {
     Yolo26M,
     Yolo26L,
     Yolo26X,
+    Yolo26NCls,
+    Yolo26SCls,
+    Yolo26MCls,
+    Yolo26LCls,
+    Yolo26XCls,
 }
 
 impl ModelId {
@@ -109,6 +123,11 @@ impl ModelId {
             Self::Yolo26M => "yolo26m",
             Self::Yolo26L => "yolo26l",
             Self::Yolo26X => "yolo26x",
+            Self::Yolo26NCls => "yolo26n-cls",
+            Self::Yolo26SCls => "yolo26s-cls",
+            Self::Yolo26MCls => "yolo26m-cls",
+            Self::Yolo26LCls => "yolo26l-cls",
+            Self::Yolo26XCls => "yolo26x-cls",
         }
     }
 }
@@ -149,9 +168,15 @@ impl FromStr for ModelId {
             "yolo26m" | "yolo26-medium" => Ok(Self::Yolo26M),
             "yolo26l" | "yolo26-large" => Ok(Self::Yolo26L),
             "yolo26x" | "yolo26-xlarge" => Ok(Self::Yolo26X),
+            "yolo26n-cls" | "yolo26n_cls" => Ok(Self::Yolo26NCls),
+            "yolo26s-cls" | "yolo26s_cls" => Ok(Self::Yolo26SCls),
+            "yolo26m-cls" | "yolo26m_cls" => Ok(Self::Yolo26MCls),
+            "yolo26l-cls" | "yolo26l_cls" => Ok(Self::Yolo26LCls),
+            "yolo26x-cls" | "yolo26x_cls" => Ok(Self::Yolo26XCls),
             _ => Err(format!(
                 "unknown model '{value}'; available models: yolox-nano/tiny/s/m/l/x, \
-                 yolov3-tinyu, yolov10n/s/m/b/l/x, yolo11n/s/m/l/x, yolo11n/s-seg, yolo26n/s/m/l/x"
+                 yolov3-tinyu, yolov10n/s/m/b/l/x, yolo11n/s/m/l/x, yolo11n/s-seg, yolo26n/s/m/l/x, \
+                 yolo26n/s/m/l/x-cls"
             )),
         }
     }
@@ -220,6 +245,17 @@ pub struct SegmentationDetection {
     pub mask: InstanceMask,
 }
 
+/// One image-classification result for the classification models.
+///
+/// `confidence` is the softmax probability of `class_id` in the model's class table (ImageNet-1k
+/// for the YOLO26-cls family). The predictor returns the strongest classes in descending order.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Classification {
+    pub class_id: usize,
+    pub class_name: &'static str,
+    pub confidence: f32,
+}
+
 /// Thresholds used during class-aware non-maximum suppression.
 #[derive(Debug, Clone, Copy)]
 pub struct PredictOptions {
@@ -270,6 +306,11 @@ enum RuntimeModel<B: Backend> {
     Yolo26M(Box<crate::models::yolo26::Yolo26M<B>>),
     Yolo26L(Box<crate::models::yolo26::Yolo26L<B>>),
     Yolo26X(Box<crate::models::yolo26::Yolo26X<B>>),
+    Yolo26ClsN(Box<crate::models::yolo26::Yolo26ClsN<B>>),
+    Yolo26ClsS(Box<crate::models::yolo26::Yolo26ClsS<B>>),
+    Yolo26ClsM(Box<crate::models::yolo26::Yolo26ClsM<B>>),
+    Yolo26ClsL(Box<crate::models::yolo26::Yolo26ClsL<B>>),
+    Yolo26ClsX(Box<crate::models::yolo26::Yolo26ClsX<B>>),
 }
 
 /// A ready-to-run object detector over a Burn backend.
@@ -334,6 +375,11 @@ fn load_ultralytics_checkpoint<B: Backend>(
         ModelId::Yolo26M => Box::new(load_variant!(Yolo26MConfig, RuntimeModel::Yolo26M)),
         ModelId::Yolo26L => Box::new(load_variant!(Yolo26LConfig, RuntimeModel::Yolo26L)),
         ModelId::Yolo26X => Box::new(load_variant!(Yolo26XConfig, RuntimeModel::Yolo26X)),
+        ModelId::Yolo26NCls => Box::new(load_variant!(Yolo26ClsNConfig, RuntimeModel::Yolo26ClsN)),
+        ModelId::Yolo26SCls => Box::new(load_variant!(Yolo26ClsSConfig, RuntimeModel::Yolo26ClsS)),
+        ModelId::Yolo26MCls => Box::new(load_variant!(Yolo26ClsMConfig, RuntimeModel::Yolo26ClsM)),
+        ModelId::Yolo26LCls => Box::new(load_variant!(Yolo26ClsLConfig, RuntimeModel::Yolo26ClsL)),
+        ModelId::Yolo26XCls => Box::new(load_variant!(Yolo26ClsXConfig, RuntimeModel::Yolo26ClsX)),
         ModelId::YoloxNano
         | ModelId::YoloxTiny
         | ModelId::YoloxS
@@ -388,6 +434,35 @@ macro_rules! impl_end_to_end_detector {
 
 impl_end_to_end_detector!(yolov10: [Yolov10N, Yolov10S, Yolov10M, Yolov10B, Yolov10L, Yolov10X]);
 impl_end_to_end_detector!(yolo26: [Yolo26N, Yolo26S, Yolo26M, Yolo26L, Yolo26X]);
+
+/// Uniform classification entry point shared by every YOLO26-cls scale variant, so the runtime
+/// can dispatch to any of them without naming the concrete scale type.
+trait EndToEndClassifier<B: Backend> {
+    fn classify(&self, input: Tensor<B, 4>) -> crate::models::yolo26::classification::ClassificationOutput<B>;
+}
+
+impl<B: Backend, M: EndToEndClassifier<B>> EndToEndClassifier<B> for Box<M> {
+    fn classify(&self, input: Tensor<B, 4>) -> crate::models::yolo26::classification::ClassificationOutput<B> {
+        (**self).classify(input)
+    }
+}
+
+macro_rules! impl_end_to_end_classifier {
+    ($($model:ident),+ $(,)?) => {
+        $(
+            impl<B: Backend> EndToEndClassifier<B> for crate::models::yolo26::$model<B> {
+                fn classify(
+                    &self,
+                    input: Tensor<B, 4>,
+                ) -> crate::models::yolo26::classification::ClassificationOutput<B> {
+                    self.forward(input)
+                }
+            }
+        )+
+    };
+}
+
+impl_end_to_end_classifier!(Yolo26ClsN, Yolo26ClsS, Yolo26ClsM, Yolo26ClsL, Yolo26ClsX);
 
 /// Uniform classic-detection entry point shared by every YOLO11 scale variant, so the runtime can
 /// dispatch to any of them without naming the concrete scale type.
@@ -745,7 +820,12 @@ impl<B: Backend> Predictor<B> {
             | ModelId::Yolo26S
             | ModelId::Yolo26M
             | ModelId::Yolo26L
-            | ModelId::Yolo26X => Err(format!(
+            | ModelId::Yolo26X
+            | ModelId::Yolo26NCls
+            | ModelId::Yolo26SCls
+            | ModelId::Yolo26MCls
+            | ModelId::Yolo26LCls
+            | ModelId::Yolo26XCls => Err(format!(
                 "{} currently requires --weights with a boquilens .bpk artifact; see the README's one-time weight preparation",
                 model_id
             )
@@ -932,7 +1012,12 @@ impl<B: Backend> Predictor<B> {
             | RuntimeModel::Yolo26S(_)
             | RuntimeModel::Yolo26M(_)
             | RuntimeModel::Yolo26L(_)
-            | RuntimeModel::Yolo26X(_) => LetterboxedImage::ultralytics(image, INPUT_SIZE, 32),
+            | RuntimeModel::Yolo26X(_)
+            | RuntimeModel::Yolo26ClsN(_)
+            | RuntimeModel::Yolo26ClsS(_)
+            | RuntimeModel::Yolo26ClsM(_)
+            | RuntimeModel::Yolo26ClsL(_)
+            | RuntimeModel::Yolo26ClsX(_) => LetterboxedImage::ultralytics(image, INPUT_SIZE, 32),
         };
         let input = image_to_tensor(prepared.image().clone(), &self.device).unsqueeze::<4>();
         let boxes_by_class = match &self.model {
@@ -1052,6 +1137,13 @@ impl<B: Backend> Predictor<B> {
             RuntimeModel::Yolo26X(model) => {
                 run_end_to_end(model, input, YOLO26_MAX_DETECTIONS, self.options.confidence)
             }
+            // Classification models carry no spatial detections; the class probabilities are
+            // exposed through predict_classification.
+            RuntimeModel::Yolo26ClsN(_)
+            | RuntimeModel::Yolo26ClsS(_)
+            | RuntimeModel::Yolo26ClsM(_)
+            | RuntimeModel::Yolo26ClsL(_)
+            | RuntimeModel::Yolo26ClsX(_) => vec![Vec::new()],
         };
 
         let mut detections = Vec::new();
@@ -1165,6 +1257,75 @@ impl<B: Backend> Predictor<B> {
         Ok((image, detections))
     }
 
+    /// Run image classification on an already-decoded image.
+    ///
+    /// Returns the top-5 classes by probability (Ultralytics' `probs.top5` convention), in
+    /// descending order. Requires a classification model (`yolo26n-cls` and siblings); detect
+    /// models should use [`Predictor::predict`]. The input mirrors Ultralytics' classify
+    /// inference transform exactly: bilinear resize of the shortest edge to 224 px (anti-aliased),
+    /// a centered 224x224 crop, and RGB values scaled to `[0, 1]` (the normalization constants are
+    /// identity).
+    pub fn predict_classification(&self, image: &DynamicImage) -> Result<Vec<Classification>> {
+        self.prepare_classification(image)?;
+        let input = image_to_tensor(
+            classify_transform(image, CLASSIFY_INPUT_SIZE),
+            &self.device,
+        )
+        .unsqueeze::<4>();
+        let output = match &self.model {
+            RuntimeModel::Yolo26ClsN(model) => model.classify(input / 255.0),
+            RuntimeModel::Yolo26ClsS(model) => model.classify(input / 255.0),
+            RuntimeModel::Yolo26ClsM(model) => model.classify(input / 255.0),
+            RuntimeModel::Yolo26ClsL(model) => model.classify(input / 255.0),
+            RuntimeModel::Yolo26ClsX(model) => model.classify(input / 255.0),
+            _ => unreachable!("prepare_classification rejects non-classification models"),
+        };
+        let probs: Vec<f32> = output
+            .probs
+            .into_data()
+            .iter::<B::FloatElem>()
+            .map(|value| value.elem::<f32>())
+            .collect();
+        let mut order: Vec<usize> = (0..probs.len()).collect();
+        order.sort_unstable_by(|&a, &b| probs[b].total_cmp(&probs[a]));
+        order.truncate(CLASSIFICATION_TOP_K);
+        Ok(order
+            .into_iter()
+            .map(|class_id| Classification {
+                class_id,
+                class_name: IMAGENET_CLASSES[class_id],
+                confidence: probs[class_id],
+            })
+            .collect())
+    }
+
+    /// Decode an image from disk and run image classification.
+    pub fn predict_classification_path(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> Result<(DynamicImage, Vec<Classification>)> {
+        let image = image::open(path)?;
+        let classifications = self.predict_classification(&image)?;
+        Ok((image, classifications))
+    }
+
+    /// Verify the loaded model is a classification model.
+    fn prepare_classification(&self, _image: &DynamicImage) -> Result<()> {
+        match &self.model {
+            RuntimeModel::Yolo26ClsN(_)
+            | RuntimeModel::Yolo26ClsS(_)
+            | RuntimeModel::Yolo26ClsM(_)
+            | RuntimeModel::Yolo26ClsL(_)
+            | RuntimeModel::Yolo26ClsX(_) => Ok(()),
+            _ => Err(format!(
+                "{} is not a classification model; class probabilities are available for the \
+                 yolo26n/s/m/l/x-cls variants",
+                self.model_id
+            )
+            .into()),
+        }
+    }
+
     /// Letterbox an image the way the loaded segmentation model expects.
     fn prepare_segmentation(&self, image: &DynamicImage) -> Result<LetterboxedImage> {
         match &self.model {
@@ -1211,10 +1372,8 @@ pub fn pack_weights(
             | ModelId::YoloxX
     ) {
         return Err(
-            "native weight packing is currently implemented only for the Ultralytics-family models \
-             (yolov3-tinyu, yolov10n/s/m/b/l/x, yolo11n/s/m/l/x, yolo11n/s-seg, and yolo26n/s/m/l/x); \
-             YOLOX loads \
-             its official .pth checkpoint directly"
+            "native weight packing is currently implemented only for the Ultralytics-family \
+             models; YOLOX loads its official .pth checkpoint directly"
                 .into(),
         );
     }
@@ -1270,6 +1429,11 @@ pub fn pack_weights(
                 ModelId::Yolo26M => pack_variant!(Yolo26MConfig),
                 ModelId::Yolo26L => pack_variant!(Yolo26LConfig),
                 ModelId::Yolo26X => pack_variant!(Yolo26XConfig),
+                ModelId::Yolo26NCls => pack_variant!(Yolo26ClsNConfig),
+                ModelId::Yolo26SCls => pack_variant!(Yolo26ClsSConfig),
+                ModelId::Yolo26MCls => pack_variant!(Yolo26ClsMConfig),
+                ModelId::Yolo26LCls => pack_variant!(Yolo26ClsLConfig),
+                ModelId::Yolo26XCls => pack_variant!(Yolo26ClsXConfig),
                 ModelId::YoloxNano
                 | ModelId::YoloxTiny
                 | ModelId::YoloxS
@@ -1277,10 +1441,8 @@ pub fn pack_weights(
                 | ModelId::YoloxL
                 | ModelId::YoloxX => {
                     return Err(
-                        "native weight packing is currently implemented only for the Ultralytics-family models \
-                         (yolov3-tinyu, yolov10n/s/m/b/l/x, yolo11n/s/m/l/x, yolo11n/s-seg, and yolo26n/s/m/l/x); \
-             YOLOX loads \
-                         its official .pth checkpoint directly"
+                        "native weight packing is currently implemented only for the Ultralytics-family \
+                         models; YOLOX loads its official .pth checkpoint directly"
                             .into(),
                     );
                 }
@@ -1665,6 +1827,11 @@ mod tests {
         assert_eq!("yolo26m".parse(), Ok(ModelId::Yolo26M));
         assert_eq!("yolo26l".parse(), Ok(ModelId::Yolo26L));
         assert_eq!("yolo26x".parse(), Ok(ModelId::Yolo26X));
+        assert_eq!("yolo26n-cls".parse(), Ok(ModelId::Yolo26NCls));
+        assert_eq!("yolo26s-cls".parse(), Ok(ModelId::Yolo26SCls));
+        assert_eq!("yolo26m-cls".parse(), Ok(ModelId::Yolo26MCls));
+        assert_eq!("yolo26l-cls".parse(), Ok(ModelId::Yolo26LCls));
+        assert_eq!("yolo26x-cls".parse(), Ok(ModelId::Yolo26XCls));
         assert!("yolo26".parse::<ModelId>().is_err());
     }
 
@@ -1706,6 +1873,11 @@ mod tests {
             ModelId::Yolo26M,
             ModelId::Yolo26L,
             ModelId::Yolo26X,
+            ModelId::Yolo26NCls,
+            ModelId::Yolo26SCls,
+            ModelId::Yolo26MCls,
+            ModelId::Yolo26LCls,
+            ModelId::Yolo26XCls,
         ] {
             assert!(
                 pack_weights(model_id, "unused.pt", "unused.bin")

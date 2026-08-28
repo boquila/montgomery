@@ -58,6 +58,48 @@ Verified v1 artifacts:
 | yolo11n-seg  |   5,919,808 | `A29FF611095F39E3875A22B03B93DC1FDCD5AE40A1310AA5DF4D3813E17B1FF4` |
 | yolo11s-seg  |  20,465,216 | `FD9841F96748BD32A50EF508340F86A161B331D44F3D16678A96BED1A76342BE` |
 
+### Model coverage vs the Ultralytics catalog
+
+The matrix below enumerates the Ultralytics model catalog of the v8.4.0 assets release (checkpoint
+availability verified by HTTP against the release, 2026-08-28) and what boquilens implements.
+Status: **landed** (verified parity + tests), **planned** (checkpoint exists, bring-up pending),
+**deferred** (possible but out of budget, with reason), or **unavailable** (no official checkpoint
+in the release).
+
+| Family  | Task   | Checkpoints in v8.4.0        | boquilens status                              |
+| ------- | ------ | ---------------------------- | --------------------------------------------- |
+| YOLOX   | detect | n/tiny/s/m/l/x (`.pth`)      | landed: n/tiny/s/m/l/x                        |
+| YOLOv3  | detect | u, tiny-u, spp-u             | landed: tiny-u                                 |
+| YOLOv5  | detect | u-variants n/s/m/l/x (+p6)   | deferred (older architecture; budget)          |
+| YOLOv6  | detect | none in release              | unavailable                                    |
+| YOLOv8  | detect | n/s/m/l/x                    | planned                                        |
+| YOLOv8  | seg    | n/s/m/l/x                    | planned                                        |
+| YOLOv8  | cls    | n/s/m/l/x                    | planned                                        |
+| YOLOv8  | pose   | n/s/m/l/x                    | planned                                        |
+| YOLOv8  | obb    | n/s/m/x (no l)               | planned                                        |
+| YOLOv8  | p2     | none in release              | unavailable                                    |
+| YOLOv9  | detect | t/s/m/c/e                    | deferred (new blocks + aux branches; budget)   |
+| YOLOv10 | detect | n/s/m/b/l/x                  | landed: n/s/m/b/l/x                            |
+| YOLO11  | detect | n/s/m/l/x                    | landed: n/s/m/l/x                              |
+| YOLO11  | seg    | n/s/m/l/x                    | landed: n/s; planned: m/l/x                    |
+| YOLO11  | cls    | n/s/m/l/x                    | planned                                        |
+| YOLO11  | pose   | n/s/m/l/x                    | planned                                        |
+| YOLO11  | obb    | n/s/m/l/x                    | planned                                        |
+| YOLO12  | detect | n/s/m/l/x                    | planned                                        |
+| YOLO12  | seg/cls/pose/obb | none in release    | unavailable                                    |
+| YOLO26  | detect | n/s/m/l/x                    | landed: n/s/m/l/x                              |
+| YOLO26  | seg    | n/s/m/l/x                    | planned                                        |
+| YOLO26  | cls    | n/s/m/l/x                    | planned                                        |
+| YOLO26  | pose   | n/s/m/l/x (COCO person)      | planned                                        |
+| YOLO26  | obb    | n/s/m/l/x (DOTA-15)          | planned                                        |
+| RT-DETR | detect | l, x (resnet50 absent)       | deferred (transformer decoder; separate bring-up) |
+| YOLOE   | detect/seg | YAML-only (no COCO `.pt`) | unavailable                                   |
+
+Bring-up order (owner priority: newest first, task-type reuse preferred): YOLO26
+cls/seg/pose/obb → YOLO12 detect → YOLO11 cls/pose/obb + seg m/l/x → YOLOv8 detect (+ tasks) →
+YOLOv9. Task-type result APIs (`Classification`, `PoseDetection`, `ObbDetection`) land with the
+YOLO26 versions and are reused by the older families' classic-NMS variants.
+
 ### Preparing experimental weights
 
 One-time conversion of an official Ultralytics checkpoint (Python is a conversion-time dependency

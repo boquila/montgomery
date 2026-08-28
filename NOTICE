@@ -15,6 +15,10 @@ The development-only tools/export_yolox_fixtures.py assembles a conversion-time 
 plain checkout of that repository (Apache-2.0) to generate golden parity fixtures; nothing from it
 is bundled or executed at runtime.
 
+The YOLOX letterbox preprocessing in src/data/letterbox.rs resizes with the fast_image_resize
+crate (https://github.com/cykooz/fast_image_resize), distributed under the MIT OR Apache-2.0
+licenses; this derivative uses the Apache-2.0 option (LICENSE-APACHE).
+
 The experimental src/models/yolov3_tiny, src/models/yolov10, src/models/yolo11, and
 src/models/yolo26 implementations interoperate with the public YOLOv3-Tiny-Ultralytics,
 YOLOv10 (n/s/m/b/l/x), YOLO11 (n/s/m/l/x, plus the n/s -seg instance-segmentation variants), and

@@ -63,7 +63,8 @@ struct PredictArgs {
     source: PathBuf,
 
     /// Model architecture and scale to run: yolox-nano/tiny/s/m/l/x, yolov3-tinyu,
-    /// yolov10n/s/m/b/l/x, yolo11n/s/m/l/x, yolo11n/s-seg, or yolo26n/s/m/l/x.
+    /// yolov10n/s/m/b/l/x, yolo11n/s/m/l/x, yolo11n/s-seg, yolo26n/s/m/l/x, or
+    /// yolo26n/s/m/l/x-cls.
     #[arg(long)]
     model: ModelId,
 
@@ -155,7 +156,7 @@ fn run_predict<B: Backend>(
         .clone()
         .unwrap_or_else(|| default_output(&args.source));
 
-    eprintln!("Loading {} COCO weights with Burn...", args.model);
+    eprintln!("Loading {} weights with Burn...", args.model);
     let predictor: Predictor<B> = match &args.weights {
         Some(checkpoint) => {
             Predictor::from_checkpoint_on_device(args.model, checkpoint.clone(), device, options)?
@@ -163,6 +164,18 @@ fn run_predict<B: Backend>(
         None => Predictor::new_on_device(args.model, options, device)?,
     };
 
+    if matches!(
+        args.model,
+        ModelId::Yolo26NCls
+            | ModelId::Yolo26SCls
+            | ModelId::Yolo26MCls
+            | ModelId::Yolo26LCls
+            | ModelId::Yolo26XCls
+    ) {
+        let (image, classifications) = predictor.predict_classification_path(&args.source)?;
+        report_classifications(args, &image, &output, &classifications)?;
+        return Ok(());
+    }
     if matches!(args.model, ModelId::Yolo11NSeg | ModelId::Yolo11SSeg) {
         let (image, detections) = predictor.predict_segmentation_path(&args.source)?;
         report_segmentations(args, &image, &output, &detections)?;
@@ -212,6 +225,56 @@ fn run_predict<B: Backend>(
         "Saved {} detections to {}",
         detections.len(),
         output.display()
+    );
+    Ok(())
+}
+
+/// Print classification results (top-5 table or JSON).
+///
+/// Classification models return class probabilities instead of spatial detections, so no annotated
+/// image is produced; the strongest class is reported on stderr for parity with the other tasks'
+/// output line.
+fn report_classifications(
+    args: &PredictArgs,
+    image: &image::DynamicImage,
+    output: &std::path::Path,
+    classifications: &[boquilens::Classification],
+) -> boquilens::Result<()> {
+    let _ = image;
+    let _ = output;
+    if args.json {
+        #[derive(Serialize)]
+        struct JsonOutput<'a> {
+            task: &'static str,
+            input_size_px: usize,
+            classes: &'a [boquilens::Classification],
+        }
+
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&JsonOutput {
+                task: "classification",
+                input_size_px: boquilens::CLASSIFY_INPUT_SIZE,
+                classes: classifications,
+            })?
+        );
+    } else if classifications.is_empty() {
+        println!("No classes predicted.");
+    } else {
+        println!("Top-{} classes:", classifications.len());
+        for (rank, classification) in classifications.iter().enumerate() {
+            println!(
+                "{:>2}. {:<24} {:>6.2}%",
+                rank + 1,
+                classification.class_name,
+                classification.confidence * 100.0
+            );
+        }
+    }
+    eprintln!(
+        "Top-1: {} ({:.2}%)",
+        classifications[0].class_name,
+        classifications[0].confidence * 100.0
     );
     Ok(())
 }

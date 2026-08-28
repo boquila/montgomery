@@ -32,6 +32,38 @@ impl<B: Backend> Conv<B> {
     }
 }
 
+/// Batch-normalization flavor of a `Conv` module.
+///
+/// Ultralytics' `initialize_weights` overrides PyTorch's BatchNorm defaults (eps 1e-3, momentum
+/// 0.03) and the detect/seg/pose/obb checkpoints were trained that way, but the official
+/// YOLO26-cls checkpoints carry plain PyTorch BatchNorm defaults (eps 1e-5, momentum 0.1) — the
+/// epsilon is part of the checkpoint's inference graph, so the flavor is a checkpoint attribute,
+/// not a global constant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) enum BnFlavor {
+    /// Ultralytics convention: eps 1e-3, momentum 0.03.
+    #[default]
+    Ultralytics,
+    /// PyTorch `nn.BatchNorm2d` defaults: eps 1e-5, momentum 0.1.
+    Pytorch,
+}
+
+impl BnFlavor {
+    fn eps(self) -> f64 {
+        match self {
+            Self::Ultralytics => 1e-3,
+            Self::Pytorch => 1e-5,
+        }
+    }
+
+    fn momentum(self) -> f64 {
+        match self {
+            Self::Ultralytics => 0.03,
+            Self::Pytorch => 0.1,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct ConvConfig {
     in_channels: usize,
@@ -40,6 +72,7 @@ pub(super) struct ConvConfig {
     stride: usize,
     groups: usize,
     act: bool,
+    bn: BnFlavor,
 }
 
 impl ConvConfig {
@@ -56,6 +89,7 @@ impl ConvConfig {
             stride,
             groups: 1,
             act: true,
+            bn: BnFlavor::default(),
         }
     }
 
@@ -66,6 +100,11 @@ impl ConvConfig {
 
     pub(super) fn without_act(mut self) -> Self {
         self.act = false;
+        self
+    }
+
+    pub(super) fn with_bn_flavor(mut self, bn: BnFlavor) -> Self {
+        self.bn = bn;
         self
     }
 
@@ -82,11 +121,9 @@ impl ConvConfig {
         .with_groups(self.groups)
         .with_bias(false)
         .init(device);
-        // Ultralytics' initialize_weights overrides PyTorch's BatchNorm defaults. Epsilon is part
-        // of the checkpoint's inference graph even though momentum only affects training.
         let bn = BatchNormConfig::new(self.out_channels)
-            .with_epsilon(1e-3)
-            .with_momentum(0.03)
+            .with_epsilon(self.bn.eps())
+            .with_momentum(self.bn.momentum())
             .init(device);
         Conv {
             conv,
@@ -119,6 +156,7 @@ pub(super) struct BottleneckConfig {
     channels: usize,
     hidden: usize,
     add: bool,
+    bn: BnFlavor,
 }
 
 impl BottleneckConfig {
@@ -131,13 +169,23 @@ impl BottleneckConfig {
             channels,
             hidden,
             add: shortcut,
+            bn: BnFlavor::default(),
         }
+    }
+
+    pub(super) fn with_bn_flavor(mut self, bn: BnFlavor) -> Self {
+        self.bn = bn;
+        self
     }
 
     pub(super) fn init<B: Backend>(&self, device: &Device<B>) -> Bottleneck<B> {
         Bottleneck {
-            cv1: ConvConfig::new(self.channels, self.hidden, 3, 1).init(device),
-            cv2: ConvConfig::new(self.hidden, self.channels, 3, 1).init(device),
+            cv1: ConvConfig::new(self.channels, self.hidden, 3, 1)
+                .with_bn_flavor(self.bn)
+                .init(device),
+            cv2: ConvConfig::new(self.hidden, self.channels, 3, 1)
+                .with_bn_flavor(self.bn)
+                .init(device),
             add: self.add,
         }
     }
@@ -169,6 +217,7 @@ pub(super) struct C3kConfig {
     channels: usize,
     repeats: usize,
     shortcut: bool,
+    bn: BnFlavor,
 }
 
 impl C3kConfig {
@@ -179,17 +228,33 @@ impl C3kConfig {
             channels,
             repeats,
             shortcut,
+            bn: BnFlavor::default(),
         }
+    }
+
+    pub(super) fn with_bn_flavor(mut self, bn: BnFlavor) -> Self {
+        self.bn = bn;
+        self
     }
 
     pub(super) fn init<B: Backend>(&self, device: &Device<B>) -> C3k<B> {
         let hidden = self.channels / 2;
         C3k {
-            cv1: ConvConfig::new(self.channels, hidden, 1, 1).init(device),
-            cv2: ConvConfig::new(self.channels, hidden, 1, 1).init(device),
-            cv3: ConvConfig::new(hidden * 2, self.channels, 1, 1).init(device),
+            cv1: ConvConfig::new(self.channels, hidden, 1, 1)
+                .with_bn_flavor(self.bn)
+                .init(device),
+            cv2: ConvConfig::new(self.channels, hidden, 1, 1)
+                .with_bn_flavor(self.bn)
+                .init(device),
+            cv3: ConvConfig::new(hidden * 2, self.channels, 1, 1)
+                .with_bn_flavor(self.bn)
+                .init(device),
             m: (0..self.repeats)
-                .map(|_| BottleneckConfig::new(hidden, hidden, self.shortcut).init(device))
+                .map(|_| {
+                    BottleneckConfig::new(hidden, hidden, self.shortcut)
+                        .with_bn_flavor(self.bn)
+                        .init(device)
+                })
                 .collect(),
         }
     }
@@ -227,6 +292,7 @@ pub(super) struct C3k2Shell {
     out_channels: usize,
     hidden: usize,
     repeats: usize,
+    bn: BnFlavor,
 }
 
 impl C3k2Shell {
@@ -243,13 +309,23 @@ impl C3k2Shell {
             out_channels,
             hidden: (out_channels as f32 * expansion) as usize,
             repeats,
+            bn: BnFlavor::default(),
         }
+    }
+
+    pub(super) fn with_bn_flavor(mut self, bn: BnFlavor) -> Self {
+        self.bn = bn;
+        self
     }
 
     fn init_conv<B: Backend>(&self, device: &Device<B>) -> (Conv<B>, Conv<B>) {
         (
-            ConvConfig::new(self.in_channels, 2 * self.hidden, 1, 1).init(device),
-            ConvConfig::new((2 + self.repeats) * self.hidden, self.out_channels, 1, 1).init(device),
+            ConvConfig::new(self.in_channels, 2 * self.hidden, 1, 1)
+                .with_bn_flavor(self.bn)
+                .init(device),
+            ConvConfig::new((2 + self.repeats) * self.hidden, self.out_channels, 1, 1)
+                .with_bn_flavor(self.bn)
+                .init(device),
         )
     }
 }
@@ -273,12 +349,21 @@ impl C3k2Config {
         }
     }
 
+    pub(super) fn with_bn_flavor(mut self, bn: BnFlavor) -> Self {
+        self.shell = self.shell.with_bn_flavor(bn);
+        self
+    }
+
     pub(super) fn init<B: Backend>(&self, device: &Device<B>) -> C3k2<B> {
         let (cv1, cv2) = self.shell.init_conv(device);
         // Ultralytics' plain C3k2 bottleneck keeps the default half-width expansion.
         let hidden = self.shell.hidden;
         let m = (0..self.shell.repeats)
-            .map(|_| BottleneckConfig::new(hidden, hidden / 2, self.shortcut).init(device))
+            .map(|_| {
+                BottleneckConfig::new(hidden, hidden / 2, self.shortcut)
+                    .with_bn_flavor(self.shell.bn)
+                    .init(device)
+            })
             .collect();
         C3k2 { cv1, cv2, m }
     }
@@ -330,11 +415,20 @@ impl C3k2C3kConfig {
         }
     }
 
+    pub(super) fn with_bn_flavor(mut self, bn: BnFlavor) -> Self {
+        self.shell = self.shell.with_bn_flavor(bn);
+        self
+    }
+
     pub(super) fn init<B: Backend>(&self, device: &Device<B>) -> C3k2C3k<B> {
         let (cv1, cv2) = self.shell.init_conv(device);
         // Ultralytics builds `C3k(self.c, self.c, 2, shortcut)` for every C3k chain block.
         let m = (0..self.shell.repeats)
-            .map(|_| C3kConfig::new(self.shell.hidden, 2, self.shortcut).init(device))
+            .map(|_| {
+                C3kConfig::new(self.shell.hidden, 2, self.shortcut)
+                    .with_bn_flavor(self.shell.bn)
+                    .init(device)
+            })
             .collect();
         C3k2C3k { cv1, cv2, m }
     }
@@ -390,8 +484,12 @@ impl C3k2AttnConfig {
         let m = (0..self.shell.repeats)
             .map(|_| {
                 (
-                    BottleneckConfig::new(hidden, hidden / 2, self.shortcut).init(device),
-                    PsaBlockConfig::new(hidden).init(device),
+                    BottleneckConfig::new(hidden, hidden / 2, self.shortcut)
+                        .with_bn_flavor(self.shell.bn)
+                        .init(device),
+                    PsaBlockConfig::new(hidden)
+                        .with_bn_flavor(self.shell.bn)
+                        .init(device),
                 )
             })
             .collect();
@@ -444,6 +542,7 @@ pub(super) struct AttentionConfig {
     dim: usize,
     num_heads: usize,
     attn_ratio: f32,
+    bn: BnFlavor,
 }
 
 impl AttentionConfig {
@@ -452,7 +551,13 @@ impl AttentionConfig {
             dim,
             num_heads,
             attn_ratio: 0.5,
+            bn: BnFlavor::default(),
         }
+    }
+
+    pub(super) fn with_bn_flavor(mut self, bn: BnFlavor) -> Self {
+        self.bn = bn;
+        self
     }
 
     pub(super) fn init<B: Backend>(&self, device: &Device<B>) -> Attention<B> {
@@ -461,13 +566,16 @@ impl AttentionConfig {
         let qkv_channels = self.dim + key_dim * self.num_heads * 2;
         Attention {
             qkv: ConvConfig::new(self.dim, qkv_channels, 1, 1)
+                .with_bn_flavor(self.bn)
                 .without_act()
                 .init(device),
             proj: ConvConfig::new(self.dim, self.dim, 1, 1)
+                .with_bn_flavor(self.bn)
                 .without_act()
                 .init(device),
             pe: ConvConfig::new(self.dim, self.dim, 3, 1)
                 .depthwise()
+                .with_bn_flavor(self.bn)
                 .without_act()
                 .init(device),
             num_heads: self.num_heads,
@@ -497,19 +605,33 @@ impl<B: Backend> PsaBlock<B> {
 
 pub(super) struct PsaBlockConfig {
     dim: usize,
+    bn: BnFlavor,
 }
 
 impl PsaBlockConfig {
     pub(super) fn new(dim: usize) -> Self {
-        Self { dim }
+        Self {
+            dim,
+            bn: BnFlavor::default(),
+        }
+    }
+
+    pub(super) fn with_bn_flavor(mut self, bn: BnFlavor) -> Self {
+        self.bn = bn;
+        self
     }
 
     pub(super) fn init<B: Backend>(&self, device: &Device<B>) -> PsaBlock<B> {
         PsaBlock {
-            attn: AttentionConfig::new(self.dim, (self.dim / 64).max(1)).init(device),
+            attn: AttentionConfig::new(self.dim, (self.dim / 64).max(1))
+                .with_bn_flavor(self.bn)
+                .init(device),
             ffn: (
-                ConvConfig::new(self.dim, self.dim * 2, 1, 1).init(device),
+                ConvConfig::new(self.dim, self.dim * 2, 1, 1)
+                    .with_bn_flavor(self.bn)
+                    .init(device),
                 ConvConfig::new(self.dim * 2, self.dim, 1, 1)
+                    .with_bn_flavor(self.bn)
                     .without_act()
                     .init(device),
             ),
@@ -542,20 +664,38 @@ impl<B: Backend> C2Psa<B> {
 pub(super) struct C2PsaConfig {
     channels: usize,
     repeats: usize,
+    bn: BnFlavor,
 }
 
 impl C2PsaConfig {
     pub(super) fn new(channels: usize, repeats: usize) -> Self {
-        Self { channels, repeats }
+        Self {
+            channels,
+            repeats,
+            bn: BnFlavor::default(),
+        }
+    }
+
+    pub(super) fn with_bn_flavor(mut self, bn: BnFlavor) -> Self {
+        self.bn = bn;
+        self
     }
 
     pub(super) fn init<B: Backend>(&self, device: &Device<B>) -> C2Psa<B> {
         let hidden = self.channels / 2;
         C2Psa {
-            cv1: ConvConfig::new(self.channels, hidden * 2, 1, 1).init(device),
-            cv2: ConvConfig::new(hidden * 2, self.channels, 1, 1).init(device),
+            cv1: ConvConfig::new(self.channels, hidden * 2, 1, 1)
+                .with_bn_flavor(self.bn)
+                .init(device),
+            cv2: ConvConfig::new(hidden * 2, self.channels, 1, 1)
+                .with_bn_flavor(self.bn)
+                .init(device),
             m: (0..self.repeats)
-                .map(|_| PsaBlockConfig::new(hidden).init(device))
+                .map(|_| {
+                    PsaBlockConfig::new(hidden)
+                        .with_bn_flavor(self.bn)
+                        .init(device)
+                })
                 .collect(),
         }
     }

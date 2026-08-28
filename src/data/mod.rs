@@ -2,6 +2,8 @@
 //!
 //! Rich source ingestion and augmentation intentionally remain outside the MVP.
 
+mod imagenet;
 mod letterbox;
 
-pub(crate) use letterbox::LetterboxedImage;
+pub(crate) use letterbox::{LetterboxedImage, classify_transform};
+pub use imagenet::CLASSES as IMAGENET_CLASSES;

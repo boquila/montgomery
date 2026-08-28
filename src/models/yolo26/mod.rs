@@ -9,10 +9,15 @@
 
 pub mod blocks;
 pub mod body;
+pub mod classification;
 pub mod head;
 pub mod model;
 pub mod weights;
 
+pub use classification::{
+    Yolo26ClsL, Yolo26ClsLConfig, Yolo26ClsM, Yolo26ClsMConfig, Yolo26ClsN, Yolo26ClsNConfig,
+    Yolo26ClsS, Yolo26ClsSConfig, Yolo26ClsX, Yolo26ClsXConfig,
+};
 pub use model::{
     Yolo26L, Yolo26LConfig, Yolo26M, Yolo26MConfig, Yolo26N, Yolo26NConfig, Yolo26S, Yolo26SConfig,
     Yolo26X, Yolo26XConfig,

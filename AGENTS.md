@@ -95,6 +95,15 @@ for CPU and inflates the medians. The README compares those numbers against the 
 runtime measured with `tools/bench_ultralytics_cpu.py` (same machine, same methodology, fused
 conv+bn) using the conversion venv.
 
+Letterbox preprocessing cost (JPEG decode, both letterbox transforms, scaler candidates, and
+canvas parity diffs; writes comparison PNGs under `target/`) is measured by the ignored
+`measures_letterbox_resize_cost` test; see PERF_NOTES.md §5 for the recorded
+`fast_image_resize` adoption/evaluation numbers:
+
+```console
+cargo test --locked --release measures_letterbox_resize_cost -- --ignored --nocapture
+```
+
 PERF_NOTES.md records the methodology audit plus alternative-CPU-backend measurements. The
 experimental `cpu-simd` (Flex `x86-v4`) and `cpu-cubecl` (`burn-cpu`) features exist only to
 reproduce those measurements; `cpu-cubecl` is numerically unsound on burn 0.21.0-pre.4 (see

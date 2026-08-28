@@ -169,7 +169,110 @@ Notes:
    oneDNN-style conv fusion), not in this crate. The GPU path already exists for latency-critical
    use.
 
-## 5. Reproduction commands
+## 5. Letterbox preprocessing: `fast_image_resize` evaluation (2026-08-28)
+
+Follow-up to §3: the ~33 ms of non-forward CLI overhead includes the letterbox resize, implemented
+as a hand-rolled per-pixel f64 cv2-linear loop (`LetterboxedImage::ultralytics`) and the `image`
+crate's scalar Triangle resampling (`LetterboxedImage::yolox`). Evaluated the `fast_image_resize`
+crate (fir) 6.0.0 — SIMD (SSE4.1/AVX2) convolution kernels compiled unconditionally and selected at
+runtime via CPU-feature detection; the per-feature cargo flags of fir 4.x no longer exist — as a
+drop-in scaler for both letterbox paths, inspired by boquilahub's usage. License: MIT OR
+Apache-2.0. Single-threaded here (fir's `rayon` feature not enabled; letterboxing one image per CLI
+run does not want a 32-thread pool).
+
+Microbenchmark: ignored test `measures_letterbox_resize_cost` in `src/data/letterbox.rs`
+(release mode; median of 10 runs after 3 warmups):
+
+```console
+cargo test --locked --release measures_letterbox_resize_cost -- --ignored --nocapture
+```
+
+It times JPEG decode, both letterbox constructors, the raw scalers, and fir candidates on
+`assets/dog_bike_man.jpg` (786x600) plus generated 1920x1080 / 3840x2160 images under `target/`,
+diffs canvases, and writes the reference-image canvases to `target/` for cross-checking against
+`cv2.resize` (the throwaway `target/letterbox_fir_compare.py` used the conversion venv against the
+lossless PNG dump of the decoded source, so only sampler differences are measured).
+
+### 5.1 Numbers (medians, release, 9950X3D)
+
+Ultralytics letterbox (640, stride 32) — the path shared by v3-tinyu, v10, 11, 11-seg, 26:
+
+| Source | Decode | Hand-rolled f64 cv2-linear | fir U8 `Interpolation(Bilinear)` | fir U16 `Interpolation(Bilinear)` |
+| --- | ---: | ---: | ---: | ---: |
+| 786x600 -> 640x489 | 0.91 ms | 4.57 ms | 0.99 ms (4.6x) | 2.83 ms (1.6x) |
+| 1920x1080 -> 640x360 | 4.28 ms | 4.12 ms | 1.79 ms (2.3x) | 5.23 ms (0.8x) |
+| 3840x2160 -> 640x360 | 15.0 ms | 6.36 ms | 4.65 ms (1.4x) | 14.9 ms (0.4x) |
+
+YOLOX letterbox (640, top-left anchor) — `imageops::Triangle` vs fir `Convolution(Bilinear)`:
+
+| Source | imageops Triangle | fir Conv(Bilinear) | Speedup |
+| --- | ---: | ---: | ---: |
+| 786x600 -> 640x488 | 4.50 ms | 1.22 ms | 3.7x |
+| 1920x1080 -> 640x360 | 8.89 ms | 2.05 ms | 4.3x |
+| 3840x2160 -> 640x360 | 18.7 ms | 5.57 ms | 3.4x |
+
+### 5.2 Pixel exactness (reference image, 786x600 -> 640x489)
+
+- fir U8 `Interpolation(Bilinear)` vs the hand-rolled f64 cv2-linear: max delta 1/channel, mean
+  0.133, 13.3% of bytes differ.
+- fir U8 vs `cv2.resize` INTER_LINEAR on the identical source: max 1, mean 0.168 — while the
+  hand-rolled sampler measures max 1, mean 0.102 against the same cv2 reference. fir's U8
+  fixed-point weight quantization is measurably farther from cv2 than the f64 loop.
+- Against the official Ultralytics-preprocessed fixture (`yolov3-tinyu-preprocessed-reference.png`,
+  gate: mean <= 0.11, max <= 2): hand-rolled 0.1072 (passes), fir U8 **0.1721 (fails)**, fir U16
+  **0.1072 (passes)**. fir's U16x3 pipeline (u8 widened by *257, resize in 16-bit fixed point,
+  narrowed with round(v/257)) agrees with the f64 loop on 99.95% of bytes (mean 0.0005) — f64-quality
+  output, but the O(source-pixel) conversions cost more than they save: 1.6x on the reference image,
+  0.8x at 1080p, 0.4x at 4K.
+- fir `Convolution(Bilinear)` vs the previous `imageops::Triangle` YOLOX canvas: max 1/channel,
+  mean 0.053-0.106. Both are anti-aliased triangle-kernel resamplers (kernel stretched by the
+  downscale factor); against PIL's anti-aliased BILINEAR, fir (mean 0.099) is as close as Triangle
+  itself (mean 0.106). The YOLOX golden tests feed the fixture's preprocessed tensor directly and
+  do not gate on letterbox pixels.
+
+### 5.3 Decision
+
+- **YOLOX path: ADOPTED.** `LetterboxedImage::yolox` now resizes with fir
+  `Convolution(Bilinear)` (runtime-dispatched SIMD): 3.4-4.3x faster, geometry and 114 fill
+  unchanged, canvas within +/-1/255 of the previous Triangle sampler (the same drift band the
+  sampler already had against the official YOLOX cv2 letterbox). fir's conversion of any source to
+  RGB8 before resizing matches how the Ultralytics transform already behaved; RGBA sources now
+  drop alpha before (not after) resizing on this path.
+- **Ultralytics path: REJECTED.** fir U8 `Interpolation(Bilinear)` is fast (1.4-4.6x) but breaks
+  the documented preprocessing-parity budget (0.172 vs 0.11 mean against the official letterbox);
+  adopting it would mean relaxing a parity gate. The parity-preserving U16 pipeline is slower than
+  the hand-rolled loop for sources >= 1080p and only 1.6x on the reference image — not a
+  meaningful, consistent win. The hand-rolled cv2-linear loop stays.
+- End-to-end gates after adoption: yolov10n, yolo11n, yolo11n-seg CLI `--json` detections are
+  **bit-identical** to before (their path is untouched). yolox-tiny (3 detections): worst edge
+  0.93 px, worst confidence delta 0.07%. yolox-nano: top-of-list detections stable (top-3 within
+  ~1 px / 1.5%), but its 76-detection near-threshold tail reshuffled (7 appeared / 7 disappeared at
+  conf 0.25-0.78, including a degenerate zero-height `donut` at the image bottom edge) — inherent
+  NMS sensitivity to +/-1/255 input noise, the same class of instability AGENTS.md documents for
+  f16 artifacts. `yolo11n_seg_matches_ultralytics_end_to_end` / `yolo11s_seg_matches_ultralytics_end_to_end`
+  pass with mask IoU 0.987-0.993 (gate 0.95), conf deltas <= 0.5e-2.
+- Product path (CLI wall time, n=5 medians, same session): yolo11n 164.4 -> 155.3 ms (path
+  unchanged; session drift — the Ultralytics side re-measured 15.1 ms vs 13.5-14.1 ms before);
+  yolox-nano 1496.0 -> 1489.5 ms (letterbox saves ~3.3 of ~1490 ms — the forward dominates, as §3
+  concluded).
+- License: fir is MIT OR Apache-2.0, dual-licensed; recorded in NOTICE. No attribution file
+  redistribution required.
+
+Letterbox reproduction commands:
+
+```console
+# microbenchmark (timings, canvas diffs, cv2-comparison PNGs under target/)
+cargo test --locked --release measures_letterbox_resize_cost -- --ignored --nocapture
+
+# full ignored regression (all families; includes the seg e2e and preprocessing fixture gates)
+cargo test --locked --release -- --ignored --test-threads 1
+
+# e2e JSON diff of detections before/after a letterbox change (throwaway script under target/)
+& target\boquilens-default.exe predict --model yolo11n-seg --weights target\yolo11n-seg-coco-ultralytics-v8.4-boquilens-v1.bpk --source assets\dog_bike_man.jpg --json --masks --output target\bench-run.png
+& target\.venv\Scripts\python.exe target\letterbox_fir_compare.py
+```
+
+## 6. Reproduction commands
 
 ```console
 # baseline + product-path binary
