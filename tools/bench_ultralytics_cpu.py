@@ -25,7 +25,9 @@ def benchmark(checkpoint: str, warmup_runs: int, timed_runs: int) -> None:
         fused = "fused"
     except Exception:  # noqa: BLE001 - fuse is an optimization, not a requirement
         fused = "unfused"
-    input_tensor = torch.zeros(1, 3, 640, 640)
+    # Classification models run at Ultralytics' 224 px classify default; detection at 640 px.
+    input_size = 224 if getattr(model, "task", None) == "classify" else 640
+    input_tensor = torch.zeros(1, 3, input_size, input_size)
 
     with torch.inference_mode():
         for _ in range(warmup_runs):
@@ -40,7 +42,8 @@ def benchmark(checkpoint: str, warmup_runs: int, timed_runs: int) -> None:
     model_id = checkpoint.removesuffix(".pt").rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
     print(
         f"{model_id:>9}: {samples[len(samples) // 2]:>7.1f} ms median, {samples[0]:>7.1f} ms min  "
-        f"(single image, batch 1, 640 px, {timed_runs} runs, PyTorch {torch.__version__} CPU, {fused})",
+        f"(single image, batch 1, {input_size} px, {timed_runs} runs, "
+        f"PyTorch {torch.__version__} CPU, {fused})",
         flush=True,
     )
 

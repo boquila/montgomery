@@ -19,14 +19,24 @@ end.
 - `src/models/yolo26/`: experimental YOLO26 (n/s/m/l/x) implementation, including the
   C3k2/residual-SPPF/C2PSA bodies (m/l/x force the C3k chain onto the early backbone stages) with an
   attention P5 stage, DFL-free NMS-free end-to-end head, native Burnpack loading, and version
-  metadata.
+  metadata. The family also ships `-seg` ImageNet COCO instance-segmentation variants (n/s/m/l/x;
+  the same bodies plus Ultralytics' `Segment26` head: `one2one_cv4` mask tower and the `Proto26`
+  module that fuses P4/P5 into the stride-4 prototypes, `segmentation.rs`) and `-cls` ImageNet-1k
+  classification variants (n/s/m/l/x): the backbone truncated at the C2PSA stage plus Ultralytics'
+  `Classify` head (1x1 conv to 1280 channels, global average pool, linear to 1000), at 224 px input
+  (`classification.rs`). Classification checkpoints use plain PyTorch batch-norm defaults
+  (eps 1e-5, momentum 0.1), not the Ultralytics-initialized values — see the BnFlavor invariant
+  below.
 - `src/models/yolo11/`: experimental YOLO11 (n/s/m/l/x) implementation, including the
   C3k2/plain-SPPF/C2PSA bodies (m/l/x force the C3k chain onto the early backbone stages; the P5
   stage is a plain C3k2 chain, not attention) with a classic DFL head (reg_max 16), NMS-based
   postprocessing, native Burnpack loading, and version metadata. The n/s scales also ship
   `-seg` instance-segmentation variants: the same bodies plus Ultralytics' Segment head (Proto
   module at stride 4, 32 mask coefficients per anchor) decoded through the same NMS with the
-  coefficients carried along (`segment_head.rs`, masks assembled in `src/lib.rs`).
+  coefficients carried along (`segment_head.rs`, masks assembled in `src/lib.rs`). The family also
+  ships `-cls` ImageNet-1k classification variants (n/s/m/l/x, `classification.rs`): the classify
+  graph is identical to YOLO26-cls (same YAML backbone, checkpoint key layout, plain-PyTorch BN
+  flavor), so it reuses the shared classification modules from `src/models/yolo26/classification.rs`.
 - `src/data/letterbox.rs`: model-specific preprocessing and reversible source-image geometry.
 - `src/lib.rs`: `ModelId`, `Predictor`, detection results, NMS integration, and weight packing API.
 - `src/main.rs`: the `predict` and `pack-weights` CLI commands.
@@ -44,7 +54,9 @@ cargo run --release -- predict --model yolox-nano --source assets/dog_bike_man.j
 
 YOLOv3-Tiny-U, YOLO11, and the YOLOv10/YOLO26 scales require a tensor-only state and then a native
 artifact. The complete workflow is documented in `README.md`; the short form (substitute any
-`yolov10n/s/m/b/l/x`, `yolo11n/s/m/l/x`, or `yolo26n/s/m/l/x` name):
+`yolov10n/s/m/b/l/x`, `yolo11n/s/m/l/x`, or `yolo26n/s/m/l/x` name; task variants follow the same
+loop with their suffixes — `yolo11n/s-seg`, `yolo26n/s/m/l/x-seg`, and the `-cls` classification
+variants of both families):
 
 ```console
 python tools/export_ultralytics_state.py yolov10n.pt target/yolov10n-state.pt
@@ -172,6 +184,35 @@ belong under `target/` and must not be committed.
   observed worst case is ~2.8 px on one edge while the detection still matches at box IoU >= 0.98
   and mask IoU >= 0.99. Golden fixtures tolerate this via statistics; the end-to-end seg tests gate
   on box IoU and mask IoU rather than per-edge deltas.
+- Instance segmentation (YOLO26-seg, n/s/m/l/x) rides the end2end decode instead of NMS: the
+  Segment26 head appends 32 **raw** mask coefficients to the one2one rows, Ultralytics' end2end
+  postprocess (top-300 anchors by best score, top-300 pairs, confidence filter, **no NMS**) is
+  applied with the coefficients gathered along, and masks assemble exactly like
+  `ops.process_mask(upsample=True)` as in YOLO11-seg. The YOLO26 `Proto26` module differs from
+  YOLO11's P3-only Proto: P4/P5 are 1x1-refined, nearest-upsampled 2x/4x, summed onto P3, fused by
+  a 3x3 conv, and then run through the classic conv/upsample/conv/proto projection; prototype
+  channels are `make_divisible(min(256, max_channels) * width, 8)` (64/128/256/256/384) and the
+  mask tower is full 3x3 Convs with hidden width `max(ch[0] / 4, 32)` (32/32/64/64/96).
+- End2end (one2one) heads keep near-duplicate detections classic NMS would suppress, and the weak
+  duplicates' scores sit in the top-k near-tie region where f16 rounding reorders membership: the
+  seg end-to-end tests exempt duplicates (same class, IoU >= 0.9 with a stronger expected
+  detection) from the confidence gate, require every non-duplicate official detection at conf
+  >= 0.55 to be matched, and relax the mask IoU gate to 0.85 for masks under 2000 covered pixels
+  (boundary-dominated; 0.92 observed on a 313-px mask).
+- Classification checkpoints (YOLO26-cls, and by extension any Ultralytics classify task trained
+  through the classification pipeline) carry plain PyTorch `nn.BatchNorm2d` defaults — eps 1e-5,
+  momentum 0.1 — not the Ultralytics-initialized values (eps 1e-3, momentum 0.03) the detect
+  families use. The same eps-vs-running-variance visibility lesson as YOLOX applies. The yolo26
+  blocks expose a `BnFlavor` (`Ultralytics` default, `Pytorch` for classification); every Conv in a
+  classify graph must opt into `BnFlavor::Pytorch` explicitly. Golden fixtures are the gate that
+  catches a wrong flavor.
+- Classification inference runs at 224 px with Ultralytics' classify transform: anti-aliased
+  shortest-edge resize, centered 224x224 crop, RGB scaled to `[0, 1]` (identity normalization
+  constants). The 1000-way softmax is preprocessing-rounding sensitive: near-tied classes can swap
+  adjacent ranks between PIL and the Rust resize even though each probability moves by <1%, so the
+  end-to-end classification tests compare the top-5 class set plus per-class probabilities (3e-2)
+  instead of rank order. Ultralytics fed boquilens' canvas reproduces boquilens' probabilities
+  exactly — the golden fixtures pin the graph at 2e-4 on the shared canvas.
 - YOLO11's SPPF input projection keeps its SiLU activation even though current Ultralytics source
   constructs it `act=False`: the official checkpoints predate that refactor and the pickled modules
   still carry the activation. The golden tensor tests enforce the checkpoint behavior. YOLO26's

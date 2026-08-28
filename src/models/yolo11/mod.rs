@@ -9,15 +9,21 @@
 //! C3k chain onto every C3k2 stage, so those variants declare a structurally different body graph.
 //! The `-seg` variants reuse the same bodies and detection decode and add Ultralytics' Segment
 //! head ([`segment_head`]): a stride-4 Proto module plus 32 raw mask coefficients per anchor that
-//! ride along through the same class-aware NMS.
+//! ride along through the same class-aware NMS. The `-cls` variants ([`classification`]) run the
+//! ImageNet-1k classify graph, which is identical to YOLO26-cls and reuses its shared modules.
 
 pub mod blocks;
 pub mod body;
+pub mod classification;
 pub mod head;
 pub mod model;
 pub mod segment_head;
 pub mod weights;
 
+pub use classification::{
+    Yolo11ClsL, Yolo11ClsLConfig, Yolo11ClsM, Yolo11ClsMConfig, Yolo11ClsN, Yolo11ClsNConfig,
+    Yolo11ClsS, Yolo11ClsSConfig, Yolo11ClsX, Yolo11ClsXConfig,
+};
 pub use model::{
     Yolo11L, Yolo11LConfig, Yolo11M, Yolo11MConfig, Yolo11N, Yolo11NConfig, Yolo11S, Yolo11SConfig,
     Yolo11SegN, Yolo11SegNConfig, Yolo11SegS, Yolo11SegSConfig, Yolo11X, Yolo11XConfig,

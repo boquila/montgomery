@@ -8,31 +8,39 @@ or ONNX Runtime.
 
 ## Models
 
-Every model runs **object detection** on COCO-80 classes at 640 px input; the YOLO11-seg variants
-additionally run **instance segmentation**. The only runtime mode is **Predict** (via the CLI and
+Every model runs **object detection** on COCO-80 classes at 640 px input; the YOLO11-seg and
+YOLO26-seg variants add **instance segmentation**, and the YOLO26-cls and YOLO11-cls variants run
+**image classification** on ImageNet-1k at 224 px. The only runtime mode is **Predict** (via the
+CLI and
 the Rust API); training and validation are out of scope. Experimental models additionally support a
 one-time `pack-weights` conversion into boquilens' native Burnpack format.
 
-| Model    | Status       | Task             | Modes   | Variants               | Weights                          |
-| -------- | ------------ | ---------------- | ------- | ---------------------- | -------------------------------- |
-| YOLOX    | stable       | Detect           | Predict | nano, tiny, s, m, l, x | official `.pth`, auto-downloaded |
-| YOLOv3   | experimental | Detect           | Predict | tiny-u                 | one-time `.bpk` pack             |
-| YOLOv10  | experimental | Detect           | Predict | n, s, m, b, l, x       | one-time `.bpk` pack             |
-| YOLO11   | experimental | Detect, Segment  | Predict | n, s, m, l, x (+n/s -seg) | one-time `.bpk` pack          |
-| YOLO26   | experimental | Detect           | Predict | n, s, m, l, x          | one-time `.bpk` pack             |
+| Model    | Status       | Task                        | Modes   | Variants                     | Weights                          |
+| -------- | ------------ | --------------------------- | ------- | ---------------------------- | -------------------------------- |
+| YOLOX    | stable       | Detect                      | Predict | nano, tiny, s, m, l, x       | official `.pth`, auto-downloaded |
+| YOLOv3   | experimental | Detect                      | Predict | tiny-u                       | one-time `.bpk` pack             |
+| YOLOv10  | experimental | Detect                      | Predict | n, s, m, b, l, x             | one-time `.bpk` pack             |
+| YOLO11   | experimental | Detect, Segment, Classify   | Predict | n, s, m, l, x (+n/s -seg, +n..x -cls) | one-time `.bpk` pack      |
+| YOLO26   | experimental | Detect, Segment, Classify   | Predict | n, s, m, l, x (+n..x -seg/-cls) | one-time `.bpk` pack          |
 
 Variant naming follows each family (YOLOX scales as nano/tiny/s/m/l/x, v3 ships a tiny model, and
 the modern families use n/s/m/l/x; YOLOv10 replaces the xl scale with b). Pass the variant-suffixed
 CLI name: `yolox-nano`, `yolox-tiny`, `yolox-s`, `yolox-m`, `yolox-l`, `yolox-x`, `yolov3-tinyu`,
-`yolov10n`, ..., `yolo11n`, ..., `yolo11n-seg`, `yolo11s-seg`, ..., `yolo26x`. YOLOX ships
-Apache-2.0 weights downloaded from the official release. Ultralytics-family weights are AGPL-3.0,
-and the native artifacts derived from them inherit that license (see [NOTICE](NOTICE)). Every model
-runs at 640 px input; note that YOLOX-Tiny's official evaluation resolution is 416 px, so its
-published mAP (32.8) does not transfer one-to-one. YOLO11 is the only modern family whose
-predictions pass through classic class-aware non-maximum suppression (the others are NMS-free
-end-to-end). The YOLO11-seg models share that NMS path and add Ultralytics' Segment head: 32 mask
-prototypes at stride 4 plus per-detection mask coefficients; instance masks are returned as
-boolean coverage over the source image.
+`yolov10n`, ..., `yolo11n`, ..., `yolo11n-seg`, `yolo11s-seg`, ..., `yolo26x`, `yolo26n-seg`, ..., `yolo26n-cls`, ...,
+`yolo11n-cls`, ..., `yolo26x-cls`. YOLOX ships Apache-2.0 weights downloaded from the official release.
+Ultralytics-family weights are AGPL-3.0, and the native artifacts derived from them inherit that
+license (see [NOTICE](NOTICE)). Every detect model runs at 640 px input; note that YOLOX-Tiny's
+official evaluation resolution is 416 px, so its published mAP (32.8) does not transfer one-to-one.
+YOLO11 is the only modern detect family whose predictions pass through classic class-aware
+non-maximum suppression (the others are NMS-free end-to-end). The YOLO11-seg models share that NMS
+path and add Ultralytics' Segment head: 32 mask prototypes at stride 4 plus per-detection mask
+coefficients; instance masks are returned as boolean coverage over the source image. The YOLO26-seg
+models ride the end-to-end path instead (top-score selection, no NMS) and add Ultralytics'
+`Segment26` head, whose `Proto26` module fuses all three feature levels into the stride-4
+prototypes; mask assembly is identical to YOLO11-seg. The YOLO26-cls models run at 224 px
+(Ultralytics' classify default) and return top-5 ImageNet-1k classes; the classification
+checkpoints carry plain PyTorch batch-norm defaults rather than the Ultralytics-initialized values
+(see AGENTS.md).
 
 Verified v1 artifacts:
 
@@ -50,13 +58,28 @@ Verified v1 artifacts:
 | yolo26m      |  41,216,928 | `50A0BE494BA93D5663084161999B3D2B2C9ABB6DABB163D0AED2DB6F37591249` |
 | yolo26l      |  50,140,064 | `19D2C802F3266571FC7298DB9C3AB0E912D4DD6004B1D37510124F92A428A171` |
 | yolo26x      | 112,210,080 | `D1B1B94FC28423CC4FFD4EA04DEEAE3FE4A352B7E0D8F442D6CE9FA616C813A9` |
+| yolo26n-seg  |   5,664,064 | `4AB2E714E0684C10E09D3F226BF810C0D8D67D0985440DA3221634A2A7AB4FEE` |
+| yolo26s-seg  |  21,107,520 | `C2DD24C137EC530823D3651C23C4CE71E945DDA0B327E50FA668F2144593FDB4` |
+| yolo26m-seg  |  47,565,120 | `7EB2FE79189782273B11682C42A479FF4691384DAC1F0A980FA2D1139F32FE55` |
+| yolo26l-seg  |  56,488,000 | `188217E220DE61F12BDEF62DF35C24FB5FF836B75420CE2A4617CDACF27233F0` |
+| yolo26x-seg  | 126,443,072 | `0575D2EE7AAED7A69566D6A9302D2DAB9CDA9D3C0ED7E36B14484A46B0AF3407` |
 | yolo11n      |   5,399,968 | `36ACCB9BCEF72CD1DD3D534F54BE845C9EE4EE1697AD65C731FE028028E68BDF` |
 | yolo11s      |  19,140,768 | `4277237339A0975D1E86FBFB7787D861982F9B64B857C458E0D998671AA63DB9` |
 | yolo11m      |  40,561,568 | `ACFE957B42A17D81C9988772E2A1576592B3DB293DC8D52AFC91BCECB5595073` |
 | yolo11l      |  51,208,352 | `84FE90D17143FB894CEFE6557D3619F000E1602BDC331905FE56E6AC996F953F` |
 | yolo11x      | 114,597,280 | `1AC48B4A48165632F7B54A7B2E8471C9FB782CE436DE795C3155BCEF848C156E` |
+| yolo11n-cls  |   5,712,080 | `201E942BE72E2B7C9738E8FC47FA2CD6A6C53882D74FFC4A9128D241D6900EC8` |
+| yolo11s-cls  |  13,576,144 | `F80D6920F963D27730F7B1162D279BD540A44CEBB3F75AB7177E5EF98812E6DE` |
+| yolo11m-cls  |  23,434,960 | `2606D5C0C0BA54BD3B0B698D2D6A869F149910D2DB5FEB00345141D0D4D956BD` |
+| yolo11l-cls  |  28,472,528 | `81D741BD9AD8102EAAA6D2E97FC28C1C590C9027AB68B4A2363D6CF91B16B26B` |
+| yolo11x-cls  |  59,609,552 | `BBFC0F7BF0FAF65367BA5F47643F27E7D53AA50F73DE30FEA08CFCD709C86A52` |
 | yolo11n-seg  |   5,919,808 | `A29FF611095F39E3875A22B03B93DC1FDCD5AE40A1310AA5DF4D3813E17B1FF4` |
 | yolo11s-seg  |  20,465,216 | `FD9841F96748BD32A50EF508340F86A161B331D44F3D16678A96BED1A76342BE` |
+| yolo26n-cls  |   5,712,080 | `5A0BC57C4EA137DBB3E52FC2AB7007023474E10401C00BF6B1D857C2E053FB18` |
+| yolo26s-cls  |  13,576,144 | `F39B0D7A9FC65495D8D7944BFA7AE9F32C1F6D719AB15043DE40E962FCC811BB` |
+| yolo26m-cls  |  23,434,960 | `301F3351F301C5BDEE5A8FC8A54CFF602245BDFA1A64794E61737803FCB684A0` |
+| yolo26l-cls  |  28,472,528 | `C759F229D8863D5F78D67FF714A7F1C5AE826417AC7BD906FE08F208DC88AA12` |
+| yolo26x-cls  |  59,609,552 | `8468915AA906623DC82E4AEF086C7DC1C236B5E09E30CA849DC03399BF059165` |
 
 ### Model coverage vs the Ultralytics catalog
 
@@ -82,29 +105,31 @@ in the release).
 | YOLOv10 | detect | n/s/m/b/l/x                  | landed: n/s/m/b/l/x                            |
 | YOLO11  | detect | n/s/m/l/x                    | landed: n/s/m/l/x                              |
 | YOLO11  | seg    | n/s/m/l/x                    | landed: n/s; planned: m/l/x                    |
-| YOLO11  | cls    | n/s/m/l/x                    | planned                                        |
+| YOLO11  | cls    | n/s/m/l/x                    | landed: n/s/m/l/x                              |
 | YOLO11  | pose   | n/s/m/l/x                    | planned                                        |
 | YOLO11  | obb    | n/s/m/l/x                    | planned                                        |
 | YOLO12  | detect | n/s/m/l/x                    | planned                                        |
 | YOLO12  | seg/cls/pose/obb | none in release    | unavailable                                    |
 | YOLO26  | detect | n/s/m/l/x                    | landed: n/s/m/l/x                              |
-| YOLO26  | seg    | n/s/m/l/x                    | planned                                        |
-| YOLO26  | cls    | n/s/m/l/x                    | planned                                        |
+| YOLO26  | seg    | n/s/m/l/x                    | landed: n/s/m/l/x                              |
+| YOLO26  | cls    | n/s/m/l/x                    | landed: n/s/m/l/x                              |
 | YOLO26  | pose   | n/s/m/l/x (COCO person)      | planned                                        |
 | YOLO26  | obb    | n/s/m/l/x (DOTA-15)          | planned                                        |
 | RT-DETR | detect | l, x (resnet50 absent)       | deferred (transformer decoder; separate bring-up) |
 | YOLOE   | detect/seg | YAML-only (no COCO `.pt`) | unavailable                                   |
 
-Bring-up order (owner priority: newest first, task-type reuse preferred): YOLO26
-cls/seg/pose/obb → YOLO12 detect → YOLO11 cls/pose/obb + seg m/l/x → YOLOv8 detect (+ tasks) →
-YOLOv9. Task-type result APIs (`Classification`, `PoseDetection`, `ObbDetection`) land with the
-YOLO26 versions and are reused by the older families' classic-NMS variants.
+Bring-up order (owner priority: newest first, task-type reuse preferred): YOLO26 cls/seg
+(landed) → YOLO26 pose/obb → YOLO12 detect → YOLO11 cls (landed)/pose/obb + seg m/l/x → YOLOv8
+detect (+ tasks) → YOLOv9. Task-type result APIs (`Classification`, `PoseDetection`,
+`ObbDetection`) land with the YOLO26 versions and are reused by the older families' classic-NMS
+variants.
 
 ### Preparing experimental weights
 
 One-time conversion of an official Ultralytics checkpoint (Python is a conversion-time dependency
 only); substitute the model name for `yolov3-tinyu`, `yolov10n/s/m/b/l/x`, `yolo11n/s/m/l/x`,
-`yolo11n/s-seg`, or `yolo26n/s/m/l/x`:
+`yolo11n/s-seg`, `yolo11n/s/m/l/x-cls`, `yolo26n/s/m/l/x`, `yolo26n/s/m/l/x-seg`, or
+`yolo26n/s/m/l/x-cls`:
 
 ```console
 python -m pip install torch ultralytics
@@ -121,6 +146,9 @@ After that, inference only needs the `.bpk` artifact and Rust.
 cargo run --release -- predict --model yolox-nano --source assets/dog_bike_man.jpg
 cargo run --release -- predict --model yolo26n --weights target/yolo26n-coco-ultralytics-v8.4-boquilens-v1.bpk --source image.jpg --json --confidence 0.30
 cargo run --release -- predict --model yolo11n-seg --weights target/yolo11n-seg-coco-ultralytics-v8.4-boquilens-v1.bpk --source image.jpg --masks
+cargo run --release -- predict --model yolo26s-seg --weights target/yolo26s-seg-coco-ultralytics-v8.4-boquilens-v1.bpk --source image.jpg --masks
+cargo run --release -- predict --model yolo26s-cls --weights target/yolo26s-cls-imagenet1k-ultralytics-v8.4-boquilens-v1.bpk --source image.jpg --json
+cargo run --release -- predict --model yolo11m-cls --weights target/yolo11m-cls-imagenet1k-ultralytics-v8.4-boquilens-v1.bpk --source image.jpg --json
 cargo run -- --help
 ```
 
@@ -167,20 +195,40 @@ fn main() -> boquilens::Result<()> {
 }
 ```
 
+Image classification is available for the YOLO26-cls and YOLO11-cls variants through
+`Predictor::predict_classification` / `predict_classification_path`, which return top-5
+`Classification` values (ImageNet-1k class id/name and softmax probability, descending). The
+input transform mirrors Ultralytics' classify inference exactly: anti-aliased shortest-edge resize
+to 224 px, centered 224x224 crop, RGB scaled to `[0, 1]`:
+
+```rust,no_run
+use boquilens::{ModelId, PredictOptions, Predictor};
+
+fn main() -> boquilens::Result<()> {
+    let predictor = Predictor::new(ModelId::Yolo26SCls, PredictOptions::default())?;
+    let (_image, classifications) = predictor.predict_classification_path("image.jpg")?;
+    for classification in classifications {
+        println!("{}: {:.1}%", classification.class_name, classification.confidence * 100.0);
+    }
+    Ok(())
+}
+```
+
 ## Performance
 
-Single-image, batch-1 inference at 640 px input: model forward, head decode, and result sync, on
-Burn's Flex CPU backend in release mode. Artifacts store f16 weights that are upcast and computed in
-f32. Each number is the median of 10 timed runs after 3 warmup runs, measured sequentially (one test
-at a time) via:
+Single-image, batch-1 inference: model forward, head decode, and result sync, on Burn's Flex CPU
+backend in release mode. Detect/segment rows run at 640 px input; the `-cls` classification rows
+run at 224 px (each model's official inference resolution). Artifacts store f16 weights that are
+upcast and computed in f32. Each number is the median of 10 timed runs after 3 warmup runs,
+measured sequentially (one test at a time) via:
 
 ```console
 cargo test --locked --release measures_single_inference_latency -- --ignored --nocapture --test-threads 1
 ```
 
 The Ultralytics column is the official PyTorch runtime on the same machine and methodology
-(batch 1, 640 px, fp32 CPU, fused conv+bn, 16 torch threads, 3 warmups + 10 timed runs), measured
-with the development-only tool:
+(batch 1, matching per-family input size, fp32 CPU, fused conv+bn, 16 torch threads, 3 warmups +
+10 timed runs), measured with the development-only tool:
 
 ```console
 & target\.venv\Scripts\python.exe tools\bench_ultralytics_cpu.py target\yolov10n.pt ...
@@ -223,6 +271,21 @@ reproduce those measurements and do not change the default build.
 | yolo11x  |              991.6 |              115.6 |       8.6x |                        179.1 |
 | yolo11n-seg |            173.9 |               13.5 |      12.9x |                         22.8 |
 | yolo11s-seg |            307.4 |               29.9 |      10.3x |                         44.8 |
+| yolo26n-cls |               10.6 |              4.2 |      2.5x |                         2.6 |
+| yolo26s-cls |               24.6 |              5.3 |      4.6x |                         4.5 |
+| yolo26m-cls |               52.6 |              9.6 |      5.5x |                         8.2 |
+| yolo26l-cls |               70.6 |             13.4 |      5.3x |                        11.8 |
+| yolo26x-cls |              106.0 |             18.3 |      5.8x |                        19.0 |
+| yolo11n-cls |                9.3 |              3.8 |      2.4x |                         3.1 |
+| yolo11s-cls |               23.7 |              4.4 |      5.4x |                         4.1 |
+| yolo11m-cls |               47.9 |              7.5 |      6.4x |                         8.9 |
+| yolo11l-cls |               65.6 |             23.2 |      2.8x |                        11.7 |
+| yolo11x-cls |              102.3 |             15.5 |      6.6x |                        21.2 |
+| yolo26n-seg |              160.3 |              9.5 |     16.9x |                        24.1 |
+| yolo26s-seg |              314.5 |             28.5 |     11.0x |                        44.0 |
+| yolo26m-seg |              651.4 |             85.8 |      7.6x |                       106.6 |
+| yolo26l-seg |              794.1 |             96.4 |      8.2x |                       128.5 |
+| yolo26x-seg |             1251.9 |            229.6 |      5.5x |                       233.1 |
 
 - **CPU.** The CPU columns are the always-available path: Burn's Flex backend. Preprocessing and
   top-k postprocessing are not included and add a small constant per image. Flex currently trails
@@ -256,6 +319,18 @@ cargo test --locked yolo11n -- --ignored
 
 python tools/export_yolo11_fixtures.py target/yolo11n-seg.pt assets/dog_bike_man.jpg target --model yolo11n-seg
 cargo test --locked yolo11n-seg -- --ignored
+
+python tools/export_yolo26_cls_fixtures.py target/yolo26s-cls.pt assets/dog_bike_man.jpg target --model yolo26s-cls
+cargo test --locked yolo26s_cls -- --ignored
+
+python tools/export_yolo26_cls_fixtures.py target/yolo11n-cls.pt assets/dog_bike_man.jpg target --model yolo11n-cls
+cargo test --locked yolo11n_cls -- --ignored
+
+python tools/export_yolo26_seg_fixtures.py target/yolo26n-seg.pt assets/dog_bike_man.jpg target --model yolo26n-seg
+cargo test --locked yolo26n_seg -- --ignored
+
+python tools/export_yolo26_seg_e2e.py target/yolo26n-seg.pt assets/dog_bike_man.jpg target --model yolo26n-seg
+cargo test --locked yolo26n_seg_matches_ultralytics_end_to_end -- --ignored --nocapture
 
 & target\.venv\Scripts\python.exe tools\export_yolox_fixtures.py target\checkpoints\yolox_tiny.pth assets\dog_bike_man.jpg target --model yolox-tiny
 cargo test --locked yolox_tiny -- --ignored

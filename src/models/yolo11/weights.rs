@@ -13,6 +13,27 @@ pub fn coco_artifact_filename(model: &str) -> String {
     format!("{model}-coco-ultralytics-v8.4-boquilens-v1.bpk")
 }
 
+/// The training dataset tag an official checkpoint was trained on, inferred from its task suffix:
+/// detection/segmentation/pose ride COCO, classification is ImageNet-1k, and OBB is DOTA-v1.
+pub fn dataset_tag(model: &str) -> &'static str {
+    if model.ends_with("-cls") {
+        "imagenet1k"
+    } else if model.ends_with("-obb") {
+        "dotav1"
+    } else {
+        "coco"
+    }
+}
+
+/// Recommended filename for the native artifact of any scale/task variant
+/// (e.g. `yolo11n-cls-imagenet1k-ultralytics-v8.4-boquilens-v1.bpk`).
+pub fn artifact_filename(model: &str) -> String {
+    format!(
+        "{model}-{}-ultralytics-v8.4-boquilens-v1.bpk",
+        dataset_tag(model)
+    )
+}
+
 /// A verified local release candidate produced during a v1 parity pass.
 ///
 /// Distribution URLs are intentionally absent until the AGPL artifacts are published from a
@@ -59,5 +80,34 @@ pub const COCO_VERIFIED_ARTIFACTS: &[VerifiedArtifact] = &[
         model: "yolo11s-seg",
         bytes: 20_465_216,
         sha256: "FD9841F96748BD32A50EF508340F86A161B331D44F3D16678A96BED1A76342BE",
+    },
+];
+
+/// The verified ImageNet-1k release candidates, one per classify scale, in parity-pass order.
+pub const IMAGENET_VERIFIED_ARTIFACTS: &[VerifiedArtifact] = &[
+    VerifiedArtifact {
+        model: "yolo11n-cls",
+        bytes: 5_712_080,
+        sha256: "201E942BE72E2B7C9738E8FC47FA2CD6A6C53882D74FFC4A9128D241D6900EC8",
+    },
+    VerifiedArtifact {
+        model: "yolo11s-cls",
+        bytes: 13_576_144,
+        sha256: "F80D6920F963D27730F7B1162D279BD540A44CEBB3F75AB7177E5EF98812E6DE",
+    },
+    VerifiedArtifact {
+        model: "yolo11m-cls",
+        bytes: 23_434_960,
+        sha256: "2606D5C0C0BA54BD3B0B698D2D6A869F149910D2DB5FEB00345141D0D4D956BD",
+    },
+    VerifiedArtifact {
+        model: "yolo11l-cls",
+        bytes: 28_472_528,
+        sha256: "81D741BD9AD8102EAAA6D2E97FC28C1C590C9027AB68B4A2363D6CF91B16B26B",
+    },
+    VerifiedArtifact {
+        model: "yolo11x-cls",
+        bytes: 59_609_552,
+        sha256: "BBFC0F7BF0FAF65367BA5F47643F27E7D53AA50F73DE30FEA08CFCD709C86A52",
     },
 ];

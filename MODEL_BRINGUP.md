@@ -150,10 +150,11 @@ pixel (f16 artifact rounding accounts for the residual). Record the artifact byt
 - `NOTICE`: provenance and licensing (Ultralytics-family weights and derived artifacts are
   AGPL-3.0; the YOLOX path is Apache-2.0).
 
-## 8. Bringing up a new task (instance segmentation)
+## 8. Bringing up a new task (instance segmentation, classification)
 
 Adding a task to an already-ported family is a smaller version of the loop above, with the vendored
-task head as the ground truth. The YOLO11-seg bring-up (n/s) is the template.
+task head as the ground truth. The YOLO11-seg bring-up (n/s) is the segmentation template; the
+YOLO26-cls bring-up (n/s/m/l/x) is the classification template.
 
 1. **Feasibility gate first**: verify the `-seg` checkpoints actually exist in the assets release
    (HTTP HEAD the release URLs; never trust release notes from memory) and load one with the venv
@@ -189,6 +190,15 @@ task head as the ground truth. The YOLO11-seg bring-up (n/s) is the template.
 7. **Public API**: a new result type (`SegmentationDetection` with `InstanceMask`), a new predictor
    method that does not disturb `predict()`, letterbox geometry shared with the boxes, and CLI
    wiring (`--model <id>-seg`, `--masks`) that leaves detect-model behavior untouched.
+
+Classification (YOLO26-cls template) differs in these ways: the input is 224 px with Ultralytics'
+classify transform (anti-aliased shortest-edge resize + centered crop, no letterbox), the class
+table is ImageNet-1k (`src/data/imagenet.rs`), the dispatch trait is `EndToEndClassifier` and the
+predictor method is `predict_classification` (top-5 `Classification` values), and the checkpoint
+batch norms use plain PyTorch defaults (`BnFlavor::Pytorch`) — see the AGENTS.md invariants. The
+end-to-end classification comparison compares the top-5 class set plus per-class probabilities
+(3e-2), not rank order: flat softmax distributions swap adjacent ranks under the +-1 rounding
+difference between PIL and the Rust resize.
 
 ## Pitfall checklist
 

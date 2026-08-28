@@ -5,5 +5,5 @@
 mod imagenet;
 mod letterbox;
 
-pub(crate) use letterbox::{LetterboxedImage, classify_transform};
 pub use imagenet::CLASSES as IMAGENET_CLASSES;
+pub(crate) use letterbox::{LetterboxedImage, classify_transform};

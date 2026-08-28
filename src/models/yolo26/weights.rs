@@ -72,3 +72,62 @@ pub const COCO_VERIFIED_ARTIFACTS: &[VerifiedArtifact] = &[
         sha256: "D1B1B94FC28423CC4FFD4EA04DEEAE3FE4A352B7E0D8F442D6CE9FA616C813A9",
     },
 ];
+
+/// The verified ImageNet-1k release candidates, one per classify scale, in parity-pass order.
+pub const IMAGENET_VERIFIED_ARTIFACTS: &[VerifiedArtifact] = &[
+    VerifiedArtifact {
+        model: "yolo26n-cls",
+        bytes: 5_712_080,
+        sha256: "5A0BC57C4EA137DBB3E52FC2AB7007023474E10401C00BF6B1D857C2E053FB18",
+    },
+    VerifiedArtifact {
+        model: "yolo26s-cls",
+        bytes: 13_576_144,
+        sha256: "F39B0D7A9FC65495D8D7944BFA7AE9F32C1F6D719AB15043DE40E962FCC811BB",
+    },
+    VerifiedArtifact {
+        model: "yolo26m-cls",
+        bytes: 23_434_960,
+        sha256: "301F3351F301C5BDEE5A8FC8A54CFF602245BDFA1A64794E61737803FCB684A0",
+    },
+    VerifiedArtifact {
+        model: "yolo26l-cls",
+        bytes: 28_472_528,
+        sha256: "C759F229D8863D5F78D67FF714A7F1C5AE826417AC7BD906FE08F208DC88AA12",
+    },
+    VerifiedArtifact {
+        model: "yolo26x-cls",
+        bytes: 59_609_552,
+        sha256: "8468915AA906623DC82E4AEF086C7DC1C236B5E09E30CA849DC03399BF059165",
+    },
+];
+
+/// The verified instance-segmentation release candidates, one per segment scale, in parity-pass
+/// order.
+pub const SEG_VERIFIED_ARTIFACTS: &[VerifiedArtifact] = &[
+    VerifiedArtifact {
+        model: "yolo26n-seg",
+        bytes: 5_664_064,
+        sha256: "4AB2E714E0684C10E09D3F226BF810C0D8D67D0985440DA3221634A2A7AB4FEE",
+    },
+    VerifiedArtifact {
+        model: "yolo26s-seg",
+        bytes: 21_107_520,
+        sha256: "C2DD24C137EC530823D3651C23C4CE71E945DDA0B327E50FA668F2144593FDB4",
+    },
+    VerifiedArtifact {
+        model: "yolo26m-seg",
+        bytes: 47_565_120,
+        sha256: "7EB2FE79189782273B11682C42A479FF4691384DAC1F0A980FA2D1139F32FE55",
+    },
+    VerifiedArtifact {
+        model: "yolo26l-seg",
+        bytes: 56_488_000,
+        sha256: "188217E220DE61F12BDEF62DF35C24FB5FF836B75420CE2A4617CDACF27233F0",
+    },
+    VerifiedArtifact {
+        model: "yolo26x-seg",
+        bytes: 126_443_072,
+        sha256: "0575D2EE7AAED7A69566D6A9302D2DAB9CDA9D3C0ED7E36B14484A46B0AF3407",
+    },
+];

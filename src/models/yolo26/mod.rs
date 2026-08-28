@@ -12,6 +12,7 @@ pub mod body;
 pub mod classification;
 pub mod head;
 pub mod model;
+pub mod segmentation;
 pub mod weights;
 
 pub use classification::{
@@ -21,4 +22,8 @@ pub use classification::{
 pub use model::{
     Yolo26L, Yolo26LConfig, Yolo26M, Yolo26MConfig, Yolo26N, Yolo26NConfig, Yolo26S, Yolo26SConfig,
     Yolo26X, Yolo26XConfig,
+};
+pub use segmentation::{
+    Yolo26SegL, Yolo26SegLConfig, Yolo26SegM, Yolo26SegMConfig, Yolo26SegN, Yolo26SegNConfig,
+    Yolo26SegS, Yolo26SegSConfig, Yolo26SegX, Yolo26SegXConfig,
 };

@@ -21,9 +21,11 @@ licenses; this derivative uses the Apache-2.0 option (LICENSE-APACHE).
 
 The experimental src/models/yolov3_tiny, src/models/yolov10, src/models/yolo11, and
 src/models/yolo26 implementations interoperate with the public YOLOv3-Tiny-Ultralytics,
-YOLOv10 (n/s/m/b/l/x), YOLO11 (n/s/m/l/x, plus the n/s -seg instance-segmentation variants), and
-YOLO26 (n/s/m/l/x) architectures and official checkpoints. They were authored as native Burn code;
-boquilens does not bundle Ultralytics Python code or model weights.
+YOLOv10 (n/s/m/b/l/x), YOLO11 (n/s/m/l/x, plus the n/s -seg instance-segmentation and -cls
+ImageNet-1k classification variants), and YOLO26 (n/s/m/l/x, plus the -seg COCO
+instance-segmentation and -cls ImageNet-1k classification variants) architectures and official
+checkpoints. They were authored as native Burn code; boquilens does not bundle Ultralytics Python
+code or model weights.
 tools/export_ultralytics_state.py and the per-model export_*_fixtures.py scripts use an installed
 Ultralytics package at conversion time to extract tensor state from a checkpoint.
 Ultralytics states that its software, architectures, and trained model weights are offered under

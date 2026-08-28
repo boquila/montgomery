@@ -63,8 +63,8 @@ struct PredictArgs {
     source: PathBuf,
 
     /// Model architecture and scale to run: yolox-nano/tiny/s/m/l/x, yolov3-tinyu,
-    /// yolov10n/s/m/b/l/x, yolo11n/s/m/l/x, yolo11n/s-seg, yolo26n/s/m/l/x, or
-    /// yolo26n/s/m/l/x-cls.
+    /// yolov10n/s/m/b/l/x, yolo11n/s/m/l/x, yolo11n/s-seg, yolo11n/s/m/l/x-cls, yolo26n/s/m/l/x,
+    /// yolo26n/s/m/l/x-seg, or yolo26n/s/m/l/x-cls.
     #[arg(long)]
     model: ModelId,
 
@@ -89,7 +89,7 @@ struct PredictArgs {
     iou: f32,
 
     /// Render instance-mask outlines over the annotated image and report per-detection mask
-    /// coverage. Requires a segmentation model (yolo11n-seg or yolo11s-seg).
+    /// coverage. Requires a segmentation model (yolo11n/s-seg or yolo26n/s/m/l/x-seg).
     #[arg(long)]
     masks: bool,
 
@@ -171,18 +171,34 @@ fn run_predict<B: Backend>(
             | ModelId::Yolo26MCls
             | ModelId::Yolo26LCls
             | ModelId::Yolo26XCls
+            | ModelId::Yolo11NCls
+            | ModelId::Yolo11SCls
+            | ModelId::Yolo11MCls
+            | ModelId::Yolo11LCls
+            | ModelId::Yolo11XCls
     ) {
         let (image, classifications) = predictor.predict_classification_path(&args.source)?;
         report_classifications(args, &image, &output, &classifications)?;
         return Ok(());
     }
-    if matches!(args.model, ModelId::Yolo11NSeg | ModelId::Yolo11SSeg) {
+    if matches!(
+        args.model,
+        ModelId::Yolo11NSeg
+            | ModelId::Yolo11SSeg
+            | ModelId::Yolo26NSeg
+            | ModelId::Yolo26SSeg
+            | ModelId::Yolo26MSeg
+            | ModelId::Yolo26LSeg
+            | ModelId::Yolo26XSeg
+    ) {
         let (image, detections) = predictor.predict_segmentation_path(&args.source)?;
         report_segmentations(args, &image, &output, &detections)?;
         return Ok(());
     }
     if args.masks {
-        return Err("--masks requires a segmentation model (yolo11n-seg or yolo11s-seg)".into());
+        return Err(
+            "--masks requires a segmentation model (yolo11n/s-seg or yolo26n/s/m/l/x-seg)".into(),
+        );
     }
     let (image, detections) = predictor.predict_path(&args.source)?;
 
