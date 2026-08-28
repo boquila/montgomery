@@ -30,13 +30,32 @@ end.
 - `src/models/yolo11/`: experimental YOLO11 (n/s/m/l/x) implementation, including the
   C3k2/plain-SPPF/C2PSA bodies (m/l/x force the C3k chain onto the early backbone stages; the P5
   stage is a plain C3k2 chain, not attention) with a classic DFL head (reg_max 16), NMS-based
-  postprocessing, native Burnpack loading, and version metadata. The n/s scales also ship
+  postprocessing, native Burnpack loading, and version metadata. All scales ship
   `-seg` instance-segmentation variants: the same bodies plus Ultralytics' Segment head (Proto
   module at stride 4, 32 mask coefficients per anchor) decoded through the same NMS with the
   coefficients carried along (`segment_head.rs`, masks assembled in `src/lib.rs`). The family also
   ships `-cls` ImageNet-1k classification variants (n/s/m/l/x, `classification.rs`): the classify
   graph is identical to YOLO26-cls (same YAML backbone, checkpoint key layout, plain-PyTorch BN
   flavor), so it reuses the shared classification modules from `src/models/yolo26/classification.rs`.
+- `src/models/yolov8/`: experimental YOLOv8 (n/s/m/l/x) implementation, including the
+  C2f/plain-SPPF bodies (a pure width/depth rescaling of one graph: backbone C2f stages carry
+  shortcuts, neck stages do not) with a classic DFL head (reg_max 16) whose classification towers
+  are the **legacy full-3x3-conv cv3 flavor** — the v8-era checkpoints predate YOLO11's light
+  DWConv towers (verified from the pickled modules) — NMS-based postprocessing, native Burnpack
+  loading, and version metadata. All scales ship `-seg` instance-segmentation variants (the same
+  bodies plus Ultralytics' Segment head: stride-4 Proto with width-scaled `npr`
+  64/128/192/256/320 and full-3x3-conv `cv4` mask towers; the runtime output type is shared with
+  YOLO11-seg) and `-cls` ImageNet-1k classification variants: the cls backbone is a C2f chain
+  **without** the C2PSA stage (head at model.9), every scale keeps max_channels 1024 with the n/s
+  depth gain 0.33, and the batch norms carry plain PyTorch defaults (`BnFlavor::Pytorch`).
+- `src/models/yolo12/`: experimental YOLO12 (n/s/m/l/x) implementation, including the
+  area-attention bodies — backbone stages 6/8 are `A2C2f` blocks pairing the C2f-style split shell
+  with two `ABlock`s each (area 4/1; l/x add the learnable per-channel gamma residual and
+  mlp_ratio 1.2), neck stages 11/14/17 are the C3k-chain `A2C2f` flavor, and m/l/x force the C3k
+  chain onto the early backbone C3k2 stages at 0.25 expansion — with a classic DFL head that is
+  byte-identical to YOLO11's (light DWConv cv3 towers, verified from the checkpoints; the head
+  module is shared from `src/models/yolo11/head.rs`), NMS-based postprocessing, native Burnpack
+  loading, and version metadata.
 - `src/data/letterbox.rs`: model-specific preprocessing and reversible source-image geometry.
 - `src/lib.rs`: `ModelId`, `Predictor`, detection results, NMS integration, and weight packing API.
 - `src/main.rs`: the `predict` and `pack-weights` CLI commands.
@@ -52,11 +71,12 @@ downloads to the model cache on first use):
 cargo run --release -- predict --model yolox-nano --source assets/dog_bike_man.jpg
 ```
 
-YOLOv3-Tiny-U, YOLO11, and the YOLOv10/YOLO26 scales require a tensor-only state and then a native
-artifact. The complete workflow is documented in `README.md`; the short form (substitute any
-`yolov10n/s/m/b/l/x`, `yolo11n/s/m/l/x`, or `yolo26n/s/m/l/x` name; task variants follow the same
-loop with their suffixes — `yolo11n/s-seg`, `yolo26n/s/m/l/x-seg`, and the `-cls` classification
-variants of both families):
+YOLOv3-Tiny-U, YOLO11, YOLOv8, YOLO12, and the YOLOv10/YOLO26 scales require a tensor-only state
+and then a native artifact. The complete workflow is documented in `README.md`; the short form
+(substitute any `yolov10n/s/m/b/l/x`, `yolo11n/s/m/l/x`, `yolov8n/s/m/l/x`, `yolo12n/s/m/l/x`, or
+`yolo26n/s/m/l/x` name; task variants follow the same loop with their suffixes — `yolo11n/s/m/l/x-seg`,
+`yolov8n/s/m/l/x-seg`, `yolo26n/s/m/l/x-seg`, and the `-cls` classification variants of the v8/11/26
+families):
 
 ```console
 python tools/export_ultralytics_state.py yolov10n.pt target/yolov10n-state.pt
@@ -154,23 +174,29 @@ belong under `target/` and must not be committed.
   suppression. YOLO26 (all scales) shares that postprocess and is additionally DFL-free: the box
   tower emits the four XYXY side distances directly, decoded anchor-relative and scaled by the
   feature strides.
-- YOLO11 (all scales) is NMS-based, unlike v10/26: it keeps the classic DFL head (`reg_max = 16`,
-  light DWConv `cv3` tower) and the runtime applies the generic class-aware `nms()` helper to the
-  head's center-size boxes and sigmoid scores with the `PredictOptions` thresholds (Ultralytics
-  defaults conf 0.25, IoU 0.45). Ultralytics additionally caps post-NMS results at
-  `max_det = 300`; the helper has no such cap, which is only observable on extremely dense
-  predictions.
-- Instance segmentation (YOLO11-seg, n/s) rides the same classic decode: Ultralytics' Segment head
-  appends 32 **raw** mask coefficients per anchor to the `[boxes, scores]` rows (no sigmoid, and
-  unlike some export paths there is no coefficient normalization in the PyTorch predict path —
-  verified in the vendored 8.4.117 source), and the seg NMS is the same class-aware greedy
-  suppression with the surviving anchors' coefficients carried along. Masks are assembled exactly
-  like `ops.process_mask(..., upsample=True)`: `coefficients @ prototypes` (raw logits), bilinear
-  upsample to the letterboxed canvas (`align_corners = False`), threshold `> 0`, crop to the box,
-  and post-NMS detections whose cropped mask is fully empty are dropped. The Proto module runs on
-  P3 and upsamples one stride level, so prototype maps live at stride 4; `parse_model` width-scales
-  the 256 prototype channels (`npr`: 64 at n, 128 at s) and builds the `cv4` mask tower from full
-  3x3 Convs (not the light DWConv flavor) with width `max(ch[0] / 4, 32)`.
+- YOLO11, YOLOv8, and YOLO12 (all scales) are NMS-based, unlike v10/26: they keep the classic DFL
+  head (`reg_max = 16`) and the runtime applies the generic class-aware `nms()` helper to the head's
+  center-size boxes and sigmoid scores with the `PredictOptions` thresholds (Ultralytics defaults
+  conf 0.25, IoU 0.45). Ultralytics additionally caps post-NMS results at `max_det = 300`; the
+  helper has no such cap, which is only observable on extremely dense predictions. YOLO11 and
+  YOLO12 build the light DWConv `cv3` classification tower; YOLOv8's checkpoints predate that
+  refactor and build the legacy full-3x3-conv `cv3` tower (verified from the pickled modules — the
+  current `Detect` source would construct the light tower for a fresh v8 YAML, but the released
+  checkpoints win).
+- Instance segmentation (YOLO11-seg and YOLOv8-seg, n/s/m/l/x) rides the same classic decode:
+  Ultralytics' Segment head appends 32 **raw** mask coefficients per anchor to the
+  `[boxes, scores]` rows (no sigmoid, and unlike some export paths there is no coefficient
+  normalization in the PyTorch predict path — verified in the vendored 8.4.117 source), and the seg
+  NMS is the same class-aware greedy suppression with the surviving anchors' coefficients carried
+  along. Masks are assembled exactly like `ops.process_mask(..., upsample=True)`:
+  `coefficients @ prototypes` (raw logits), bilinear upsample to the letterboxed canvas
+  (`align_corners = False`), threshold `> 0`, crop to the box, and post-NMS detections whose
+  cropped mask is fully empty are dropped. The Proto module runs on P3 and upsamples one stride
+  level, so prototype maps live at stride 4; `parse_model` width-scales the 256 prototype channels
+  (`npr`: 64/128 at v8 n/s, 192/256/320 at v8 m/l/x; 256/256/384 at yolo11 m/l/x) and builds the
+  `cv4` mask tower from full 3x3 Convs (not the light DWConv flavor) with width
+  `max(ch[0] / 4, 32)`. YOLOv8-seg returns YOLO11-seg's runtime output type so the decode and mask
+  assembly stay shared.
 - Instance masks are boolean coverage over the **source image** (`InstanceMask`: `Vec<bool>` +
   width/height, one byte per element). Each source pixel `(x, y)` samples the canvas mask at the
   nearest canvas pixel to `(x * scale + pad_x, y * scale + pad_y)` — the exact inverse of the
@@ -199,13 +225,6 @@ belong under `target/` and must not be committed.
   detection) from the confidence gate, require every non-duplicate official detection at conf
   >= 0.55 to be matched, and relax the mask IoU gate to 0.85 for masks under 2000 covered pixels
   (boundary-dominated; 0.92 observed on a 313-px mask).
-- Classification checkpoints (YOLO26-cls, and by extension any Ultralytics classify task trained
-  through the classification pipeline) carry plain PyTorch `nn.BatchNorm2d` defaults — eps 1e-5,
-  momentum 0.1 — not the Ultralytics-initialized values (eps 1e-3, momentum 0.03) the detect
-  families use. The same eps-vs-running-variance visibility lesson as YOLOX applies. The yolo26
-  blocks expose a `BnFlavor` (`Ultralytics` default, `Pytorch` for classification); every Conv in a
-  classify graph must opt into `BnFlavor::Pytorch` explicitly. Golden fixtures are the gate that
-  catches a wrong flavor.
 - Classification inference runs at 224 px with Ultralytics' classify transform: anti-aliased
   shortest-edge resize, centered 224x224 crop, RGB scaled to `[0, 1]` (identity normalization
   constants). The 1000-way softmax is preprocessing-rounding sensitive: near-tied classes can swap
@@ -215,16 +234,39 @@ belong under `target/` and must not be committed.
   exactly — the golden fixtures pin the graph at 2e-4 on the shared canvas.
 - YOLO11's SPPF input projection keeps its SiLU activation even though current Ultralytics source
   constructs it `act=False`: the official checkpoints predate that refactor and the pickled modules
-  still carry the activation. The golden tensor tests enforce the checkpoint behavior. YOLO26's
-  SPPF (trained after the refactor) genuinely has no activation there, and its SPPF adds a residual
-  (`SPPF, [1024, 5, 3, True]`) that YOLO11's does not.
+  still carry the activation. YOLOv8's SPPF is the same era and also keeps SiLU on `cv1` (verified
+  from the pickled module; the v8 checkpoints carry neither the `n` repeat count nor the `add`
+  shortcut attribute). The golden tensor tests enforce the checkpoint behavior. YOLO26's SPPF
+  (trained after the refactor) genuinely has no activation there, and its SPPF adds a residual
+  (`SPPF, [1024, 5, 3, True]`) that YOLO11's and YOLOv8's do not. YOLO12 has no SPPF at all.
+- YOLO12's area-attention blocks (`A2C2f`/`ABlock`/`AAttn`) follow the vendored source with one
+  checkpoint-era quirk: the 7x7 depth-wise positional-encoding convolution (`AAttn.pe`) ships a
+  conv bias in the official checkpoints even though the current `Conv` wrapper is bias-free — the
+  Rust module carries the bias. The l/x scales extend the backbone `A2C2f` YAML args with
+  `(residual=True, mlp_ratio=1.2)`, adding the learnable per-channel gamma residual around the
+  whole block; n/s/m keep `residual=False, mlp_ratio=2.0` and have no gamma. The neck `A2C2f`
+  stages (11/14/17) run the C3k chain flavor (`a2=False`) whose shell concatenates `1 + n` tensors
+  (not C3k2's `2 + n` — the split shell starts from a single `c_`-wide tensor, not two halves).
+- Classification checkpoints (YOLO26-cls, YOLO11-cls, and YOLOv8-cls) carry plain PyTorch
+  `nn.BatchNorm2d` defaults — eps 1e-5, momentum 0.1 — not the Ultralytics-initialized values
+  (eps 1e-3, momentum 0.03) the detect families use (verified from the pickled `bn.eps`). The same
+  eps-vs-running-variance visibility lesson as YOLOX applies. The yolov8/yolo26 blocks expose a
+  `BnFlavor` (`Ultralytics` default, `Pytorch` for classification); every Conv in a classify graph
+  must opt into `BnFlavor::Pytorch` explicitly. Golden fixtures are the gate that catches a wrong
+  flavor. The YOLOv8-cls graph differs structurally from 26/11-cls (C2f backbone without the
+  C2PSA stage, head at model.9, max_channels 1024 at every scale), so only the `Classify` head
+  module is shared with YOLO26.
 - The YOLOv10 and YOLO26 scale variants are not pure width/depth rescalings. The official
   per-scale YAMLs swap module flavors: YOLOv10s uses large-kernel C2fCIB towers, YOLOv10
   m/b/l/x use the plain depth-wise C2fCIB flavor (and x converts backbone layer 6), and YOLO26
   m/l/x force `c3k=True` on the early backbone stages at 0.25 expansion. Each variant's body
   declares this explicitly; keep them aligned with the vendored YAMLs and `parse_model`.
   YOLO11 was verified to be a pure width/depth rescaling of one graph (same module flavors at
-  every scale; only depth-scaled repeats and the shared m/l/x `c3k` rule change).
+  every scale; only depth-scaled repeats and the shared m/l/x `c3k` rule change), and YOLOv8 the
+  same (Conv/C2f/SPPF everywhere; backbone C2f stages carry shortcuts, neck stages do not).
+  YOLO12's per-scale rules: the m/l/x scales force `c3k=True` on the early backbone C3k2 stages
+  (layers 2/4) at 0.25 expansion, and the l/x scales extend the backbone `A2C2f` stages with
+  `(residual=True, mlp_ratio=1.2)`.
 - Keep model graph code independent of CLI, filesystem, rendering, and image decoding.
 - Keep `ModelId` and CLI model names synchronized when adding a model.
 - Preserve the explicit stable/experimental distinction in user-facing docs.

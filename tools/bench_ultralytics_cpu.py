@@ -26,7 +26,11 @@ def benchmark(checkpoint: str, warmup_runs: int, timed_runs: int) -> None:
     except Exception:  # noqa: BLE001 - fuse is an optimization, not a requirement
         fused = "unfused"
     # Classification models run at Ultralytics' 224 px classify default; detection at 640 px.
-    input_size = 224 if getattr(model, "task", None) == "classify" else 640
+    # Newer checkpoints carry a `task` attribute; the v8-era pickles do not, so fall back to the
+    # head module type (Classify ends the cls graphs).
+    head_type = type(model.model[-1]).__name__ if hasattr(model, "model") else ""
+    is_classify = getattr(model, "task", None) == "classify" or head_type == "Classify"
+    input_size = 224 if is_classify else 640
     input_tensor = torch.zeros(1, 3, input_size, input_size)
 
     with torch.inference_mode():

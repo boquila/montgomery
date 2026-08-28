@@ -1,5 +1,5 @@
 //! Native Burn implementation of the Ultralytics YOLO11 detector family (n/s/m/l/x) and the
-//! YOLO11-seg instance-segmentation variants (n/s).
+//! YOLO11-seg instance-segmentation variants (n/s/m/l/x).
 //!
 //! [`body`] implements the complete backbone/neck for every scale and produces the P3/P4/P5
 //! tensors consumed by the Ultralytics Detect head. YOLO11 keeps the classic DFL detection head
@@ -26,6 +26,7 @@ pub use classification::{
 };
 pub use model::{
     Yolo11L, Yolo11LConfig, Yolo11M, Yolo11MConfig, Yolo11N, Yolo11NConfig, Yolo11S, Yolo11SConfig,
-    Yolo11SegN, Yolo11SegNConfig, Yolo11SegS, Yolo11SegSConfig, Yolo11X, Yolo11XConfig,
+    Yolo11SegL, Yolo11SegLConfig, Yolo11SegM, Yolo11SegMConfig, Yolo11SegN, Yolo11SegNConfig,
+    Yolo11SegS, Yolo11SegSConfig, Yolo11SegX, Yolo11SegXConfig, Yolo11X, Yolo11XConfig,
 };
 pub use segment_head::SegmentOutput;

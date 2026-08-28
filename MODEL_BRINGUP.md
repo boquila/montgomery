@@ -153,7 +153,7 @@ pixel (f16 artifact rounding accounts for the residual). Record the artifact byt
 ## 8. Bringing up a new task (instance segmentation, classification)
 
 Adding a task to an already-ported family is a smaller version of the loop above, with the vendored
-task head as the ground truth. The YOLO11-seg bring-up (n/s) is the segmentation template; the
+task head as the ground truth. The YOLO11-seg bring-up (n/s/m/l/x) is the segmentation template; the
 YOLO26-cls bring-up (n/s/m/l/x) is the classification template.
 
 1. **Feasibility gate first**: verify the `-seg` checkpoints actually exist in the assets release

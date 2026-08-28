@@ -156,8 +156,9 @@ before attempting YOLO26. The license decision is recorded: boquilens is AGPL-3.
 Ultralytics architectures and official checkpoints license-compatible and lets derived artifacts
 ship under the same terms.
 
-Then expand to segmentation, pose, oriented boxes, and classification by adding task heads/results,
-not parallel applications. Export (Burn native, ONNX where practical), quantization, deployment
+Then expand to segmentation and classification by adding task heads/results, not parallel
+applications. Pose and oriented-box (OBB) tasks are deferred by owner decision (2026-08) and are
+not planned. Export (Burn native, ONNX where practical), quantization, deployment
 profiles, model cards, benchmarks, and a registry follow once two architectures prove that the
 abstractions are real.
 

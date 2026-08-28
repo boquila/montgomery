@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+﻿use std::path::PathBuf;
 
 use boquilens::{
     ModelId, PredictOptions, Predictor, annotate, annotate_segmentation, pack_weights,
@@ -63,8 +63,9 @@ struct PredictArgs {
     source: PathBuf,
 
     /// Model architecture and scale to run: yolox-nano/tiny/s/m/l/x, yolov3-tinyu,
-    /// yolov10n/s/m/b/l/x, yolo11n/s/m/l/x, yolo11n/s-seg, yolo11n/s/m/l/x-cls, yolo26n/s/m/l/x,
-    /// yolo26n/s/m/l/x-seg, or yolo26n/s/m/l/x-cls.
+    /// yolov10n/s/m/b/l/x, yolo11n/s/m/l/x, yolo11n/s/m/l/x-seg, yolo11n/s/m/l/x-cls,
+    /// yolov8n/s/m/l/x, yolov8n/s/m/l/x-seg, yolov8n/s/m/l/x-cls, yolo12n/s/m/l/x,
+    /// yolo26n/s/m/l/x, yolo26n/s/m/l/x-seg, or yolo26n/s/m/l/x-cls.
     #[arg(long)]
     model: ModelId,
 
@@ -89,7 +90,8 @@ struct PredictArgs {
     iou: f32,
 
     /// Render instance-mask outlines over the annotated image and report per-detection mask
-    /// coverage. Requires a segmentation model (yolo11n/s-seg or yolo26n/s/m/l/x-seg).
+    /// coverage. Requires a segmentation model (yolo11n/s/m/l/x-seg, yolov8n/s/m/l/x-seg, or
+    /// yolo26n/s/m/l/x-seg).
     #[arg(long)]
     masks: bool,
 
@@ -176,6 +178,11 @@ fn run_predict<B: Backend>(
             | ModelId::Yolo11MCls
             | ModelId::Yolo11LCls
             | ModelId::Yolo11XCls
+            | ModelId::Yolov8NCls
+            | ModelId::Yolov8SCls
+            | ModelId::Yolov8MCls
+            | ModelId::Yolov8LCls
+            | ModelId::Yolov8XCls
     ) {
         let (image, classifications) = predictor.predict_classification_path(&args.source)?;
         report_classifications(args, &image, &output, &classifications)?;
@@ -185,6 +192,14 @@ fn run_predict<B: Backend>(
         args.model,
         ModelId::Yolo11NSeg
             | ModelId::Yolo11SSeg
+            | ModelId::Yolo11MSeg
+            | ModelId::Yolo11LSeg
+            | ModelId::Yolo11XSeg
+            | ModelId::Yolov8NSeg
+            | ModelId::Yolov8SSeg
+            | ModelId::Yolov8MSeg
+            | ModelId::Yolov8LSeg
+            | ModelId::Yolov8XSeg
             | ModelId::Yolo26NSeg
             | ModelId::Yolo26SSeg
             | ModelId::Yolo26MSeg
@@ -197,7 +212,9 @@ fn run_predict<B: Backend>(
     }
     if args.masks {
         return Err(
-            "--masks requires a segmentation model (yolo11n/s-seg or yolo26n/s/m/l/x-seg)".into(),
+            "--masks requires a segmentation model (yolo11n/s/m/l/x-seg, yolov8n/s/m/l/x-seg, or \
+             yolo26n/s/m/l/x-seg)"
+                .into(),
         );
     }
     let (image, detections) = predictor.predict_path(&args.source)?;

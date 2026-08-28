@@ -1,9 +1,10 @@
 //! A small, end-to-end object detection API built on [Burn](https://burn.dev).
 //!
 //! The stable path supports YOLOX (nano/tiny/s/m/l/x) trained on COCO, with experimental native
-//! YOLOv3-Tiny-Ultralytics, YOLOv10 (n/s/m/b/l/x), YOLO26 (n/s/m/l/x), and YOLO11 (n/s/m/l/x)
-//! inference paths, plus YOLO11-seg (n/s) and YOLO26-seg (n/s/m/l/x) instance segmentation and
-//! YOLO26-cls/YOLO11-cls (n/s/m/l/x) ImageNet-1k classification. Model inference and
+//! YOLOv3-Tiny-Ultralytics, YOLOv10 (n/s/m/b/l/x), YOLO26 (n/s/m/l/x), YOLO11 (n/s/m/l/x),
+//! YOLOv8 (n/s/m/l/x), and YOLO12 (n/s/m/l/x) inference paths, plus YOLO11-seg (n/s/m/l/x),
+//! YOLO26-seg (n/s/m/l/x), and YOLOv8-seg (n/s/m/l/x) instance segmentation and the
+//! YOLO26-cls/YOLO11-cls/YOLOv8-cls (n/s/m/l/x) ImageNet-1k classification. Model inference and
 //! post-processing run from Rust — on the Flex CPU backend by default, or on the Wgpu GPU backend
 //! (Vulkan/DX12/Metal) when built with the `gpu` feature. No Python runtime or ONNX runtime is
 //! involved.
@@ -21,8 +22,12 @@ use crate::data::{IMAGENET_CLASSES, LetterboxedImage, classify_transform};
 #[cfg(feature = "pretrained")]
 use crate::models::yolo11::{
     Yolo11ClsLConfig, Yolo11ClsMConfig, Yolo11ClsNConfig, Yolo11ClsSConfig, Yolo11ClsXConfig,
-    Yolo11LConfig, Yolo11MConfig, Yolo11NConfig, Yolo11SConfig, Yolo11SegNConfig, Yolo11SegSConfig,
-    Yolo11XConfig,
+    Yolo11LConfig, Yolo11MConfig, Yolo11NConfig, Yolo11SConfig, Yolo11SegLConfig, Yolo11SegMConfig,
+    Yolo11SegNConfig, Yolo11SegSConfig, Yolo11SegXConfig, Yolo11XConfig,
+};
+#[cfg(feature = "pretrained")]
+use crate::models::yolo12::{
+    Yolo12LConfig, Yolo12MConfig, Yolo12NConfig, Yolo12SConfig, Yolo12XConfig,
 };
 use crate::models::yolo26::head::MAX_DETECTIONS as YOLO26_MAX_DETECTIONS;
 #[cfg(feature = "pretrained")]
@@ -34,6 +39,12 @@ use crate::models::yolo26::{
 use crate::models::yolov3_tiny::Yolov3Tiny;
 #[cfg(feature = "pretrained")]
 use crate::models::yolov3_tiny::Yolov3TinyConfig;
+#[cfg(feature = "pretrained")]
+use crate::models::yolov8::{
+    Yolov8ClsLConfig, Yolov8ClsMConfig, Yolov8ClsNConfig, Yolov8ClsSConfig, Yolov8ClsXConfig,
+    Yolov8LConfig, Yolov8MConfig, Yolov8NConfig, Yolov8SConfig, Yolov8SegLConfig, Yolov8SegMConfig,
+    Yolov8SegNConfig, Yolov8SegSConfig, Yolov8SegXConfig, Yolov8XConfig,
+};
 use crate::models::yolov10::head::MAX_DETECTIONS as YOLOV10_MAX_DETECTIONS;
 #[cfg(feature = "pretrained")]
 use crate::models::yolov10::{
@@ -86,11 +97,34 @@ pub enum ModelId {
     Yolo11X,
     Yolo11NSeg,
     Yolo11SSeg,
+    Yolo11MSeg,
+    Yolo11LSeg,
+    Yolo11XSeg,
     Yolo11NCls,
     Yolo11SCls,
     Yolo11MCls,
     Yolo11LCls,
     Yolo11XCls,
+    Yolov8N,
+    Yolov8S,
+    Yolov8M,
+    Yolov8L,
+    Yolov8X,
+    Yolov8NSeg,
+    Yolov8SSeg,
+    Yolov8MSeg,
+    Yolov8LSeg,
+    Yolov8XSeg,
+    Yolov8NCls,
+    Yolov8SCls,
+    Yolov8MCls,
+    Yolov8LCls,
+    Yolov8XCls,
+    Yolo12N,
+    Yolo12S,
+    Yolo12M,
+    Yolo12L,
+    Yolo12X,
     Yolo26N,
     Yolo26S,
     Yolo26M,
@@ -131,11 +165,34 @@ impl ModelId {
             Self::Yolo11X => "yolo11x",
             Self::Yolo11NSeg => "yolo11n-seg",
             Self::Yolo11SSeg => "yolo11s-seg",
+            Self::Yolo11MSeg => "yolo11m-seg",
+            Self::Yolo11LSeg => "yolo11l-seg",
+            Self::Yolo11XSeg => "yolo11x-seg",
             Self::Yolo11NCls => "yolo11n-cls",
             Self::Yolo11SCls => "yolo11s-cls",
             Self::Yolo11MCls => "yolo11m-cls",
             Self::Yolo11LCls => "yolo11l-cls",
             Self::Yolo11XCls => "yolo11x-cls",
+            Self::Yolov8N => "yolov8n",
+            Self::Yolov8S => "yolov8s",
+            Self::Yolov8M => "yolov8m",
+            Self::Yolov8L => "yolov8l",
+            Self::Yolov8X => "yolov8x",
+            Self::Yolov8NSeg => "yolov8n-seg",
+            Self::Yolov8SSeg => "yolov8s-seg",
+            Self::Yolov8MSeg => "yolov8m-seg",
+            Self::Yolov8LSeg => "yolov8l-seg",
+            Self::Yolov8XSeg => "yolov8x-seg",
+            Self::Yolov8NCls => "yolov8n-cls",
+            Self::Yolov8SCls => "yolov8s-cls",
+            Self::Yolov8MCls => "yolov8m-cls",
+            Self::Yolov8LCls => "yolov8l-cls",
+            Self::Yolov8XCls => "yolov8x-cls",
+            Self::Yolo12N => "yolo12n",
+            Self::Yolo12S => "yolo12s",
+            Self::Yolo12M => "yolo12m",
+            Self::Yolo12L => "yolo12l",
+            Self::Yolo12X => "yolo12x",
             Self::Yolo26N => "yolo26n",
             Self::Yolo26S => "yolo26s",
             Self::Yolo26M => "yolo26m",
@@ -186,11 +243,34 @@ impl FromStr for ModelId {
             "yolo11x" | "yolo11-xlarge" => Ok(Self::Yolo11X),
             "yolo11n-seg" | "yolo11n_seg" => Ok(Self::Yolo11NSeg),
             "yolo11s-seg" | "yolo11s_seg" => Ok(Self::Yolo11SSeg),
+            "yolo11m-seg" | "yolo11m_seg" => Ok(Self::Yolo11MSeg),
+            "yolo11l-seg" | "yolo11l_seg" => Ok(Self::Yolo11LSeg),
+            "yolo11x-seg" | "yolo11x_seg" => Ok(Self::Yolo11XSeg),
             "yolo11n-cls" | "yolo11n_cls" => Ok(Self::Yolo11NCls),
             "yolo11s-cls" | "yolo11s_cls" => Ok(Self::Yolo11SCls),
             "yolo11m-cls" | "yolo11m_cls" => Ok(Self::Yolo11MCls),
             "yolo11l-cls" | "yolo11l_cls" => Ok(Self::Yolo11LCls),
             "yolo11x-cls" | "yolo11x_cls" => Ok(Self::Yolo11XCls),
+            "yolov8n" | "yolov8-nano" => Ok(Self::Yolov8N),
+            "yolov8s" | "yolov8-small" => Ok(Self::Yolov8S),
+            "yolov8m" | "yolov8-medium" => Ok(Self::Yolov8M),
+            "yolov8l" | "yolov8-large" => Ok(Self::Yolov8L),
+            "yolov8x" | "yolov8-xlarge" => Ok(Self::Yolov8X),
+            "yolov8n-seg" | "yolov8n_seg" => Ok(Self::Yolov8NSeg),
+            "yolov8s-seg" | "yolov8s_seg" => Ok(Self::Yolov8SSeg),
+            "yolov8m-seg" | "yolov8m_seg" => Ok(Self::Yolov8MSeg),
+            "yolov8l-seg" | "yolov8l_seg" => Ok(Self::Yolov8LSeg),
+            "yolov8x-seg" | "yolov8x_seg" => Ok(Self::Yolov8XSeg),
+            "yolov8n-cls" | "yolov8n_cls" => Ok(Self::Yolov8NCls),
+            "yolov8s-cls" | "yolov8s_cls" => Ok(Self::Yolov8SCls),
+            "yolov8m-cls" | "yolov8m_cls" => Ok(Self::Yolov8MCls),
+            "yolov8l-cls" | "yolov8l_cls" => Ok(Self::Yolov8LCls),
+            "yolov8x-cls" | "yolov8x_cls" => Ok(Self::Yolov8XCls),
+            "yolo12n" | "yolo12-nano" => Ok(Self::Yolo12N),
+            "yolo12s" | "yolo12-small" => Ok(Self::Yolo12S),
+            "yolo12m" | "yolo12-medium" => Ok(Self::Yolo12M),
+            "yolo12l" | "yolo12-large" => Ok(Self::Yolo12L),
+            "yolo12x" | "yolo12-xlarge" => Ok(Self::Yolo12X),
             "yolo26n" | "yolo26-nano" => Ok(Self::Yolo26N),
             "yolo26s" | "yolo26-small" => Ok(Self::Yolo26S),
             "yolo26m" | "yolo26-medium" => Ok(Self::Yolo26M),
@@ -208,8 +288,9 @@ impl FromStr for ModelId {
             "yolo26x-cls" | "yolo26x_cls" => Ok(Self::Yolo26XCls),
             _ => Err(format!(
                 "unknown model '{value}'; available models: yolox-nano/tiny/s/m/l/x, \
-                 yolov3-tinyu, yolov10n/s/m/b/l/x, yolo11n/s/m/l/x, yolo11n/s-seg, \
-                 yolo11n/s/m/l/x-cls, yolo26n/s/m/l/x, yolo26n/s/m/l/x-seg, yolo26n/s/m/l/x-cls"
+                 yolov3-tinyu, yolov10n/s/m/b/l/x, yolo11n/s/m/l/x, yolo11n/s/m/l/x-seg, \
+                 yolo11n/s/m/l/x-cls, yolov8n/s/m/l/x, yolov8n/s/m/l/x-seg, yolov8n/s/m/l/x-cls, \
+                 yolo12n/s/m/l/x, yolo26n/s/m/l/x, yolo26n/s/m/l/x-seg, yolo26n/s/m/l/x-cls"
             )),
         }
     }
@@ -334,11 +415,34 @@ enum RuntimeModel<B: Backend> {
     Yolo11X(Box<crate::models::yolo11::Yolo11X<B>>),
     Yolo11SegN(Box<crate::models::yolo11::Yolo11SegN<B>>),
     Yolo11SegS(Box<crate::models::yolo11::Yolo11SegS<B>>),
+    Yolo11SegM(Box<crate::models::yolo11::Yolo11SegM<B>>),
+    Yolo11SegL(Box<crate::models::yolo11::Yolo11SegL<B>>),
+    Yolo11SegX(Box<crate::models::yolo11::Yolo11SegX<B>>),
     Yolo11ClsN(Box<crate::models::yolo11::Yolo11ClsN<B>>),
     Yolo11ClsS(Box<crate::models::yolo11::Yolo11ClsS<B>>),
     Yolo11ClsM(Box<crate::models::yolo11::Yolo11ClsM<B>>),
     Yolo11ClsL(Box<crate::models::yolo11::Yolo11ClsL<B>>),
     Yolo11ClsX(Box<crate::models::yolo11::Yolo11ClsX<B>>),
+    Yolov8N(Box<crate::models::yolov8::Yolov8N<B>>),
+    Yolov8S(Box<crate::models::yolov8::Yolov8S<B>>),
+    Yolov8M(Box<crate::models::yolov8::Yolov8M<B>>),
+    Yolov8L(Box<crate::models::yolov8::Yolov8L<B>>),
+    Yolov8X(Box<crate::models::yolov8::Yolov8X<B>>),
+    Yolov8SegN(Box<crate::models::yolov8::Yolov8SegN<B>>),
+    Yolov8SegS(Box<crate::models::yolov8::Yolov8SegS<B>>),
+    Yolov8SegM(Box<crate::models::yolov8::Yolov8SegM<B>>),
+    Yolov8SegL(Box<crate::models::yolov8::Yolov8SegL<B>>),
+    Yolov8SegX(Box<crate::models::yolov8::Yolov8SegX<B>>),
+    Yolov8ClsN(Box<crate::models::yolov8::Yolov8ClsN<B>>),
+    Yolov8ClsS(Box<crate::models::yolov8::Yolov8ClsS<B>>),
+    Yolov8ClsM(Box<crate::models::yolov8::Yolov8ClsM<B>>),
+    Yolov8ClsL(Box<crate::models::yolov8::Yolov8ClsL<B>>),
+    Yolov8ClsX(Box<crate::models::yolov8::Yolov8ClsX<B>>),
+    Yolo12N(Box<crate::models::yolo12::Yolo12N<B>>),
+    Yolo12S(Box<crate::models::yolo12::Yolo12S<B>>),
+    Yolo12M(Box<crate::models::yolo12::Yolo12M<B>>),
+    Yolo12L(Box<crate::models::yolo12::Yolo12L<B>>),
+    Yolo12X(Box<crate::models::yolo12::Yolo12X<B>>),
     Yolo26N(Box<crate::models::yolo26::Yolo26N<B>>),
     Yolo26S(Box<crate::models::yolo26::Yolo26S<B>>),
     Yolo26M(Box<crate::models::yolo26::Yolo26M<B>>),
@@ -413,11 +517,34 @@ fn load_ultralytics_checkpoint<B: Backend>(
         ModelId::Yolo11X => Box::new(load_variant!(Yolo11XConfig, RuntimeModel::Yolo11X)),
         ModelId::Yolo11NSeg => Box::new(load_variant!(Yolo11SegNConfig, RuntimeModel::Yolo11SegN)),
         ModelId::Yolo11SSeg => Box::new(load_variant!(Yolo11SegSConfig, RuntimeModel::Yolo11SegS)),
+        ModelId::Yolo11MSeg => Box::new(load_variant!(Yolo11SegMConfig, RuntimeModel::Yolo11SegM)),
+        ModelId::Yolo11LSeg => Box::new(load_variant!(Yolo11SegLConfig, RuntimeModel::Yolo11SegL)),
+        ModelId::Yolo11XSeg => Box::new(load_variant!(Yolo11SegXConfig, RuntimeModel::Yolo11SegX)),
         ModelId::Yolo11NCls => Box::new(load_variant!(Yolo11ClsNConfig, RuntimeModel::Yolo11ClsN)),
         ModelId::Yolo11SCls => Box::new(load_variant!(Yolo11ClsSConfig, RuntimeModel::Yolo11ClsS)),
         ModelId::Yolo11MCls => Box::new(load_variant!(Yolo11ClsMConfig, RuntimeModel::Yolo11ClsM)),
         ModelId::Yolo11LCls => Box::new(load_variant!(Yolo11ClsLConfig, RuntimeModel::Yolo11ClsL)),
         ModelId::Yolo11XCls => Box::new(load_variant!(Yolo11ClsXConfig, RuntimeModel::Yolo11ClsX)),
+        ModelId::Yolov8N => Box::new(load_variant!(Yolov8NConfig, RuntimeModel::Yolov8N)),
+        ModelId::Yolov8S => Box::new(load_variant!(Yolov8SConfig, RuntimeModel::Yolov8S)),
+        ModelId::Yolov8M => Box::new(load_variant!(Yolov8MConfig, RuntimeModel::Yolov8M)),
+        ModelId::Yolov8L => Box::new(load_variant!(Yolov8LConfig, RuntimeModel::Yolov8L)),
+        ModelId::Yolov8X => Box::new(load_variant!(Yolov8XConfig, RuntimeModel::Yolov8X)),
+        ModelId::Yolov8NSeg => Box::new(load_variant!(Yolov8SegNConfig, RuntimeModel::Yolov8SegN)),
+        ModelId::Yolov8SSeg => Box::new(load_variant!(Yolov8SegSConfig, RuntimeModel::Yolov8SegS)),
+        ModelId::Yolov8MSeg => Box::new(load_variant!(Yolov8SegMConfig, RuntimeModel::Yolov8SegM)),
+        ModelId::Yolov8LSeg => Box::new(load_variant!(Yolov8SegLConfig, RuntimeModel::Yolov8SegL)),
+        ModelId::Yolov8XSeg => Box::new(load_variant!(Yolov8SegXConfig, RuntimeModel::Yolov8SegX)),
+        ModelId::Yolov8NCls => Box::new(load_variant!(Yolov8ClsNConfig, RuntimeModel::Yolov8ClsN)),
+        ModelId::Yolov8SCls => Box::new(load_variant!(Yolov8ClsSConfig, RuntimeModel::Yolov8ClsS)),
+        ModelId::Yolov8MCls => Box::new(load_variant!(Yolov8ClsMConfig, RuntimeModel::Yolov8ClsM)),
+        ModelId::Yolov8LCls => Box::new(load_variant!(Yolov8ClsLConfig, RuntimeModel::Yolov8ClsL)),
+        ModelId::Yolov8XCls => Box::new(load_variant!(Yolov8ClsXConfig, RuntimeModel::Yolov8ClsX)),
+        ModelId::Yolo12N => Box::new(load_variant!(Yolo12NConfig, RuntimeModel::Yolo12N)),
+        ModelId::Yolo12S => Box::new(load_variant!(Yolo12SConfig, RuntimeModel::Yolo12S)),
+        ModelId::Yolo12M => Box::new(load_variant!(Yolo12MConfig, RuntimeModel::Yolo12M)),
+        ModelId::Yolo12L => Box::new(load_variant!(Yolo12LConfig, RuntimeModel::Yolo12L)),
+        ModelId::Yolo12X => Box::new(load_variant!(Yolo12XConfig, RuntimeModel::Yolo12X)),
         ModelId::Yolo26N => Box::new(load_variant!(Yolo26NConfig, RuntimeModel::Yolo26N)),
         ModelId::Yolo26S => Box::new(load_variant!(Yolo26SConfig, RuntimeModel::Yolo26S)),
         ModelId::Yolo26M => Box::new(load_variant!(Yolo26MConfig, RuntimeModel::Yolo26M)),
@@ -523,6 +650,7 @@ macro_rules! impl_end_to_end_classifier {
 
 impl_end_to_end_classifier!(yolo26: [Yolo26ClsN, Yolo26ClsS, Yolo26ClsM, Yolo26ClsL, Yolo26ClsX]);
 impl_end_to_end_classifier!(yolo11: [Yolo11ClsN, Yolo11ClsS, Yolo11ClsM, Yolo11ClsL, Yolo11ClsX]);
+impl_end_to_end_classifier!(yolov8: [Yolov8ClsN, Yolov8ClsS, Yolov8ClsM, Yolov8ClsL, Yolov8ClsX]);
 
 /// Uniform classic-detection entry point shared by every YOLO11 scale variant, so the runtime can
 /// dispatch to any of them without naming the concrete scale type.
@@ -544,6 +672,8 @@ macro_rules! impl_classic_detector {
 }
 
 impl_classic_detector!(yolo11: [Yolo11N, Yolo11S, Yolo11M, Yolo11L, Yolo11X]);
+impl_classic_detector!(yolov8: [Yolov8N, Yolov8S, Yolov8M, Yolov8L, Yolov8X]);
+impl_classic_detector!(yolo12: [Yolo12N, Yolo12S, Yolo12M, Yolo12L, Yolo12X]);
 
 impl<B: Backend, M: ClassicDetector<B>> ClassicDetector<B> for Box<M> {
     fn detect(&self, input: Tensor<B, 4>) -> (Tensor<B, 3>, Tensor<B, 3>) {
@@ -583,7 +713,8 @@ macro_rules! impl_classic_segmenter {
     };
 }
 
-impl_classic_segmenter!(yolo11: [Yolo11SegN, Yolo11SegS]);
+impl_classic_segmenter!(yolo11: [Yolo11SegN, Yolo11SegS, Yolo11SegM, Yolo11SegL, Yolo11SegX]);
+impl_classic_segmenter!(yolov8: [Yolov8SegN, Yolov8SegS, Yolov8SegM, Yolov8SegL, Yolov8SegX]);
 
 impl<B: Backend, M: ClassicSegmenter<B>> ClassicSegmenter<B> for Box<M> {
     fn segment(&self, input: Tensor<B, 4>) -> crate::models::yolo11::SegmentOutput<B> {
@@ -1009,11 +1140,34 @@ impl<B: Backend> Predictor<B> {
             | ModelId::Yolo11X
             | ModelId::Yolo11NSeg
             | ModelId::Yolo11SSeg
+            | ModelId::Yolo11MSeg
+            | ModelId::Yolo11LSeg
+            | ModelId::Yolo11XSeg
             | ModelId::Yolo11NCls
             | ModelId::Yolo11SCls
             | ModelId::Yolo11MCls
             | ModelId::Yolo11LCls
             | ModelId::Yolo11XCls
+            | ModelId::Yolov8N
+            | ModelId::Yolov8S
+            | ModelId::Yolov8M
+            | ModelId::Yolov8L
+            | ModelId::Yolov8X
+            | ModelId::Yolov8NSeg
+            | ModelId::Yolov8SSeg
+            | ModelId::Yolov8MSeg
+            | ModelId::Yolov8LSeg
+            | ModelId::Yolov8XSeg
+            | ModelId::Yolov8NCls
+            | ModelId::Yolov8SCls
+            | ModelId::Yolov8MCls
+            | ModelId::Yolov8LCls
+            | ModelId::Yolov8XCls
+            | ModelId::Yolo12N
+            | ModelId::Yolo12S
+            | ModelId::Yolo12M
+            | ModelId::Yolo12L
+            | ModelId::Yolo12X
             | ModelId::Yolo26N
             | ModelId::Yolo26S
             | ModelId::Yolo26M
@@ -1211,11 +1365,34 @@ impl<B: Backend> Predictor<B> {
             | RuntimeModel::Yolo11X(_)
             | RuntimeModel::Yolo11SegN(_)
             | RuntimeModel::Yolo11SegS(_)
+            | RuntimeModel::Yolo11SegM(_)
+            | RuntimeModel::Yolo11SegL(_)
+            | RuntimeModel::Yolo11SegX(_)
             | RuntimeModel::Yolo11ClsN(_)
             | RuntimeModel::Yolo11ClsS(_)
             | RuntimeModel::Yolo11ClsM(_)
             | RuntimeModel::Yolo11ClsL(_)
             | RuntimeModel::Yolo11ClsX(_)
+            | RuntimeModel::Yolov8N(_)
+            | RuntimeModel::Yolov8S(_)
+            | RuntimeModel::Yolov8M(_)
+            | RuntimeModel::Yolov8L(_)
+            | RuntimeModel::Yolov8X(_)
+            | RuntimeModel::Yolov8SegN(_)
+            | RuntimeModel::Yolov8SegS(_)
+            | RuntimeModel::Yolov8SegM(_)
+            | RuntimeModel::Yolov8SegL(_)
+            | RuntimeModel::Yolov8SegX(_)
+            | RuntimeModel::Yolov8ClsN(_)
+            | RuntimeModel::Yolov8ClsS(_)
+            | RuntimeModel::Yolov8ClsM(_)
+            | RuntimeModel::Yolov8ClsL(_)
+            | RuntimeModel::Yolov8ClsX(_)
+            | RuntimeModel::Yolo12N(_)
+            | RuntimeModel::Yolo12S(_)
+            | RuntimeModel::Yolo12M(_)
+            | RuntimeModel::Yolo12L(_)
+            | RuntimeModel::Yolo12X(_)
             | RuntimeModel::Yolo26N(_)
             | RuntimeModel::Yolo26S(_)
             | RuntimeModel::Yolo26M(_)
@@ -1319,6 +1496,64 @@ impl<B: Backend> Predictor<B> {
             RuntimeModel::Yolo11X(model) => {
                 run_classic_detections(model, input, self.options.iou, self.options.confidence)
             }
+            RuntimeModel::Yolo11SegM(model) => classic_candidates_to_boxes(
+                run_classic_segmentations(model, input, self.options.iou, self.options.confidence),
+            ),
+            RuntimeModel::Yolo11SegL(model) => classic_candidates_to_boxes(
+                run_classic_segmentations(model, input, self.options.iou, self.options.confidence),
+            ),
+            RuntimeModel::Yolo11SegX(model) => classic_candidates_to_boxes(
+                run_classic_segmentations(model, input, self.options.iou, self.options.confidence),
+            ),
+            RuntimeModel::Yolov8N(model) => {
+                // YOLOv8 shares YOLO11's classic decode path: DFL head output decoded to
+                // center-size boxes plus per-class sigmoid scores, suppressed by the generic
+                // class-aware NMS helper.
+                run_classic_detections(model, input, self.options.iou, self.options.confidence)
+            }
+            RuntimeModel::Yolov8S(model) => {
+                run_classic_detections(model, input, self.options.iou, self.options.confidence)
+            }
+            RuntimeModel::Yolov8M(model) => {
+                run_classic_detections(model, input, self.options.iou, self.options.confidence)
+            }
+            RuntimeModel::Yolov8L(model) => {
+                run_classic_detections(model, input, self.options.iou, self.options.confidence)
+            }
+            RuntimeModel::Yolov8X(model) => {
+                run_classic_detections(model, input, self.options.iou, self.options.confidence)
+            }
+            RuntimeModel::Yolov8SegN(model) => classic_candidates_to_boxes(
+                run_classic_segmentations(model, input, self.options.iou, self.options.confidence),
+            ),
+            RuntimeModel::Yolov8SegS(model) => classic_candidates_to_boxes(
+                run_classic_segmentations(model, input, self.options.iou, self.options.confidence),
+            ),
+            RuntimeModel::Yolov8SegM(model) => classic_candidates_to_boxes(
+                run_classic_segmentations(model, input, self.options.iou, self.options.confidence),
+            ),
+            RuntimeModel::Yolov8SegL(model) => classic_candidates_to_boxes(
+                run_classic_segmentations(model, input, self.options.iou, self.options.confidence),
+            ),
+            RuntimeModel::Yolov8SegX(model) => classic_candidates_to_boxes(
+                run_classic_segmentations(model, input, self.options.iou, self.options.confidence),
+            ),
+            RuntimeModel::Yolo12N(model) => {
+                // YOLO12 rides the same classic decode as YOLO11 (its head is byte-identical).
+                run_classic_detections(model, input, self.options.iou, self.options.confidence)
+            }
+            RuntimeModel::Yolo12S(model) => {
+                run_classic_detections(model, input, self.options.iou, self.options.confidence)
+            }
+            RuntimeModel::Yolo12M(model) => {
+                run_classic_detections(model, input, self.options.iou, self.options.confidence)
+            }
+            RuntimeModel::Yolo12L(model) => {
+                run_classic_detections(model, input, self.options.iou, self.options.confidence)
+            }
+            RuntimeModel::Yolo12X(model) => {
+                run_classic_detections(model, input, self.options.iou, self.options.confidence)
+            }
             RuntimeModel::Yolo11SegN(model) => {
                 // Segmentation models share the classic detection decode; predict() exposes the
                 // box branch only (masks require predict_segmentation).
@@ -1403,7 +1638,12 @@ impl<B: Backend> Predictor<B> {
             | RuntimeModel::Yolo11ClsS(_)
             | RuntimeModel::Yolo11ClsM(_)
             | RuntimeModel::Yolo11ClsL(_)
-            | RuntimeModel::Yolo11ClsX(_) => vec![Vec::new()],
+            | RuntimeModel::Yolo11ClsX(_)
+            | RuntimeModel::Yolov8ClsN(_)
+            | RuntimeModel::Yolov8ClsS(_)
+            | RuntimeModel::Yolov8ClsM(_)
+            | RuntimeModel::Yolov8ClsL(_)
+            | RuntimeModel::Yolov8ClsX(_) => vec![Vec::new()],
         };
 
         let mut detections = Vec::new();
@@ -1440,8 +1680,8 @@ impl<B: Backend> Predictor<B> {
     /// Returns one [`SegmentationDetection`] per surviving instance: the same box contract as
     /// [`Predictor::predict`] plus a boolean source-image coverage mask. Detections whose cropped
     /// mask is empty are dropped, mirroring Ultralytics' segmentation postprocess. Requires a
-    /// segmentation model (`yolo11n/s-seg` or `yolo26n/s/m/l/x-seg`); detect models should use
-    /// [`Predictor::predict`].
+    /// segmentation model (`yolo11n/s/m/l/x-seg`, `yolov8n/s/m/l/x-seg`, or
+    /// `yolo26n/s/m/l/x-seg`); detect models should use [`Predictor::predict`].
     pub fn predict_segmentation(&self, image: &DynamicImage) -> Result<Vec<SegmentationDetection>> {
         let prepared = self.prepare_segmentation(image)?;
         let (canvas_width, canvas_height) = (
@@ -1454,6 +1694,30 @@ impl<B: Backend> Predictor<B> {
                 run_classic_segmentations(model, input, self.options.iou, self.options.confidence)
             }
             RuntimeModel::Yolo11SegS(model) => {
+                run_classic_segmentations(model, input, self.options.iou, self.options.confidence)
+            }
+            RuntimeModel::Yolo11SegM(model) => {
+                run_classic_segmentations(model, input, self.options.iou, self.options.confidence)
+            }
+            RuntimeModel::Yolo11SegL(model) => {
+                run_classic_segmentations(model, input, self.options.iou, self.options.confidence)
+            }
+            RuntimeModel::Yolo11SegX(model) => {
+                run_classic_segmentations(model, input, self.options.iou, self.options.confidence)
+            }
+            RuntimeModel::Yolov8SegN(model) => {
+                run_classic_segmentations(model, input, self.options.iou, self.options.confidence)
+            }
+            RuntimeModel::Yolov8SegS(model) => {
+                run_classic_segmentations(model, input, self.options.iou, self.options.confidence)
+            }
+            RuntimeModel::Yolov8SegM(model) => {
+                run_classic_segmentations(model, input, self.options.iou, self.options.confidence)
+            }
+            RuntimeModel::Yolov8SegL(model) => {
+                run_classic_segmentations(model, input, self.options.iou, self.options.confidence)
+            }
+            RuntimeModel::Yolov8SegX(model) => {
                 run_classic_segmentations(model, input, self.options.iou, self.options.confidence)
             }
             RuntimeModel::Yolo26SegN(model) => run_end_to_end_segmentations(
@@ -1489,7 +1753,7 @@ impl<B: Backend> Predictor<B> {
             _ => {
                 return Err(format!(
                     "{} is not a segmentation model; instance masks are available for \
-                     yolo11n/s-seg and yolo26n/s/m/l/x-seg",
+                     yolo11n/s/m/l/x-seg, yolov8n/s/m/l/x-seg, and yolo26n/s/m/l/x-seg",
                     self.model_id
                 )
                 .into());
@@ -1570,6 +1834,11 @@ impl<B: Backend> Predictor<B> {
             RuntimeModel::Yolo11ClsM(model) => model.classify(input / 255.0),
             RuntimeModel::Yolo11ClsL(model) => model.classify(input / 255.0),
             RuntimeModel::Yolo11ClsX(model) => model.classify(input / 255.0),
+            RuntimeModel::Yolov8ClsN(model) => model.classify(input / 255.0),
+            RuntimeModel::Yolov8ClsS(model) => model.classify(input / 255.0),
+            RuntimeModel::Yolov8ClsM(model) => model.classify(input / 255.0),
+            RuntimeModel::Yolov8ClsL(model) => model.classify(input / 255.0),
+            RuntimeModel::Yolov8ClsX(model) => model.classify(input / 255.0),
             _ => unreachable!("prepare_classification rejects non-classification models"),
         };
         let probs: Vec<f32> = output
@@ -1613,10 +1882,15 @@ impl<B: Backend> Predictor<B> {
             | RuntimeModel::Yolo11ClsS(_)
             | RuntimeModel::Yolo11ClsM(_)
             | RuntimeModel::Yolo11ClsL(_)
-            | RuntimeModel::Yolo11ClsX(_) => Ok(()),
+            | RuntimeModel::Yolo11ClsX(_)
+            | RuntimeModel::Yolov8ClsN(_)
+            | RuntimeModel::Yolov8ClsS(_)
+            | RuntimeModel::Yolov8ClsM(_)
+            | RuntimeModel::Yolov8ClsL(_)
+            | RuntimeModel::Yolov8ClsX(_) => Ok(()),
             _ => Err(format!(
                 "{} is not a classification model; class probabilities are available for the \
-                 yolo26n/s/m/l/x-cls and yolo11n/s/m/l/x-cls variants",
+                 yolo26n/s/m/l/x-cls, yolo11n/s/m/l/x-cls, and yolov8n/s/m/l/x-cls variants",
                 self.model_id
             )
             .into()),
@@ -1628,6 +1902,14 @@ impl<B: Backend> Predictor<B> {
         match &self.model {
             RuntimeModel::Yolo11SegN(_)
             | RuntimeModel::Yolo11SegS(_)
+            | RuntimeModel::Yolo11SegM(_)
+            | RuntimeModel::Yolo11SegL(_)
+            | RuntimeModel::Yolo11SegX(_)
+            | RuntimeModel::Yolov8SegN(_)
+            | RuntimeModel::Yolov8SegS(_)
+            | RuntimeModel::Yolov8SegM(_)
+            | RuntimeModel::Yolov8SegL(_)
+            | RuntimeModel::Yolov8SegX(_)
             | RuntimeModel::Yolo26SegN(_)
             | RuntimeModel::Yolo26SegS(_)
             | RuntimeModel::Yolo26SegM(_)
@@ -1636,8 +1918,8 @@ impl<B: Backend> Predictor<B> {
                 Ok(LetterboxedImage::ultralytics(image, INPUT_SIZE, 32))
             }
             _ => Err(format!(
-                "{} is not a segmentation model; instance masks are available for yolo11n/s-seg \
-                 and yolo26n/s/m/l/x-seg",
+                "{} is not a segmentation model; instance masks are available for \
+                 yolo11n/s/m/l/x-seg, yolov8n/s/m/l/x-seg, and yolo26n/s/m/l/x-seg",
                 self.model_id
             )
             .into()),
@@ -1727,11 +2009,34 @@ pub fn pack_weights(
                 ModelId::Yolo11X => pack_variant!(Yolo11XConfig),
                 ModelId::Yolo11NSeg => pack_variant!(Yolo11SegNConfig),
                 ModelId::Yolo11SSeg => pack_variant!(Yolo11SegSConfig),
+                ModelId::Yolo11MSeg => pack_variant!(Yolo11SegMConfig),
+                ModelId::Yolo11LSeg => pack_variant!(Yolo11SegLConfig),
+                ModelId::Yolo11XSeg => pack_variant!(Yolo11SegXConfig),
                 ModelId::Yolo11NCls => pack_variant!(Yolo11ClsNConfig),
                 ModelId::Yolo11SCls => pack_variant!(Yolo11ClsSConfig),
                 ModelId::Yolo11MCls => pack_variant!(Yolo11ClsMConfig),
                 ModelId::Yolo11LCls => pack_variant!(Yolo11ClsLConfig),
                 ModelId::Yolo11XCls => pack_variant!(Yolo11ClsXConfig),
+                ModelId::Yolov8N => pack_variant!(Yolov8NConfig),
+                ModelId::Yolov8S => pack_variant!(Yolov8SConfig),
+                ModelId::Yolov8M => pack_variant!(Yolov8MConfig),
+                ModelId::Yolov8L => pack_variant!(Yolov8LConfig),
+                ModelId::Yolov8X => pack_variant!(Yolov8XConfig),
+                ModelId::Yolov8NSeg => pack_variant!(Yolov8SegNConfig),
+                ModelId::Yolov8SSeg => pack_variant!(Yolov8SegSConfig),
+                ModelId::Yolov8MSeg => pack_variant!(Yolov8SegMConfig),
+                ModelId::Yolov8LSeg => pack_variant!(Yolov8SegLConfig),
+                ModelId::Yolov8XSeg => pack_variant!(Yolov8SegXConfig),
+                ModelId::Yolov8NCls => pack_variant!(Yolov8ClsNConfig),
+                ModelId::Yolov8SCls => pack_variant!(Yolov8ClsSConfig),
+                ModelId::Yolov8MCls => pack_variant!(Yolov8ClsMConfig),
+                ModelId::Yolov8LCls => pack_variant!(Yolov8ClsLConfig),
+                ModelId::Yolov8XCls => pack_variant!(Yolov8ClsXConfig),
+                ModelId::Yolo12N => pack_variant!(Yolo12NConfig),
+                ModelId::Yolo12S => pack_variant!(Yolo12SConfig),
+                ModelId::Yolo12M => pack_variant!(Yolo12MConfig),
+                ModelId::Yolo12L => pack_variant!(Yolo12LConfig),
+                ModelId::Yolo12X => pack_variant!(Yolo12XConfig),
                 ModelId::Yolo26N => pack_variant!(Yolo26NConfig),
                 ModelId::Yolo26S => pack_variant!(Yolo26SConfig),
                 ModelId::Yolo26M => pack_variant!(Yolo26MConfig),
@@ -2135,11 +2440,34 @@ mod tests {
         assert_eq!("yolo11x".parse(), Ok(ModelId::Yolo11X));
         assert_eq!("yolo11n-seg".parse(), Ok(ModelId::Yolo11NSeg));
         assert_eq!("yolo11s-seg".parse(), Ok(ModelId::Yolo11SSeg));
+        assert_eq!("yolo11m-seg".parse(), Ok(ModelId::Yolo11MSeg));
+        assert_eq!("yolo11l-seg".parse(), Ok(ModelId::Yolo11LSeg));
+        assert_eq!("yolo11x-seg".parse(), Ok(ModelId::Yolo11XSeg));
         assert_eq!("yolo11n-cls".parse(), Ok(ModelId::Yolo11NCls));
         assert_eq!("yolo11s-cls".parse(), Ok(ModelId::Yolo11SCls));
         assert_eq!("yolo11m-cls".parse(), Ok(ModelId::Yolo11MCls));
         assert_eq!("yolo11l-cls".parse(), Ok(ModelId::Yolo11LCls));
         assert_eq!("yolo11x-cls".parse(), Ok(ModelId::Yolo11XCls));
+        assert_eq!("yolov8n".parse(), Ok(ModelId::Yolov8N));
+        assert_eq!("yolov8s".parse(), Ok(ModelId::Yolov8S));
+        assert_eq!("yolov8m".parse(), Ok(ModelId::Yolov8M));
+        assert_eq!("yolov8l".parse(), Ok(ModelId::Yolov8L));
+        assert_eq!("yolov8x".parse(), Ok(ModelId::Yolov8X));
+        assert_eq!("yolov8n-seg".parse(), Ok(ModelId::Yolov8NSeg));
+        assert_eq!("yolov8s-seg".parse(), Ok(ModelId::Yolov8SSeg));
+        assert_eq!("yolov8m-seg".parse(), Ok(ModelId::Yolov8MSeg));
+        assert_eq!("yolov8l-seg".parse(), Ok(ModelId::Yolov8LSeg));
+        assert_eq!("yolov8x-seg".parse(), Ok(ModelId::Yolov8XSeg));
+        assert_eq!("yolov8n-cls".parse(), Ok(ModelId::Yolov8NCls));
+        assert_eq!("yolov8s-cls".parse(), Ok(ModelId::Yolov8SCls));
+        assert_eq!("yolov8m-cls".parse(), Ok(ModelId::Yolov8MCls));
+        assert_eq!("yolov8l-cls".parse(), Ok(ModelId::Yolov8LCls));
+        assert_eq!("yolov8x-cls".parse(), Ok(ModelId::Yolov8XCls));
+        assert_eq!("yolo12n".parse(), Ok(ModelId::Yolo12N));
+        assert_eq!("yolo12s".parse(), Ok(ModelId::Yolo12S));
+        assert_eq!("yolo12m".parse(), Ok(ModelId::Yolo12M));
+        assert_eq!("yolo12l".parse(), Ok(ModelId::Yolo12L));
+        assert_eq!("yolo12x".parse(), Ok(ModelId::Yolo12X));
         assert_eq!("yolo26n".parse(), Ok(ModelId::Yolo26N));
         assert_eq!("yolo26s".parse(), Ok(ModelId::Yolo26S));
         assert_eq!("yolo26m".parse(), Ok(ModelId::Yolo26M));
@@ -2191,11 +2519,34 @@ mod tests {
             ModelId::Yolo11X,
             ModelId::Yolo11NSeg,
             ModelId::Yolo11SSeg,
+            ModelId::Yolo11MSeg,
+            ModelId::Yolo11LSeg,
+            ModelId::Yolo11XSeg,
             ModelId::Yolo11NCls,
             ModelId::Yolo11SCls,
             ModelId::Yolo11MCls,
             ModelId::Yolo11LCls,
             ModelId::Yolo11XCls,
+            ModelId::Yolov8N,
+            ModelId::Yolov8S,
+            ModelId::Yolov8M,
+            ModelId::Yolov8L,
+            ModelId::Yolov8X,
+            ModelId::Yolov8NSeg,
+            ModelId::Yolov8SSeg,
+            ModelId::Yolov8MSeg,
+            ModelId::Yolov8LSeg,
+            ModelId::Yolov8XSeg,
+            ModelId::Yolov8NCls,
+            ModelId::Yolov8SCls,
+            ModelId::Yolov8MCls,
+            ModelId::Yolov8LCls,
+            ModelId::Yolov8XCls,
+            ModelId::Yolo12N,
+            ModelId::Yolo12S,
+            ModelId::Yolo12M,
+            ModelId::Yolo12L,
+            ModelId::Yolo12X,
             ModelId::Yolo26N,
             ModelId::Yolo26S,
             ModelId::Yolo26M,
@@ -2516,6 +2867,46 @@ mod tests {
         yolo11s_seg_matches_ultralytics_end_to_end,
         ModelId::Yolo11SSeg,
         "yolo11s-seg"
+    );
+    seg_e2e_test!(
+        yolo11m_seg_matches_ultralytics_end_to_end,
+        ModelId::Yolo11MSeg,
+        "yolo11m-seg"
+    );
+    seg_e2e_test!(
+        yolo11l_seg_matches_ultralytics_end_to_end,
+        ModelId::Yolo11LSeg,
+        "yolo11l-seg"
+    );
+    seg_e2e_test!(
+        yolo11x_seg_matches_ultralytics_end_to_end,
+        ModelId::Yolo11XSeg,
+        "yolo11x-seg"
+    );
+    seg_e2e_test!(
+        yolov8n_seg_matches_ultralytics_end_to_end,
+        ModelId::Yolov8NSeg,
+        "yolov8n-seg"
+    );
+    seg_e2e_test!(
+        yolov8s_seg_matches_ultralytics_end_to_end,
+        ModelId::Yolov8SSeg,
+        "yolov8s-seg"
+    );
+    seg_e2e_test!(
+        yolov8m_seg_matches_ultralytics_end_to_end,
+        ModelId::Yolov8MSeg,
+        "yolov8m-seg"
+    );
+    seg_e2e_test!(
+        yolov8l_seg_matches_ultralytics_end_to_end,
+        ModelId::Yolov8LSeg,
+        "yolov8l-seg"
+    );
+    seg_e2e_test!(
+        yolov8x_seg_matches_ultralytics_end_to_end,
+        ModelId::Yolov8XSeg,
+        "yolov8x-seg"
     );
     seg_e2e_test!(
         yolo26n_seg_matches_ultralytics_end_to_end,

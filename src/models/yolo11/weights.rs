@@ -81,6 +81,21 @@ pub const COCO_VERIFIED_ARTIFACTS: &[VerifiedArtifact] = &[
         bytes: 20_465_216,
         sha256: "FD9841F96748BD32A50EF508340F86A161B331D44F3D16678A96BED1A76342BE",
     },
+    VerifiedArtifact {
+        model: "yolo11m-seg",
+        bytes: 45_191_744,
+        sha256: "5B74DC2C1C32197837173C298A48CD9ABC351B4D9763BF7DB4300DBA144DE3BB",
+    },
+    VerifiedArtifact {
+        model: "yolo11l-seg",
+        bytes: 55_838_528,
+        sha256: "BC956ED901F0922760CF9D7B5534377C2383B76A2953180C03CD0D707FDDD6C3",
+    },
+    VerifiedArtifact {
+        model: "yolo11x-seg",
+        bytes: 124_976_448,
+        sha256: "B1B816DEF3920992491CF7EFAB9638EFAC69B2896F0CDAF64FB4546FDCFDC070",
+    },
 ];
 
 /// The verified ImageNet-1k release candidates, one per classify scale, in parity-pass order.

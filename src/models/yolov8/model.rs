@@ -5,11 +5,11 @@ use burn::{
 
 use super::{
     body::{
-        Yolo11BodyLConfig, Yolo11BodyLarge, Yolo11BodyMConfig, Yolo11BodyNConfig,
-        Yolo11BodySConfig, Yolo11BodySmall, Yolo11BodyXConfig,
+        Yolov8Body, Yolov8BodyLConfig, Yolov8BodyMConfig, Yolov8BodyNConfig, Yolov8BodySConfig,
+        Yolov8BodyXConfig,
     },
-    head::{DecodedPredictions, Yolo11Head, Yolo11HeadConfig},
-    segment_head::{SegmentOutput, Yolo11SegHead, Yolo11SegHeadConfig},
+    head::{DecodedPredictions, Yolov8Head, Yolov8HeadConfig},
+    segmentation::{Yolov8SegHead, Yolov8SegHeadConfig},
 };
 
 #[cfg(feature = "pretrained")]
@@ -22,64 +22,58 @@ use {
     std::path::PathBuf,
 };
 
-/// Build the PyTorch-state store shared by every YOLO11 scale variant.
+/// Build the PyTorch-state store shared by every YOLOv8 detect scale variant.
 ///
-/// Body layers retain their Ultralytics graph indices (the head is model.23, which the body rule
+/// Body layers retain their Ultralytics graph indices (the head is model.22, which the body rule
 /// must not match); the head's box and classification towers are remapped one rule per
-/// path-segment pattern. The fixed DFL projection (`model.23.dfl.conv.weight`) is intentionally
+/// path-segment pattern. The fixed DFL projection (`model.22.dfl.conv.weight`) is intentionally
 /// unmapped: it is baked into the head as a constant. The remaps are scale-independent because
 /// every variant shares the checkpoint key layout.
 #[cfg(feature = "pretrained")]
 fn pytorch_store(path: impl Into<PathBuf>) -> PytorchStore {
     PytorchStore::from_file(path)
         .with_top_level_key("model")
-        // Body layers retain their Ultralytics graph indices. The head is model.23, so this
-        // rule must not match it.
-        .with_key_remapping("model\\.([0-9]|1[0-9]|2[0-2])\\.(.+)", "body.model_$1.$2")
-        // model.23.cv2.{scale}.{layer} is the box regression tower.
-        .with_key_remapping("model\\.23\\.cv2\\.0\\.0\\.(.+)", "head.p3.box_0.$1")
-        .with_key_remapping("model\\.23\\.cv2\\.0\\.1\\.(.+)", "head.p3.box_1.$1")
-        .with_key_remapping("model\\.23\\.cv2\\.0\\.2\\.(.+)", "head.p3.box_out.$1")
-        .with_key_remapping("model\\.23\\.cv2\\.1\\.0\\.(.+)", "head.p4.box_0.$1")
-        .with_key_remapping("model\\.23\\.cv2\\.1\\.1\\.(.+)", "head.p4.box_1.$1")
-        .with_key_remapping("model\\.23\\.cv2\\.1\\.2\\.(.+)", "head.p4.box_out.$1")
-        .with_key_remapping("model\\.23\\.cv2\\.2\\.0\\.(.+)", "head.p5.box_0.$1")
-        .with_key_remapping("model\\.23\\.cv2\\.2\\.1\\.(.+)", "head.p5.box_1.$1")
-        .with_key_remapping("model\\.23\\.cv2\\.2\\.2\\.(.+)", "head.p5.box_out.$1")
-        // model.23.cv3.{scale}.{tower}.{conv} is the light classification tower.
-        .with_key_remapping("model\\.23\\.cv3\\.0\\.0\\.0\\.(.+)", "head.p3.cls_dw_0.$1")
-        .with_key_remapping("model\\.23\\.cv3\\.0\\.0\\.1\\.(.+)", "head.p3.cls_pw_0.$1")
-        .with_key_remapping("model\\.23\\.cv3\\.0\\.1\\.0\\.(.+)", "head.p3.cls_dw_1.$1")
-        .with_key_remapping("model\\.23\\.cv3\\.0\\.1\\.1\\.(.+)", "head.p3.cls_pw_1.$1")
-        .with_key_remapping("model\\.23\\.cv3\\.0\\.2\\.(.+)", "head.p3.cls_out.$1")
-        .with_key_remapping("model\\.23\\.cv3\\.1\\.0\\.0\\.(.+)", "head.p4.cls_dw_0.$1")
-        .with_key_remapping("model\\.23\\.cv3\\.1\\.0\\.1\\.(.+)", "head.p4.cls_pw_0.$1")
-        .with_key_remapping("model\\.23\\.cv3\\.1\\.1\\.0\\.(.+)", "head.p4.cls_dw_1.$1")
-        .with_key_remapping("model\\.23\\.cv3\\.1\\.1\\.1\\.(.+)", "head.p4.cls_pw_1.$1")
-        .with_key_remapping("model\\.23\\.cv3\\.1\\.2\\.(.+)", "head.p4.cls_out.$1")
-        .with_key_remapping("model\\.23\\.cv3\\.2\\.0\\.0\\.(.+)", "head.p5.cls_dw_0.$1")
-        .with_key_remapping("model\\.23\\.cv3\\.2\\.0\\.1\\.(.+)", "head.p5.cls_pw_0.$1")
-        .with_key_remapping("model\\.23\\.cv3\\.2\\.1\\.0\\.(.+)", "head.p5.cls_dw_1.$1")
-        .with_key_remapping("model\\.23\\.cv3\\.2\\.1\\.1\\.(.+)", "head.p5.cls_pw_1.$1")
-        .with_key_remapping("model\\.23\\.cv3\\.2\\.2\\.(.+)", "head.p5.cls_out.$1")
+        // Body layers retain their Ultralytics graph indices. The head is model.22, so this rule
+        // must not match it.
+        .with_key_remapping("model\\.([0-9]|1[0-9]|2[0-1])\\.(.+)", "body.model_$1.$2")
+        // model.22.cv2.{scale}.{layer} is the box regression tower.
+        .with_key_remapping("model\\.22\\.cv2\\.0\\.0\\.(.+)", "head.p3.box_0.$1")
+        .with_key_remapping("model\\.22\\.cv2\\.0\\.1\\.(.+)", "head.p3.box_1.$1")
+        .with_key_remapping("model\\.22\\.cv2\\.0\\.2\\.(.+)", "head.p3.box_out.$1")
+        .with_key_remapping("model\\.22\\.cv2\\.1\\.0\\.(.+)", "head.p4.box_0.$1")
+        .with_key_remapping("model\\.22\\.cv2\\.1\\.1\\.(.+)", "head.p4.box_1.$1")
+        .with_key_remapping("model\\.22\\.cv2\\.1\\.2\\.(.+)", "head.p4.box_out.$1")
+        .with_key_remapping("model\\.22\\.cv2\\.2\\.0\\.(.+)", "head.p5.box_0.$1")
+        .with_key_remapping("model\\.22\\.cv2\\.2\\.1\\.(.+)", "head.p5.box_1.$1")
+        .with_key_remapping("model\\.22\\.cv2\\.2\\.2\\.(.+)", "head.p5.box_out.$1")
+        // model.22.cv3.{scale}.{tower} is the legacy full-3x3-conv classification tower.
+        .with_key_remapping("model\\.22\\.cv3\\.0\\.0\\.(.+)", "head.p3.cls_0.$1")
+        .with_key_remapping("model\\.22\\.cv3\\.0\\.1\\.(.+)", "head.p3.cls_1.$1")
+        .with_key_remapping("model\\.22\\.cv3\\.0\\.2\\.(.+)", "head.p3.cls_out.$1")
+        .with_key_remapping("model\\.22\\.cv3\\.1\\.0\\.(.+)", "head.p4.cls_0.$1")
+        .with_key_remapping("model\\.22\\.cv3\\.1\\.1\\.(.+)", "head.p4.cls_1.$1")
+        .with_key_remapping("model\\.22\\.cv3\\.1\\.2\\.(.+)", "head.p4.cls_out.$1")
+        .with_key_remapping("model\\.22\\.cv3\\.2\\.0\\.(.+)", "head.p5.cls_0.$1")
+        .with_key_remapping("model\\.22\\.cv3\\.2\\.1\\.(.+)", "head.p5.cls_1.$1")
+        .with_key_remapping("model\\.22\\.cv3\\.2\\.2\\.(.+)", "head.p5.cls_out.$1")
 }
 
-/// Native Burn YOLO11n model.
+/// Native Burn YOLOv8n model.
 ///
 /// The body feeds the classic DFL detection head whose predictions are decoded to center-size
 /// model-input pixels; the runtime applies class-aware non-maximum suppression.
 #[derive(Module, Debug)]
-pub struct Yolo11N<B: Backend> {
-    body: Yolo11BodySmall<B>,
-    head: Yolo11Head<B>,
+pub struct Yolov8N<B: Backend> {
+    body: Yolov8Body<B>,
+    head: Yolov8Head<B>,
 }
 
-impl<B: Backend> Yolo11N<B> {
+impl<B: Backend> Yolov8N<B> {
     pub fn forward(&self, input: Tensor<B, 4>) -> DecodedPredictions<B> {
         self.head.forward(self.body.forward(input))
     }
 
-    /// Import tensor-only state exported from an official Ultralytics YOLO11n checkpoint.
+    /// Import tensor-only state exported from an official Ultralytics YOLOv8n checkpoint.
     #[cfg(feature = "pretrained")]
     pub fn load_pytorch_weights(
         &mut self,
@@ -104,9 +98,9 @@ impl<B: Backend> Yolo11N<B> {
         let mut store = BurnpackStore::from_file(path.into())
             .metadata(
                 "boquilens.artifact-format",
-                weights::artifact_format("yolo11n"),
+                weights::artifact_format("yolov8n"),
             )
-            .metadata("boquilens.model", "yolo11n")
+            .metadata("boquilens.model", "yolov8n")
             .metadata("boquilens.classes", "coco-80")
             .metadata("boquilens.precision", "f16")
             .with_to_adapter(HalfPrecisionAdapter::new());
@@ -115,30 +109,30 @@ impl<B: Backend> Yolo11N<B> {
 }
 
 #[derive(Debug, Default)]
-pub struct Yolo11NConfig;
+pub struct Yolov8NConfig;
 
-impl Yolo11NConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo11N<B> {
-        Yolo11N {
-            body: Yolo11BodyNConfig.init(device),
-            head: Yolo11HeadConfig::new(64, 128, 256).init(device),
+impl Yolov8NConfig {
+    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8N<B> {
+        Yolov8N {
+            body: Yolov8BodyNConfig.init(device),
+            head: Yolov8HeadConfig::new(64, 128, 256).init(device),
         }
     }
 }
 
-/// Native Burn YOLO11s model.
+/// Native Burn YOLOv8s model.
 #[derive(Module, Debug)]
-pub struct Yolo11S<B: Backend> {
-    body: Yolo11BodySmall<B>,
-    head: Yolo11Head<B>,
+pub struct Yolov8S<B: Backend> {
+    body: Yolov8Body<B>,
+    head: Yolov8Head<B>,
 }
 
-impl<B: Backend> Yolo11S<B> {
+impl<B: Backend> Yolov8S<B> {
     pub fn forward(&self, input: Tensor<B, 4>) -> DecodedPredictions<B> {
         self.head.forward(self.body.forward(input))
     }
 
-    /// Import tensor-only state exported from an official Ultralytics YOLO11s checkpoint.
+    /// Import tensor-only state exported from an official Ultralytics YOLOv8s checkpoint.
     #[cfg(feature = "pretrained")]
     pub fn load_pytorch_weights(
         &mut self,
@@ -163,9 +157,9 @@ impl<B: Backend> Yolo11S<B> {
         let mut store = BurnpackStore::from_file(path.into())
             .metadata(
                 "boquilens.artifact-format",
-                weights::artifact_format("yolo11s"),
+                weights::artifact_format("yolov8s"),
             )
-            .metadata("boquilens.model", "yolo11s")
+            .metadata("boquilens.model", "yolov8s")
             .metadata("boquilens.classes", "coco-80")
             .metadata("boquilens.precision", "f16")
             .with_to_adapter(HalfPrecisionAdapter::new());
@@ -174,31 +168,30 @@ impl<B: Backend> Yolo11S<B> {
 }
 
 #[derive(Debug, Default)]
-pub struct Yolo11SConfig;
+pub struct Yolov8SConfig;
 
-impl Yolo11SConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo11S<B> {
-        Yolo11S {
-            body: Yolo11BodySConfig.init(device),
-            head: Yolo11HeadConfig::new(128, 256, 512).init(device),
+impl Yolov8SConfig {
+    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8S<B> {
+        Yolov8S {
+            body: Yolov8BodySConfig.init(device),
+            head: Yolov8HeadConfig::new(128, 256, 512).init(device),
         }
     }
 }
 
-/// Native Burn YOLO11m model. The m-scale body forces the C3k chain onto the early backbone
-/// stages (`parse_model`'s m/l/x rule), so it shares [`Yolo11BodyLarge`] with l/x.
+/// Native Burn YOLOv8m model.
 #[derive(Module, Debug)]
-pub struct Yolo11M<B: Backend> {
-    body: Yolo11BodyLarge<B>,
-    head: Yolo11Head<B>,
+pub struct Yolov8M<B: Backend> {
+    body: Yolov8Body<B>,
+    head: Yolov8Head<B>,
 }
 
-impl<B: Backend> Yolo11M<B> {
+impl<B: Backend> Yolov8M<B> {
     pub fn forward(&self, input: Tensor<B, 4>) -> DecodedPredictions<B> {
         self.head.forward(self.body.forward(input))
     }
 
-    /// Import tensor-only state exported from an official Ultralytics YOLO11m checkpoint.
+    /// Import tensor-only state exported from an official Ultralytics YOLOv8m checkpoint.
     #[cfg(feature = "pretrained")]
     pub fn load_pytorch_weights(
         &mut self,
@@ -223,9 +216,9 @@ impl<B: Backend> Yolo11M<B> {
         let mut store = BurnpackStore::from_file(path.into())
             .metadata(
                 "boquilens.artifact-format",
-                weights::artifact_format("yolo11m"),
+                weights::artifact_format("yolov8m"),
             )
-            .metadata("boquilens.model", "yolo11m")
+            .metadata("boquilens.model", "yolov8m")
             .metadata("boquilens.classes", "coco-80")
             .metadata("boquilens.precision", "f16")
             .with_to_adapter(HalfPrecisionAdapter::new());
@@ -234,30 +227,30 @@ impl<B: Backend> Yolo11M<B> {
 }
 
 #[derive(Debug, Default)]
-pub struct Yolo11MConfig;
+pub struct Yolov8MConfig;
 
-impl Yolo11MConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo11M<B> {
-        Yolo11M {
-            body: Yolo11BodyMConfig.init(device),
-            head: Yolo11HeadConfig::new(256, 512, 512).init(device),
+impl Yolov8MConfig {
+    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8M<B> {
+        Yolov8M {
+            body: Yolov8BodyMConfig.init(device),
+            head: Yolov8HeadConfig::new(192, 384, 576).init(device),
         }
     }
 }
 
-/// Native Burn YOLO11l model. Shares YOLO11m's body graph with depth-scaled repeats.
+/// Native Burn YOLOv8l model.
 #[derive(Module, Debug)]
-pub struct Yolo11L<B: Backend> {
-    body: Yolo11BodyLarge<B>,
-    head: Yolo11Head<B>,
+pub struct Yolov8L<B: Backend> {
+    body: Yolov8Body<B>,
+    head: Yolov8Head<B>,
 }
 
-impl<B: Backend> Yolo11L<B> {
+impl<B: Backend> Yolov8L<B> {
     pub fn forward(&self, input: Tensor<B, 4>) -> DecodedPredictions<B> {
         self.head.forward(self.body.forward(input))
     }
 
-    /// Import tensor-only state exported from an official Ultralytics YOLO11l checkpoint.
+    /// Import tensor-only state exported from an official Ultralytics YOLOv8l checkpoint.
     #[cfg(feature = "pretrained")]
     pub fn load_pytorch_weights(
         &mut self,
@@ -282,9 +275,9 @@ impl<B: Backend> Yolo11L<B> {
         let mut store = BurnpackStore::from_file(path.into())
             .metadata(
                 "boquilens.artifact-format",
-                weights::artifact_format("yolo11l"),
+                weights::artifact_format("yolov8l"),
             )
-            .metadata("boquilens.model", "yolo11l")
+            .metadata("boquilens.model", "yolov8l")
             .metadata("boquilens.classes", "coco-80")
             .metadata("boquilens.precision", "f16")
             .with_to_adapter(HalfPrecisionAdapter::new());
@@ -293,30 +286,30 @@ impl<B: Backend> Yolo11L<B> {
 }
 
 #[derive(Debug, Default)]
-pub struct Yolo11LConfig;
+pub struct Yolov8LConfig;
 
-impl Yolo11LConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo11L<B> {
-        Yolo11L {
-            body: Yolo11BodyLConfig.init(device),
-            head: Yolo11HeadConfig::new(256, 512, 512).init(device),
+impl Yolov8LConfig {
+    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8L<B> {
+        Yolov8L {
+            body: Yolov8BodyLConfig.init(device),
+            head: Yolov8HeadConfig::new(256, 512, 512).init(device),
         }
     }
 }
 
-/// Native Burn YOLO11x model.
+/// Native Burn YOLOv8x model.
 #[derive(Module, Debug)]
-pub struct Yolo11X<B: Backend> {
-    body: Yolo11BodyLarge<B>,
-    head: Yolo11Head<B>,
+pub struct Yolov8X<B: Backend> {
+    body: Yolov8Body<B>,
+    head: Yolov8Head<B>,
 }
 
-impl<B: Backend> Yolo11X<B> {
+impl<B: Backend> Yolov8X<B> {
     pub fn forward(&self, input: Tensor<B, 4>) -> DecodedPredictions<B> {
         self.head.forward(self.body.forward(input))
     }
 
-    /// Import tensor-only state exported from an official Ultralytics YOLO11x checkpoint.
+    /// Import tensor-only state exported from an official Ultralytics YOLOv8x checkpoint.
     #[cfg(feature = "pretrained")]
     pub fn load_pytorch_weights(
         &mut self,
@@ -341,9 +334,9 @@ impl<B: Backend> Yolo11X<B> {
         let mut store = BurnpackStore::from_file(path.into())
             .metadata(
                 "boquilens.artifact-format",
-                weights::artifact_format("yolo11x"),
+                weights::artifact_format("yolov8x"),
             )
-            .metadata("boquilens.model", "yolo11x")
+            .metadata("boquilens.model", "yolov8x")
             .metadata("boquilens.classes", "coco-80")
             .metadata("boquilens.precision", "f16")
             .with_to_adapter(HalfPrecisionAdapter::new());
@@ -352,151 +345,109 @@ impl<B: Backend> Yolo11X<B> {
 }
 
 #[derive(Debug, Default)]
-pub struct Yolo11XConfig;
+pub struct Yolov8XConfig;
 
-impl Yolo11XConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo11X<B> {
-        Yolo11X {
-            body: Yolo11BodyXConfig.init(device),
-            head: Yolo11HeadConfig::new(384, 768, 768).init(device),
+impl Yolov8XConfig {
+    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8X<B> {
+        Yolov8X {
+            body: Yolov8BodyXConfig.init(device),
+            head: Yolov8HeadConfig::new(320, 640, 640).init(device),
         }
     }
 }
 
-/// Build the PyTorch-state store for the YOLO11-seg scale variants.
+/// Build the PyTorch-state store for the YOLOv8-seg scale variants.
 ///
-/// The seg YAML keeps the detect model's body (layers 0-22) and puts the `Segment` head at
-/// `model.23`, so every rule here mirrors the detect remap with the head paths prefixed by
+/// The seg YAML keeps the detect model's body (layers 0-21) and puts the `Segment` head at
+/// `model.22`, so every rule here mirrors the detect remap with the head paths prefixed by
 /// `detect.`; the additions are the Proto module and the `cv4` mask-coefficient towers. The fixed
-/// DFL projection (`model.23.dfl.conv.weight`) is intentionally unmapped, exactly like the detect
+/// DFL projection (`model.22.dfl.conv.weight`) is intentionally unmapped, exactly like the detect
 /// variants.
 #[cfg(feature = "pretrained")]
 fn pytorch_seg_store(path: impl Into<PathBuf>) -> PytorchStore {
     PytorchStore::from_file(path)
         .with_top_level_key("model")
-        .with_key_remapping("model\\.([0-9]|1[0-9]|2[0-2])\\.(.+)", "body.model_$1.$2")
-        .with_key_remapping("model\\.23\\.cv2\\.0\\.0\\.(.+)", "head.detect.p3.box_0.$1")
-        .with_key_remapping("model\\.23\\.cv2\\.0\\.1\\.(.+)", "head.detect.p3.box_1.$1")
+        .with_key_remapping("model\\.([0-9]|1[0-9]|2[0-1])\\.(.+)", "body.model_$1.$2")
+        .with_key_remapping("model\\.22\\.cv2\\.0\\.0\\.(.+)", "head.detect.p3.box_0.$1")
+        .with_key_remapping("model\\.22\\.cv2\\.0\\.1\\.(.+)", "head.detect.p3.box_1.$1")
         .with_key_remapping(
-            "model\\.23\\.cv2\\.0\\.2\\.(.+)",
+            "model\\.22\\.cv2\\.0\\.2\\.(.+)",
             "head.detect.p3.box_out.$1",
         )
-        .with_key_remapping("model\\.23\\.cv2\\.1\\.0\\.(.+)", "head.detect.p4.box_0.$1")
-        .with_key_remapping("model\\.23\\.cv2\\.1\\.1\\.(.+)", "head.detect.p4.box_1.$1")
+        .with_key_remapping("model\\.22\\.cv2\\.1\\.0\\.(.+)", "head.detect.p4.box_0.$1")
+        .with_key_remapping("model\\.22\\.cv2\\.1\\.1\\.(.+)", "head.detect.p4.box_1.$1")
         .with_key_remapping(
-            "model\\.23\\.cv2\\.1\\.2\\.(.+)",
+            "model\\.22\\.cv2\\.1\\.2\\.(.+)",
             "head.detect.p4.box_out.$1",
         )
-        .with_key_remapping("model\\.23\\.cv2\\.2\\.0\\.(.+)", "head.detect.p5.box_0.$1")
-        .with_key_remapping("model\\.23\\.cv2\\.2\\.1\\.(.+)", "head.detect.p5.box_1.$1")
+        .with_key_remapping("model\\.22\\.cv2\\.2\\.0\\.(.+)", "head.detect.p5.box_0.$1")
+        .with_key_remapping("model\\.22\\.cv2\\.2\\.1\\.(.+)", "head.detect.p5.box_1.$1")
         .with_key_remapping(
-            "model\\.23\\.cv2\\.2\\.2\\.(.+)",
+            "model\\.22\\.cv2\\.2\\.2\\.(.+)",
             "head.detect.p5.box_out.$1",
         )
+        .with_key_remapping("model\\.22\\.cv3\\.0\\.0\\.(.+)", "head.detect.p3.cls_0.$1")
+        .with_key_remapping("model\\.22\\.cv3\\.0\\.1\\.(.+)", "head.detect.p3.cls_1.$1")
         .with_key_remapping(
-            "model\\.23\\.cv3\\.0\\.0\\.0\\.(.+)",
-            "head.detect.p3.cls_dw_0.$1",
-        )
-        .with_key_remapping(
-            "model\\.23\\.cv3\\.0\\.0\\.1\\.(.+)",
-            "head.detect.p3.cls_pw_0.$1",
-        )
-        .with_key_remapping(
-            "model\\.23\\.cv3\\.0\\.1\\.0\\.(.+)",
-            "head.detect.p3.cls_dw_1.$1",
-        )
-        .with_key_remapping(
-            "model\\.23\\.cv3\\.0\\.1\\.1\\.(.+)",
-            "head.detect.p3.cls_pw_1.$1",
-        )
-        .with_key_remapping(
-            "model\\.23\\.cv3\\.0\\.2\\.(.+)",
+            "model\\.22\\.cv3\\.0\\.2\\.(.+)",
             "head.detect.p3.cls_out.$1",
         )
+        .with_key_remapping("model\\.22\\.cv3\\.1\\.0\\.(.+)", "head.detect.p4.cls_0.$1")
+        .with_key_remapping("model\\.22\\.cv3\\.1\\.1\\.(.+)", "head.detect.p4.cls_1.$1")
         .with_key_remapping(
-            "model\\.23\\.cv3\\.1\\.0\\.0\\.(.+)",
-            "head.detect.p4.cls_dw_0.$1",
-        )
-        .with_key_remapping(
-            "model\\.23\\.cv3\\.1\\.0\\.1\\.(.+)",
-            "head.detect.p4.cls_pw_0.$1",
-        )
-        .with_key_remapping(
-            "model\\.23\\.cv3\\.1\\.1\\.0\\.(.+)",
-            "head.detect.p4.cls_dw_1.$1",
-        )
-        .with_key_remapping(
-            "model\\.23\\.cv3\\.1\\.1\\.1\\.(.+)",
-            "head.detect.p4.cls_pw_1.$1",
-        )
-        .with_key_remapping(
-            "model\\.23\\.cv3\\.1\\.2\\.(.+)",
+            "model\\.22\\.cv3\\.1\\.2\\.(.+)",
             "head.detect.p4.cls_out.$1",
         )
+        .with_key_remapping("model\\.22\\.cv3\\.2\\.0\\.(.+)", "head.detect.p5.cls_0.$1")
+        .with_key_remapping("model\\.22\\.cv3\\.2\\.1\\.(.+)", "head.detect.p5.cls_1.$1")
         .with_key_remapping(
-            "model\\.23\\.cv3\\.2\\.0\\.0\\.(.+)",
-            "head.detect.p5.cls_dw_0.$1",
-        )
-        .with_key_remapping(
-            "model\\.23\\.cv3\\.2\\.0\\.1\\.(.+)",
-            "head.detect.p5.cls_pw_0.$1",
-        )
-        .with_key_remapping(
-            "model\\.23\\.cv3\\.2\\.1\\.0\\.(.+)",
-            "head.detect.p5.cls_dw_1.$1",
-        )
-        .with_key_remapping(
-            "model\\.23\\.cv3\\.2\\.1\\.1\\.(.+)",
-            "head.detect.p5.cls_pw_1.$1",
-        )
-        .with_key_remapping(
-            "model\\.23\\.cv3\\.2\\.2\\.(.+)",
+            "model\\.22\\.cv3\\.2\\.2\\.(.+)",
             "head.detect.p5.cls_out.$1",
         )
-        .with_key_remapping("model\\.23\\.proto\\.cv1\\.(.+)", "head.proto.cv1.$1")
+        .with_key_remapping("model\\.22\\.proto\\.cv1\\.(.+)", "head.proto.cv1.$1")
         .with_key_remapping(
-            "model\\.23\\.proto\\.upsample\\.(.+)",
+            "model\\.22\\.proto\\.upsample\\.(.+)",
             "head.proto.upsample.$1",
         )
-        .with_key_remapping("model\\.23\\.proto\\.cv2\\.(.+)", "head.proto.cv2.$1")
-        .with_key_remapping("model\\.23\\.proto\\.cv3\\.(.+)", "head.proto.cv3.$1")
-        .with_key_remapping("model\\.23\\.cv4\\.0\\.0\\.(.+)", "head.p3_mask.mask_0.$1")
-        .with_key_remapping("model\\.23\\.cv4\\.0\\.1\\.(.+)", "head.p3_mask.mask_1.$1")
+        .with_key_remapping("model\\.22\\.proto\\.cv2\\.(.+)", "head.proto.cv2.$1")
+        .with_key_remapping("model\\.22\\.proto\\.cv3\\.(.+)", "head.proto.cv3.$1")
+        .with_key_remapping("model\\.22\\.cv4\\.0\\.0\\.(.+)", "head.p3_mask.mask_0.$1")
+        .with_key_remapping("model\\.22\\.cv4\\.0\\.1\\.(.+)", "head.p3_mask.mask_1.$1")
         .with_key_remapping(
-            "model\\.23\\.cv4\\.0\\.2\\.(.+)",
+            "model\\.22\\.cv4\\.0\\.2\\.(.+)",
             "head.p3_mask.mask_out.$1",
         )
-        .with_key_remapping("model\\.23\\.cv4\\.1\\.0\\.(.+)", "head.p4_mask.mask_0.$1")
-        .with_key_remapping("model\\.23\\.cv4\\.1\\.1\\.(.+)", "head.p4_mask.mask_1.$1")
+        .with_key_remapping("model\\.22\\.cv4\\.1\\.0\\.(.+)", "head.p4_mask.mask_0.$1")
+        .with_key_remapping("model\\.22\\.cv4\\.1\\.1\\.(.+)", "head.p4_mask.mask_1.$1")
         .with_key_remapping(
-            "model\\.23\\.cv4\\.1\\.2\\.(.+)",
+            "model\\.22\\.cv4\\.1\\.2\\.(.+)",
             "head.p4_mask.mask_out.$1",
         )
-        .with_key_remapping("model\\.23\\.cv4\\.2\\.0\\.(.+)", "head.p5_mask.mask_0.$1")
-        .with_key_remapping("model\\.23\\.cv4\\.2\\.1\\.(.+)", "head.p5_mask.mask_1.$1")
+        .with_key_remapping("model\\.22\\.cv4\\.2\\.0\\.(.+)", "head.p5_mask.mask_0.$1")
+        .with_key_remapping("model\\.22\\.cv4\\.2\\.1\\.(.+)", "head.p5_mask.mask_1.$1")
         .with_key_remapping(
-            "model\\.23\\.cv4\\.2\\.2\\.(.+)",
+            "model\\.22\\.cv4\\.2\\.2\\.(.+)",
             "head.p5_mask.mask_out.$1",
         )
 }
 
-/// Native Burn YOLO11n-seg model.
+/// Native Burn YOLOv8n-seg model.
 ///
-/// Shares the YOLO11n body; the Segment head adds the stride-4 Proto module and 32 raw mask
+/// Shares the YOLOv8n body; the Segment head adds the stride-4 Proto module and 32 raw mask
 /// coefficients per anchor to the classic DFL decode. The runtime applies class-aware NMS with
 /// the coefficients carried along.
 #[derive(Module, Debug)]
-pub struct Yolo11SegN<B: Backend> {
-    body: Yolo11BodySmall<B>,
-    head: Yolo11SegHead<B>,
+pub struct Yolov8SegN<B: Backend> {
+    body: Yolov8Body<B>,
+    head: Yolov8SegHead<B>,
 }
 
-impl<B: Backend> Yolo11SegN<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> SegmentOutput<B> {
+impl<B: Backend> Yolov8SegN<B> {
+    pub fn forward(&self, input: Tensor<B, 4>) -> crate::models::yolo11::SegmentOutput<B> {
         self.head.forward(self.body.forward(input))
     }
 
-    /// Import tensor-only state exported from an official Ultralytics YOLO11n-seg checkpoint.
+    /// Import tensor-only state exported from an official Ultralytics YOLOv8n-seg checkpoint.
     #[cfg(feature = "pretrained")]
     pub fn load_pytorch_weights(
         &mut self,
@@ -521,9 +472,9 @@ impl<B: Backend> Yolo11SegN<B> {
         let mut store = BurnpackStore::from_file(path.into())
             .metadata(
                 "boquilens.artifact-format",
-                weights::artifact_format("yolo11n-seg"),
+                weights::artifact_format("yolov8n-seg"),
             )
-            .metadata("boquilens.model", "yolo11n-seg")
+            .metadata("boquilens.model", "yolov8n-seg")
             .metadata("boquilens.classes", "coco-80")
             .metadata("boquilens.precision", "f16")
             .with_to_adapter(HalfPrecisionAdapter::new());
@@ -532,30 +483,30 @@ impl<B: Backend> Yolo11SegN<B> {
 }
 
 #[derive(Debug, Default)]
-pub struct Yolo11SegNConfig;
+pub struct Yolov8SegNConfig;
 
-impl Yolo11SegNConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo11SegN<B> {
-        Yolo11SegN {
-            body: Yolo11BodyNConfig.init(device),
-            head: Yolo11SegHeadConfig::new(64, 128, 256, 64).init(device),
+impl Yolov8SegNConfig {
+    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8SegN<B> {
+        Yolov8SegN {
+            body: Yolov8BodyNConfig.init(device),
+            head: Yolov8SegHeadConfig::new(64, 128, 256, 64).init(device),
         }
     }
 }
 
-/// Native Burn YOLO11s-seg model.
+/// Native Burn YOLOv8s-seg model.
 #[derive(Module, Debug)]
-pub struct Yolo11SegS<B: Backend> {
-    body: Yolo11BodySmall<B>,
-    head: Yolo11SegHead<B>,
+pub struct Yolov8SegS<B: Backend> {
+    body: Yolov8Body<B>,
+    head: Yolov8SegHead<B>,
 }
 
-impl<B: Backend> Yolo11SegS<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> SegmentOutput<B> {
+impl<B: Backend> Yolov8SegS<B> {
+    pub fn forward(&self, input: Tensor<B, 4>) -> crate::models::yolo11::SegmentOutput<B> {
         self.head.forward(self.body.forward(input))
     }
 
-    /// Import tensor-only state exported from an official Ultralytics YOLO11s-seg checkpoint.
+    /// Import tensor-only state exported from an official Ultralytics YOLOv8s-seg checkpoint.
     #[cfg(feature = "pretrained")]
     pub fn load_pytorch_weights(
         &mut self,
@@ -580,9 +531,9 @@ impl<B: Backend> Yolo11SegS<B> {
         let mut store = BurnpackStore::from_file(path.into())
             .metadata(
                 "boquilens.artifact-format",
-                weights::artifact_format("yolo11s-seg"),
+                weights::artifact_format("yolov8s-seg"),
             )
-            .metadata("boquilens.model", "yolo11s-seg")
+            .metadata("boquilens.model", "yolov8s-seg")
             .metadata("boquilens.classes", "coco-80")
             .metadata("boquilens.precision", "f16")
             .with_to_adapter(HalfPrecisionAdapter::new());
@@ -591,34 +542,30 @@ impl<B: Backend> Yolo11SegS<B> {
 }
 
 #[derive(Debug, Default)]
-pub struct Yolo11SegSConfig;
+pub struct Yolov8SegSConfig;
 
-impl Yolo11SegSConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo11SegS<B> {
-        Yolo11SegS {
-            body: Yolo11BodySConfig.init(device),
-            head: Yolo11SegHeadConfig::new(128, 256, 512, 128).init(device),
+impl Yolov8SegSConfig {
+    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8SegS<B> {
+        Yolov8SegS {
+            body: Yolov8BodySConfig.init(device),
+            head: Yolov8SegHeadConfig::new(128, 256, 512, 128).init(device),
         }
     }
 }
 
-/// Native Burn YOLO11m-seg model.
-///
-/// The m-scale body forces the C3k chain onto the early backbone stages (`parse_model`'s m/l/x
-/// rule), so it shares [`Yolo11BodyLarge`] with l/x; the Segment head adds the stride-4 Proto
-/// module and 32 raw mask coefficients per anchor to the classic DFL decode.
+/// Native Burn YOLOv8m-seg model.
 #[derive(Module, Debug)]
-pub struct Yolo11SegM<B: Backend> {
-    body: Yolo11BodyLarge<B>,
-    head: Yolo11SegHead<B>,
+pub struct Yolov8SegM<B: Backend> {
+    body: Yolov8Body<B>,
+    head: Yolov8SegHead<B>,
 }
 
-impl<B: Backend> Yolo11SegM<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> SegmentOutput<B> {
+impl<B: Backend> Yolov8SegM<B> {
+    pub fn forward(&self, input: Tensor<B, 4>) -> crate::models::yolo11::SegmentOutput<B> {
         self.head.forward(self.body.forward(input))
     }
 
-    /// Import tensor-only state exported from an official Ultralytics YOLO11m-seg checkpoint.
+    /// Import tensor-only state exported from an official Ultralytics YOLOv8m-seg checkpoint.
     #[cfg(feature = "pretrained")]
     pub fn load_pytorch_weights(
         &mut self,
@@ -643,9 +590,9 @@ impl<B: Backend> Yolo11SegM<B> {
         let mut store = BurnpackStore::from_file(path.into())
             .metadata(
                 "boquilens.artifact-format",
-                weights::artifact_format("yolo11m-seg"),
+                weights::artifact_format("yolov8m-seg"),
             )
-            .metadata("boquilens.model", "yolo11m-seg")
+            .metadata("boquilens.model", "yolov8m-seg")
             .metadata("boquilens.classes", "coco-80")
             .metadata("boquilens.precision", "f16")
             .with_to_adapter(HalfPrecisionAdapter::new());
@@ -654,30 +601,30 @@ impl<B: Backend> Yolo11SegM<B> {
 }
 
 #[derive(Debug, Default)]
-pub struct Yolo11SegMConfig;
+pub struct Yolov8SegMConfig;
 
-impl Yolo11SegMConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo11SegM<B> {
-        Yolo11SegM {
-            body: Yolo11BodyMConfig.init(device),
-            head: Yolo11SegHeadConfig::new(256, 512, 512, 256).init(device),
+impl Yolov8SegMConfig {
+    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8SegM<B> {
+        Yolov8SegM {
+            body: Yolov8BodyMConfig.init(device),
+            head: Yolov8SegHeadConfig::new(192, 384, 576, 192).init(device),
         }
     }
 }
 
-/// Native Burn YOLO11l-seg model.
+/// Native Burn YOLOv8l-seg model.
 #[derive(Module, Debug)]
-pub struct Yolo11SegL<B: Backend> {
-    body: Yolo11BodyLarge<B>,
-    head: Yolo11SegHead<B>,
+pub struct Yolov8SegL<B: Backend> {
+    body: Yolov8Body<B>,
+    head: Yolov8SegHead<B>,
 }
 
-impl<B: Backend> Yolo11SegL<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> SegmentOutput<B> {
+impl<B: Backend> Yolov8SegL<B> {
+    pub fn forward(&self, input: Tensor<B, 4>) -> crate::models::yolo11::SegmentOutput<B> {
         self.head.forward(self.body.forward(input))
     }
 
-    /// Import tensor-only state exported from an official Ultralytics YOLO11l-seg checkpoint.
+    /// Import tensor-only state exported from an official Ultralytics YOLOv8l-seg checkpoint.
     #[cfg(feature = "pretrained")]
     pub fn load_pytorch_weights(
         &mut self,
@@ -702,9 +649,9 @@ impl<B: Backend> Yolo11SegL<B> {
         let mut store = BurnpackStore::from_file(path.into())
             .metadata(
                 "boquilens.artifact-format",
-                weights::artifact_format("yolo11l-seg"),
+                weights::artifact_format("yolov8l-seg"),
             )
-            .metadata("boquilens.model", "yolo11l-seg")
+            .metadata("boquilens.model", "yolov8l-seg")
             .metadata("boquilens.classes", "coco-80")
             .metadata("boquilens.precision", "f16")
             .with_to_adapter(HalfPrecisionAdapter::new());
@@ -713,30 +660,30 @@ impl<B: Backend> Yolo11SegL<B> {
 }
 
 #[derive(Debug, Default)]
-pub struct Yolo11SegLConfig;
+pub struct Yolov8SegLConfig;
 
-impl Yolo11SegLConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo11SegL<B> {
-        Yolo11SegL {
-            body: Yolo11BodyLConfig.init(device),
-            head: Yolo11SegHeadConfig::new(256, 512, 512, 256).init(device),
+impl Yolov8SegLConfig {
+    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8SegL<B> {
+        Yolov8SegL {
+            body: Yolov8BodyLConfig.init(device),
+            head: Yolov8SegHeadConfig::new(256, 512, 512, 256).init(device),
         }
     }
 }
 
-/// Native Burn YOLO11x-seg model.
+/// Native Burn YOLOv8x-seg model.
 #[derive(Module, Debug)]
-pub struct Yolo11SegX<B: Backend> {
-    body: Yolo11BodyLarge<B>,
-    head: Yolo11SegHead<B>,
+pub struct Yolov8SegX<B: Backend> {
+    body: Yolov8Body<B>,
+    head: Yolov8SegHead<B>,
 }
 
-impl<B: Backend> Yolo11SegX<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> SegmentOutput<B> {
+impl<B: Backend> Yolov8SegX<B> {
+    pub fn forward(&self, input: Tensor<B, 4>) -> crate::models::yolo11::SegmentOutput<B> {
         self.head.forward(self.body.forward(input))
     }
 
-    /// Import tensor-only state exported from an official Ultralytics YOLO11x-seg checkpoint.
+    /// Import tensor-only state exported from an official Ultralytics YOLOv8x-seg checkpoint.
     #[cfg(feature = "pretrained")]
     pub fn load_pytorch_weights(
         &mut self,
@@ -761,9 +708,9 @@ impl<B: Backend> Yolo11SegX<B> {
         let mut store = BurnpackStore::from_file(path.into())
             .metadata(
                 "boquilens.artifact-format",
-                weights::artifact_format("yolo11x-seg"),
+                weights::artifact_format("yolov8x-seg"),
             )
-            .metadata("boquilens.model", "yolo11x-seg")
+            .metadata("boquilens.model", "yolov8x-seg")
             .metadata("boquilens.classes", "coco-80")
             .metadata("boquilens.precision", "f16")
             .with_to_adapter(HalfPrecisionAdapter::new());
@@ -772,13 +719,13 @@ impl<B: Backend> Yolo11SegX<B> {
 }
 
 #[derive(Debug, Default)]
-pub struct Yolo11SegXConfig;
+pub struct Yolov8SegXConfig;
 
-impl Yolo11SegXConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo11SegX<B> {
-        Yolo11SegX {
-            body: Yolo11BodyXConfig.init(device),
-            head: Yolo11SegHeadConfig::new(384, 768, 768, 384).init(device),
+impl Yolov8SegXConfig {
+    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8SegX<B> {
+        Yolov8SegX {
+            body: Yolov8BodyXConfig.init(device),
+            head: Yolov8SegHeadConfig::new(320, 640, 640, 320).init(device),
         }
     }
 }
@@ -786,7 +733,7 @@ impl Yolo11SegXConfig {
 #[cfg(all(test, feature = "pretrained"))]
 mod tests {
     use super::*;
-    use crate::models::yolo11::body::Yolo11Features;
+    use crate::models::yolov8::body::Yolov8Features;
     use burn::tensor::{ElementConversion, TensorData};
     use burn_flex::Flex;
     use serde::Deserialize;
@@ -857,14 +804,14 @@ mod tests {
     }
 
     fn assert_parity_tensors(
-        features: Yolo11Features<Flex>,
-        head: &Yolo11Head<Flex>,
+        features: Yolov8Features<Flex>,
+        head: &Yolov8Head<Flex>,
         fixture: &GoldenFixture,
     ) {
         let p3 = features.p3.clone();
         let p4 = features.p4.clone();
         let p5 = features.p5.clone();
-        let raw = head.forward_raw(Yolo11Features {
+        let raw = head.forward_raw(Yolov8Features {
             p3: features.p3.clone(),
             p4: features.p4.clone(),
             p5: features.p5.clone(),
@@ -951,7 +898,7 @@ mod tests {
                 let fixture: GoldenFixture = serde_json::from_slice(
                     &std::fs::read(format!("target/{}-golden-v1.json", $id)).unwrap_or_else(|_| {
                         panic!(
-                            "generate fixtures with tools/export_yolo11_fixtures.py --model {}",
+                            "generate fixtures with tools/export_yolov8_fixtures.py --model {}",
                             $id
                         )
                     }),
@@ -1033,81 +980,81 @@ mod tests {
     }
 
     checkpoint_test!(
-        yolo11n_imports_official_checkpoint_and_runs_forward,
-        Yolo11NConfig,
-        "yolo11n"
+        yolov8n_imports_official_checkpoint_and_runs_forward,
+        Yolov8NConfig,
+        "yolov8n"
     );
     checkpoint_test!(
-        yolo11s_imports_official_checkpoint_and_runs_forward,
-        Yolo11SConfig,
-        "yolo11s"
+        yolov8s_imports_official_checkpoint_and_runs_forward,
+        Yolov8SConfig,
+        "yolov8s"
     );
     checkpoint_test!(
-        yolo11m_imports_official_checkpoint_and_runs_forward,
-        Yolo11MConfig,
-        "yolo11m"
+        yolov8m_imports_official_checkpoint_and_runs_forward,
+        Yolov8MConfig,
+        "yolov8m"
     );
     checkpoint_test!(
-        yolo11l_imports_official_checkpoint_and_runs_forward,
-        Yolo11LConfig,
-        "yolo11l"
+        yolov8l_imports_official_checkpoint_and_runs_forward,
+        Yolov8LConfig,
+        "yolov8l"
     );
     checkpoint_test!(
-        yolo11x_imports_official_checkpoint_and_runs_forward,
-        Yolo11XConfig,
-        "yolo11x"
+        yolov8x_imports_official_checkpoint_and_runs_forward,
+        Yolov8XConfig,
+        "yolov8x"
     );
 
     golden_test!(
-        yolo11n_matches_ultralytics_golden_tensors,
-        Yolo11NConfig,
-        "yolo11n"
+        yolov8n_matches_ultralytics_golden_tensors,
+        Yolov8NConfig,
+        "yolov8n"
     );
     golden_test!(
-        yolo11s_matches_ultralytics_golden_tensors,
-        Yolo11SConfig,
-        "yolo11s"
+        yolov8s_matches_ultralytics_golden_tensors,
+        Yolov8SConfig,
+        "yolov8s"
     );
     golden_test!(
-        yolo11m_matches_ultralytics_golden_tensors,
-        Yolo11MConfig,
-        "yolo11m"
+        yolov8m_matches_ultralytics_golden_tensors,
+        Yolov8MConfig,
+        "yolov8m"
     );
     golden_test!(
-        yolo11l_matches_ultralytics_golden_tensors,
-        Yolo11LConfig,
-        "yolo11l"
+        yolov8l_matches_ultralytics_golden_tensors,
+        Yolov8LConfig,
+        "yolov8l"
     );
     golden_test!(
-        yolo11x_matches_ultralytics_golden_tensors,
-        Yolo11XConfig,
-        "yolo11x"
+        yolov8x_matches_ultralytics_golden_tensors,
+        Yolov8XConfig,
+        "yolov8x"
     );
 
     latency_test!(
-        yolo11n_measures_single_inference_latency,
-        Yolo11NConfig,
-        "yolo11n"
+        yolov8n_measures_single_inference_latency,
+        Yolov8NConfig,
+        "yolov8n"
     );
     latency_test!(
-        yolo11s_measures_single_inference_latency,
-        Yolo11SConfig,
-        "yolo11s"
+        yolov8s_measures_single_inference_latency,
+        Yolov8SConfig,
+        "yolov8s"
     );
     latency_test!(
-        yolo11m_measures_single_inference_latency,
-        Yolo11MConfig,
-        "yolo11m"
+        yolov8m_measures_single_inference_latency,
+        Yolov8MConfig,
+        "yolov8m"
     );
     latency_test!(
-        yolo11l_measures_single_inference_latency,
-        Yolo11LConfig,
-        "yolo11l"
+        yolov8l_measures_single_inference_latency,
+        Yolov8LConfig,
+        "yolov8l"
     );
     latency_test!(
-        yolo11x_measures_single_inference_latency,
-        Yolo11XConfig,
-        "yolo11x"
+        yolov8x_measures_single_inference_latency,
+        Yolov8XConfig,
+        "yolov8x"
     );
 
     #[cfg(feature = "gpu")]
@@ -1170,46 +1117,46 @@ mod tests {
 
     #[cfg(feature = "gpu")]
     gpu_latency_test!(
-        yolo11n_measures_single_inference_latency_gpu,
-        Yolo11NConfig,
-        "yolo11n"
+        yolov8n_measures_single_inference_latency_gpu,
+        Yolov8NConfig,
+        "yolov8n"
     );
     #[cfg(feature = "gpu")]
     gpu_latency_test!(
-        yolo11s_measures_single_inference_latency_gpu,
-        Yolo11SConfig,
-        "yolo11s"
+        yolov8s_measures_single_inference_latency_gpu,
+        Yolov8SConfig,
+        "yolov8s"
     );
     #[cfg(feature = "gpu")]
     gpu_latency_test!(
-        yolo11m_measures_single_inference_latency_gpu,
-        Yolo11MConfig,
-        "yolo11m"
+        yolov8m_measures_single_inference_latency_gpu,
+        Yolov8MConfig,
+        "yolov8m"
     );
     #[cfg(feature = "gpu")]
     gpu_latency_test!(
-        yolo11l_measures_single_inference_latency_gpu,
-        Yolo11LConfig,
-        "yolo11l"
+        yolov8l_measures_single_inference_latency_gpu,
+        Yolov8LConfig,
+        "yolov8l"
     );
     #[cfg(feature = "gpu")]
     gpu_latency_test!(
-        yolo11x_measures_single_inference_latency_gpu,
-        Yolo11XConfig,
-        "yolo11x"
+        yolov8x_measures_single_inference_latency_gpu,
+        Yolov8XConfig,
+        "yolov8x"
     );
 
     /// Assert one tensor against the fixture at the shared 2e-4 tolerance (segmentation variant
     /// of `assert_parity_tensors`, adding the Proto and mask-coefficient tensors).
     fn assert_seg_parity_tensors(
-        features: Yolo11Features<Flex>,
-        head: &Yolo11SegHead<Flex>,
+        features: Yolov8Features<Flex>,
+        head: &Yolov8SegHead<Flex>,
         fixture: &GoldenFixture,
     ) {
         let p3 = features.p3.clone();
         let p4 = features.p4.clone();
         let p5 = features.p5.clone();
-        let raw = head.detect.forward_raw(Yolo11Features {
+        let raw = head.detect.forward_raw(Yolov8Features {
             p3: features.p3.clone(),
             p4: features.p4.clone(),
             p5: features.p5.clone(),
@@ -1294,7 +1241,7 @@ mod tests {
                 let fixture: GoldenFixture = serde_json::from_slice(
                     &std::fs::read(format!("target/{}-golden-v1.json", $id)).unwrap_or_else(|_| {
                         panic!(
-                            "generate fixtures with tools/export_yolo11_fixtures.py --model {}",
+                            "generate fixtures with tools/export_yolov8_fixtures.py --model {}",
                             $id
                         )
                     }),
@@ -1380,76 +1327,81 @@ mod tests {
     }
 
     seg_checkpoint_test!(
-        yolo11s_seg_imports_official_checkpoint_and_runs_forward,
-        Yolo11SegSConfig,
-        "yolo11s-seg"
+        yolov8n_seg_imports_official_checkpoint_and_runs_forward,
+        Yolov8SegNConfig,
+        "yolov8n-seg"
     );
     seg_checkpoint_test!(
-        yolo11m_seg_imports_official_checkpoint_and_runs_forward,
-        Yolo11SegMConfig,
-        "yolo11m-seg"
+        yolov8s_seg_imports_official_checkpoint_and_runs_forward,
+        Yolov8SegSConfig,
+        "yolov8s-seg"
     );
     seg_checkpoint_test!(
-        yolo11l_seg_imports_official_checkpoint_and_runs_forward,
-        Yolo11SegLConfig,
-        "yolo11l-seg"
+        yolov8m_seg_imports_official_checkpoint_and_runs_forward,
+        Yolov8SegMConfig,
+        "yolov8m-seg"
     );
     seg_checkpoint_test!(
-        yolo11x_seg_imports_official_checkpoint_and_runs_forward,
-        Yolo11SegXConfig,
-        "yolo11x-seg"
+        yolov8l_seg_imports_official_checkpoint_and_runs_forward,
+        Yolov8SegLConfig,
+        "yolov8l-seg"
+    );
+    seg_checkpoint_test!(
+        yolov8x_seg_imports_official_checkpoint_and_runs_forward,
+        Yolov8SegXConfig,
+        "yolov8x-seg"
     );
 
     seg_golden_test!(
-        yolo11n_seg_matches_ultralytics_golden_tensors,
-        Yolo11SegNConfig,
-        "yolo11n-seg"
+        yolov8n_seg_matches_ultralytics_golden_tensors,
+        Yolov8SegNConfig,
+        "yolov8n-seg"
     );
     seg_golden_test!(
-        yolo11s_seg_matches_ultralytics_golden_tensors,
-        Yolo11SegSConfig,
-        "yolo11s-seg"
+        yolov8s_seg_matches_ultralytics_golden_tensors,
+        Yolov8SegSConfig,
+        "yolov8s-seg"
     );
     seg_golden_test!(
-        yolo11m_seg_matches_ultralytics_golden_tensors,
-        Yolo11SegMConfig,
-        "yolo11m-seg"
+        yolov8m_seg_matches_ultralytics_golden_tensors,
+        Yolov8SegMConfig,
+        "yolov8m-seg"
     );
     seg_golden_test!(
-        yolo11l_seg_matches_ultralytics_golden_tensors,
-        Yolo11SegLConfig,
-        "yolo11l-seg"
+        yolov8l_seg_matches_ultralytics_golden_tensors,
+        Yolov8SegLConfig,
+        "yolov8l-seg"
     );
     seg_golden_test!(
-        yolo11x_seg_matches_ultralytics_golden_tensors,
-        Yolo11SegXConfig,
-        "yolo11x-seg"
+        yolov8x_seg_matches_ultralytics_golden_tensors,
+        Yolov8SegXConfig,
+        "yolov8x-seg"
     );
 
     seg_latency_test!(
-        yolo11n_seg_measures_single_inference_latency,
-        Yolo11SegNConfig,
-        "yolo11n-seg"
+        yolov8n_seg_measures_single_inference_latency,
+        Yolov8SegNConfig,
+        "yolov8n-seg"
     );
     seg_latency_test!(
-        yolo11s_seg_measures_single_inference_latency,
-        Yolo11SegSConfig,
-        "yolo11s-seg"
+        yolov8s_seg_measures_single_inference_latency,
+        Yolov8SegSConfig,
+        "yolov8s-seg"
     );
     seg_latency_test!(
-        yolo11m_seg_measures_single_inference_latency,
-        Yolo11SegMConfig,
-        "yolo11m-seg"
+        yolov8m_seg_measures_single_inference_latency,
+        Yolov8SegMConfig,
+        "yolov8m-seg"
     );
     seg_latency_test!(
-        yolo11l_seg_measures_single_inference_latency,
-        Yolo11SegLConfig,
-        "yolo11l-seg"
+        yolov8l_seg_measures_single_inference_latency,
+        Yolov8SegLConfig,
+        "yolov8l-seg"
     );
     seg_latency_test!(
-        yolo11x_seg_measures_single_inference_latency,
-        Yolo11SegXConfig,
-        "yolo11x-seg"
+        yolov8x_seg_measures_single_inference_latency,
+        Yolov8SegXConfig,
+        "yolov8x-seg"
     );
 
     #[cfg(feature = "gpu")]
@@ -1516,32 +1468,32 @@ mod tests {
 
     #[cfg(feature = "gpu")]
     seg_gpu_latency_test!(
-        yolo11n_seg_measures_single_inference_latency_gpu,
-        Yolo11SegNConfig,
-        "yolo11n-seg"
+        yolov8n_seg_measures_single_inference_latency_gpu,
+        Yolov8SegNConfig,
+        "yolov8n-seg"
     );
     #[cfg(feature = "gpu")]
     seg_gpu_latency_test!(
-        yolo11s_seg_measures_single_inference_latency_gpu,
-        Yolo11SegSConfig,
-        "yolo11s-seg"
+        yolov8s_seg_measures_single_inference_latency_gpu,
+        Yolov8SegSConfig,
+        "yolov8s-seg"
     );
     #[cfg(feature = "gpu")]
     seg_gpu_latency_test!(
-        yolo11m_seg_measures_single_inference_latency_gpu,
-        Yolo11SegMConfig,
-        "yolo11m-seg"
+        yolov8m_seg_measures_single_inference_latency_gpu,
+        Yolov8SegMConfig,
+        "yolov8m-seg"
     );
     #[cfg(feature = "gpu")]
     seg_gpu_latency_test!(
-        yolo11l_seg_measures_single_inference_latency_gpu,
-        Yolo11SegLConfig,
-        "yolo11l-seg"
+        yolov8l_seg_measures_single_inference_latency_gpu,
+        Yolov8SegLConfig,
+        "yolov8l-seg"
     );
     #[cfg(feature = "gpu")]
     seg_gpu_latency_test!(
-        yolo11x_seg_measures_single_inference_latency_gpu,
-        Yolo11SegXConfig,
-        "yolo11x-seg"
+        yolov8x_seg_measures_single_inference_latency_gpu,
+        Yolov8SegXConfig,
+        "yolov8x-seg"
     );
 }
