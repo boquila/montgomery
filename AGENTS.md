@@ -95,6 +95,11 @@ for CPU and inflates the medians. The README compares those numbers against the 
 runtime measured with `tools/bench_ultralytics_cpu.py` (same machine, same methodology, fused
 conv+bn) using the conversion venv.
 
+PERF_NOTES.md records the methodology audit plus alternative-CPU-backend measurements. The
+experimental `cpu-simd` (Flex `x86-v4`) and `cpu-cubecl` (`burn-cpu`) features exist only to
+reproduce those measurements; `cpu-cubecl` is numerically unsound on burn 0.21.0-pre.4 (see
+`tests/cpu_backend.rs`), and its latency/parity commands are documented there.
+
 GPU numbers (Wgpu backend, requires the gpu feature) come from the `_gpu` variants of the same
 harness; the CLI selects the backend with `--device cpu|gpu` (gpu builds print the chosen adapter
 and graphics API on stderr):
