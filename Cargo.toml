@@ -14,18 +14,16 @@ gpu = ["burn/wgpu", "dep:burn-wgpu", "burn-wgpu/vulkan", "burn-wgpu/webgpu", "bu
 # AVX-512 codegen paths of the gemm crate on top.
 cpu-simd = ["burn-flex/simd", "burn-flex/x86-v4"]
 cpu-cubecl = ["burn/cpu", "dep:burn-cpu"]
-cpu-cubecl-nofusion = ["dep:burn-cubecl", "dep:cubecl"]
 
 [dependencies]
 burn = { version = "=0.21.0-pre.4", default-features = false }
 burn-cpu = { version = "=0.21.0-pre.4", optional = true }
-burn-cubecl = { version = "=0.21.0-pre.4", default-features = false, features = ["std", "autotune"], optional = true }
 burn-flex = "=0.21.0-pre.4"
 burn-store = { version = "=0.21.0-pre.4", default-features = false, features = ["std", "pytorch", "burnpack", "memmap"], optional = true }
 burn-wgpu = { version = "=0.21.0-pre.4", optional = true }
 clap = { version = "4", features = ["derive"] }
-cubecl = { version = "=0.10.0-pre.4", default-features = false, features = ["cpu", "stdlib", "std"], optional = true }
 dirs = { version = "6", optional = true }
+fast_image_resize = { version = "=6.0.0", features = ["image"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 itertools = { version = "0.14", default-features = false, features = ["use_alloc"] }
 serde = { version = "1", features = ["derive"] }

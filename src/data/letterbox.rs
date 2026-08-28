@@ -1,3 +1,4 @@
+use fast_image_resize as fir;
 use image::{DynamicImage, ImageBuffer, Rgb, RgbImage, imageops};
 
 fn resize_opencv_linear(source: &DynamicImage, width: u32, height: u32) -> RgbImage {
@@ -35,6 +36,25 @@ fn resize_opencv_linear(source: &DynamicImage, width: u32, height: u32) -> RgbIm
     })
 }
 
+/// Resize an RGB8 image with the `fast_image_resize` crate (runtime-dispatched SIMD kernels).
+fn resize_fir(
+    source: &DynamicImage,
+    width: u32,
+    height: u32,
+    algorithm: fir::ResizeAlg,
+) -> RgbImage {
+    let source = source.to_rgb8();
+    let mut destination = fir::images::Image::new(width, height, fir::PixelType::U8x3);
+    let mut resizer = fir::Resizer::new();
+    let options = fir::ResizeOptions::new()
+        .resize_alg(algorithm)
+        .use_alpha(false);
+    resizer
+        .resize(&source, &mut destination, &options)
+        .expect("fir resize of an rgb8 image into a matching buffer");
+    ImageBuffer::from_raw(width, height, destination.into_vec()).expect("fir destination buffer")
+}
+
 /// An image fitted into a square model input without changing its aspect ratio.
 pub(crate) struct LetterboxedImage {
     image: DynamicImage,
@@ -48,20 +68,27 @@ pub(crate) struct LetterboxedImage {
 impl LetterboxedImage {
     /// Match YOLOX's inference transform: resize to fit, anchor at the top-left, and fill unused
     /// pixels with 114. The geometry is retained for mapping detections back to the source image.
+    ///
+    /// Resizes with `fast_image_resize`'s adaptive-kernel bilinear convolution (runtime-dispatched
+    /// SIMD), the counterpart of the `imageops::Triangle` resampling this used before: both apply
+    /// an anti-aliased triangle kernel stretched by the downscale factor, and their outputs agree
+    /// within +/-1 per channel (PERF_NOTES.md, letterbox evaluation). Source pixels are converted
+    /// to RGB8 before resizing, matching the Ultralytics transform below.
     pub(crate) fn yolox(source: &DynamicImage, size: usize) -> Self {
         let source_width = source.width();
         let source_height = source.height();
         let scale = (size as f32 / source_width as f32).min(size as f32 / source_height as f32);
         let resized_width = (source_width as f32 * scale) as u32;
         let resized_height = (source_height as f32 * scale) as u32;
-        let resized = source.resize_exact(
+        let resized = resize_fir(
+            source,
             resized_width,
             resized_height,
-            imageops::FilterType::Triangle,
+            fir::ResizeAlg::Convolution(fir::FilterType::Bilinear),
         );
 
         let mut canvas = ImageBuffer::from_pixel(size as u32, size as u32, Rgb([114, 114, 114]));
-        imageops::replace(&mut canvas, &resized.to_rgb8(), 0, 0);
+        imageops::replace(&mut canvas, &resized, 0, 0);
 
         Self {
             image: DynamicImage::ImageRgb8(canvas),
@@ -135,6 +162,7 @@ impl LetterboxedImage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Instant;
 
     #[test]
     fn preserves_aspect_ratio_and_pads_with_yolox_value() {
@@ -222,5 +250,334 @@ mod tests {
         );
         assert!(mean_error <= 0.11);
         assert!(max_error <= 2);
+    }
+
+    /// Ignored microbenchmark for the letterbox preprocessing cost (release mode):
+    /// `cargo test --locked --release measures_letterbox_resize_cost -- --ignored --nocapture`
+    ///
+    /// Times JPEG decoding, both letterbox constructors, and the raw scalers on the reference
+    /// image plus two generated synthetic images under `target/`. It keeps the scaler candidates
+    /// evaluated in PERF_NOTES.md measurable: the Ultralytics transform stays on the hand-rolled
+    /// cv2-linear sampler while the YOLOX transform uses `fast_image_resize`, so the bench times
+    /// the production constructors, the rejected fir candidates, and the previous imageops
+    /// Triangle scaler, diffs their canvases, and writes the reference-image canvases to
+    /// `target/` for the cv2.resize comparison documented in PERF_NOTES.md.
+    #[test]
+    #[ignore]
+    fn measures_letterbox_resize_cost() {
+        write_synthetic_bench_image("target/letterbox-bench-1920x1080.jpg", 1920, 1080);
+        write_synthetic_bench_image("target/letterbox-bench-3840x2160.jpg", 3840, 2160);
+        let sources = [
+            "assets/dog_bike_man.jpg",
+            "target/letterbox-bench-1920x1080.jpg",
+            "target/letterbox-bench-3840x2160.jpg",
+        ];
+
+        for path in sources {
+            let decode_ms = median_ms(|| image::open(path).unwrap(), 3, 10);
+            let source = image::open(path).unwrap();
+            let (scale, resized_width, resized_height) = ultralytics_geometry(&source, 640);
+            eprintln!(
+                "{path}: {}x{} -> ultralytics {resized_width}x{resized_height} (scale {scale:.4})",
+                source.width(),
+                source.height()
+            );
+            eprintln!("  decode: {decode_ms:.3} ms");
+
+            let ultralytics_ms =
+                median_ms(|| LetterboxedImage::ultralytics(&source, 640, 32), 3, 10);
+            let ultralytics_fir_ms = median_ms(|| fir_ultralytics_canvas(&source, 640, 32), 3, 10);
+            let yolox_ms = median_ms(|| LetterboxedImage::yolox(&source, 640), 3, 10);
+            let yolox_triangle_ms = median_ms(|| triangle_yolox_canvas(&source, 640), 3, 10);
+            let ultralytics_fir_u16_ms =
+                median_ms(|| fir_u16_ultralytics_canvas(&source, 640, 32), 3, 10);
+
+            let opencv_linear_ms = median_ms(
+                || resize_opencv_linear(&source, resized_width, resized_height),
+                3,
+                10,
+            );
+            let fir_interpolation_ms = median_ms(
+                || {
+                    resize_fir(
+                        &source,
+                        resized_width,
+                        resized_height,
+                        fir::ResizeAlg::Interpolation(fir::FilterType::Bilinear),
+                    )
+                },
+                3,
+                10,
+            );
+            let triangle_dimensions = yolox_scaled_dimensions(&source, 640);
+            let triangle_ms = median_ms(
+                || {
+                    source.resize_exact(
+                        triangle_dimensions.0,
+                        triangle_dimensions.1,
+                        imageops::FilterType::Triangle,
+                    )
+                },
+                3,
+                10,
+            );
+            let fir_convolution_ms = median_ms(
+                || {
+                    let (width, height) = yolox_scaled_dimensions(&source, 640);
+                    resize_fir(
+                        &source,
+                        width,
+                        height,
+                        fir::ResizeAlg::Convolution(fir::FilterType::Bilinear),
+                    )
+                },
+                3,
+                10,
+            );
+
+            eprintln!(
+                "  ultralytics letterbox: current {ultralytics_ms:.3} ms, fir {ultralytics_fir_ms:.3} ms, fir-u16 {ultralytics_fir_u16_ms:.3} ms"
+            );
+            eprintln!(
+                "  yolox letterbox:       fir {yolox_ms:.3} ms, previous-triangle {yolox_triangle_ms:.3} ms"
+            );
+            eprintln!(
+                "  resize only:           opencv-linear {opencv_linear_ms:.3} ms, fir-interp {fir_interpolation_ms:.3} ms, triangle {triangle_ms:.3} ms, fir-conv {fir_convolution_ms:.3} ms"
+            );
+
+            let current = LetterboxedImage::ultralytics(&source, 640, 32)
+                .image()
+                .to_rgb8();
+            let fir_canvas = fir_ultralytics_canvas(&source, 640, 32);
+            let (max, mean, fraction) = diff_stats(&fir_canvas, &current);
+            eprintln!(
+                "  fir vs current ultralytics canvas: max={max} mean={mean:.4} differing={fraction:.5}"
+            );
+            let current_yolox = LetterboxedImage::yolox(&source, 640).image().to_rgb8();
+            let triangle_canvas_yolox = triangle_yolox_canvas(&source, 640);
+            let (max, mean, fraction) = diff_stats(&current_yolox, &triangle_canvas_yolox);
+            eprintln!(
+                "  fir vs previous-triangle yolox canvas: max={max} mean={mean:.4} differing={fraction:.5}"
+            );
+
+            if path == "assets/dog_bike_man.jpg" {
+                source
+                    .to_rgb8()
+                    .save("target/letterbox-bench-source.png")
+                    .unwrap();
+                current
+                    .save("target/letterbox-bench-ultralytics-current.png")
+                    .unwrap();
+                fir_canvas
+                    .save("target/letterbox-bench-ultralytics-fir.png")
+                    .unwrap();
+                current_yolox
+                    .save("target/letterbox-bench-yolox-current.png")
+                    .unwrap();
+                triangle_canvas_yolox
+                    .save("target/letterbox-bench-yolox-fir.png")
+                    .unwrap();
+
+                let fir_u16_canvas = fir_u16_ultralytics_canvas(&source, 640, 32);
+                let (max, mean, fraction) = diff_stats(&fir_u16_canvas, &current);
+                eprintln!(
+                    "  fir-u16 vs current ultralytics canvas: max={max} mean={mean:.4} differing={fraction:.5}"
+                );
+
+                let fixture_path = "target/yolov3-tinyu-preprocessed-reference.png";
+                if std::path::Path::new(fixture_path).exists() {
+                    let fixture = image::open(fixture_path).unwrap().to_rgb8();
+                    for (name, canvas) in [
+                        ("current", &current),
+                        ("fir-u8", &fir_canvas),
+                        ("fir-u16", &fir_u16_canvas),
+                    ] {
+                        let (max, mean, fraction) = diff_stats(canvas, &fixture);
+                        eprintln!(
+                            "  fixture parity {name}: max={max} mean={mean:.4} differing={fraction:.5}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Evaluation candidate: resize through fir's U16x3 pixel type for higher fixed-point
+    /// precision, widening u8 components by *257 and narrowing with round(value / 257).
+    fn resize_fir_u16(
+        source: &DynamicImage,
+        width: u32,
+        height: u32,
+        algorithm: fir::ResizeAlg,
+    ) -> RgbImage {
+        let source = source.to_rgb8();
+        let widened: Vec<u16> = source
+            .as_raw()
+            .iter()
+            .map(|&byte| u16::from(byte) * 257)
+            .collect();
+        // A native-endian view of the u16 buffer is what fir's byte-slice constructors expect.
+        let widened_bytes: &[u8] =
+            unsafe { std::slice::from_raw_parts(widened.as_ptr().cast::<u8>(), widened.len() * 2) };
+        let source_image = fir::images::ImageRef::new(
+            source.width(),
+            source.height(),
+            widened_bytes,
+            fir::PixelType::U16x3,
+        )
+        .expect("widened rgb8 buffer matches U16x3");
+        let mut destination = fir::images::Image::new(width, height, fir::PixelType::U16x3);
+        let mut resizer = fir::Resizer::new();
+        let options = fir::ResizeOptions::new()
+            .resize_alg(algorithm)
+            .use_alpha(false);
+        resizer
+            .resize(&source_image, &mut destination, &options)
+            .expect("fir u16 resize into a matching buffer");
+        let wide_bytes = destination.into_vec();
+        let narrowed: Vec<u8> = wide_bytes
+            .chunks_exact(2)
+            .map(|pair| {
+                let value = u16::from_ne_bytes([pair[0], pair[1]]);
+                ((((value as u32 * 2 + 257) / 514) as usize).min(255)) as u8
+            })
+            .collect();
+        ImageBuffer::from_raw(width, height, narrowed).expect("narrowed fir destination buffer")
+    }
+
+    fn write_synthetic_bench_image(path: &str, width: u32, height: u32) {
+        if std::path::Path::new(path).exists() {
+            return;
+        }
+        let image = ImageBuffer::from_fn(width, height, |x, y| {
+            let fx = x as f32 / width as f32;
+            let fy = y as f32 / height as f32;
+            let wave = ((fx * 60.0).sin() * (fy * 45.0).cos() * 0.5 + 0.5) * 255.0;
+            let checker = if (x / 16 + y / 16) % 2 == 0 {
+                45.0
+            } else {
+                210.0
+            };
+            Rgb([
+                (fx * 255.0) as u8,
+                wave as u8,
+                ((wave * 0.5 + checker * 0.5).min(255.0)) as u8,
+            ])
+        });
+        image.save(path).unwrap();
+    }
+
+    fn median_ms<T>(mut operation: impl FnMut() -> T, warmups: usize, iterations: usize) -> f64 {
+        for _ in 0..warmups {
+            operation();
+        }
+        let mut samples = Vec::with_capacity(iterations);
+        for _ in 0..iterations {
+            let started = Instant::now();
+            operation();
+            samples.push(started.elapsed().as_secs_f64() * 1e3);
+        }
+        samples.sort_by(|a, b| a.total_cmp(b));
+        samples[iterations / 2]
+    }
+
+    fn diff_stats(actual: &RgbImage, expected: &RgbImage) -> (u8, f64, f64) {
+        assert_eq!(actual.dimensions(), expected.dimensions());
+        let (total, max, differing) = actual.as_raw().iter().zip(expected.as_raw()).fold(
+            (0_u64, 0_u8, 0_usize),
+            |(sum, max, count), (a, b)| {
+                let error = a.abs_diff(*b);
+                (
+                    sum + u64::from(error),
+                    max.max(error),
+                    count + usize::from(error != 0),
+                )
+            },
+        );
+        let values = actual.as_raw().len() as f64;
+        (max, total as f64 / values, differing as f64 / values)
+    }
+
+    fn ultralytics_geometry(source: &DynamicImage, size: usize) -> (f32, u32, u32) {
+        let scale = (size as f32 / source.width() as f32).min(size as f32 / source.height() as f32);
+        (
+            scale,
+            (source.width() as f32 * scale).round() as u32,
+            (source.height() as f32 * scale).round() as u32,
+        )
+    }
+
+    fn yolox_scaled_dimensions(source: &DynamicImage, size: usize) -> (u32, u32) {
+        let scale = (size as f32 / source.width() as f32).min(size as f32 / source.height() as f32);
+        (
+            (source.width() as f32 * scale) as u32,
+            (source.height() as f32 * scale) as u32,
+        )
+    }
+
+    /// The ultralytics letterbox implemented on top of `fast_image_resize` with the fixed-kernel
+    /// (OpenCV-like) bilinear algorithm; identical stride geometry and 114 fill.
+    fn fir_ultralytics_canvas(source: &DynamicImage, size: usize, stride: usize) -> RgbImage {
+        let (_, resized_width, resized_height) = ultralytics_geometry(source, size);
+        let resized = resize_fir(
+            source,
+            resized_width,
+            resized_height,
+            fir::ResizeAlg::Interpolation(fir::FilterType::Bilinear),
+        );
+        let total_pad_x = (size as u32 - resized_width) % stride as u32;
+        let total_pad_y = (size as u32 - resized_height) % stride as u32;
+        let mut canvas = ImageBuffer::from_pixel(
+            resized_width + total_pad_x,
+            resized_height + total_pad_y,
+            Rgb([114, 114, 114]),
+        );
+        imageops::replace(
+            &mut canvas,
+            &resized,
+            (total_pad_x / 2).into(),
+            (total_pad_y / 2).into(),
+        );
+        canvas
+    }
+
+    /// The ultralytics letterbox on top of fir's higher-precision U16x3 pipeline; identical
+    /// stride geometry and 114 fill.
+    fn fir_u16_ultralytics_canvas(source: &DynamicImage, size: usize, stride: usize) -> RgbImage {
+        let (_, resized_width, resized_height) = ultralytics_geometry(source, size);
+        let resized = resize_fir_u16(
+            source,
+            resized_width,
+            resized_height,
+            fir::ResizeAlg::Interpolation(fir::FilterType::Bilinear),
+        );
+        let total_pad_x = (size as u32 - resized_width) % stride as u32;
+        let total_pad_y = (size as u32 - resized_height) % stride as u32;
+        let mut canvas = ImageBuffer::from_pixel(
+            resized_width + total_pad_x,
+            resized_height + total_pad_y,
+            Rgb([114, 114, 114]),
+        );
+        imageops::replace(
+            &mut canvas,
+            &resized,
+            (total_pad_x / 2).into(),
+            (total_pad_y / 2).into(),
+        );
+        canvas
+    }
+
+    /// The previous yolox letterbox (the `image` crate's anti-aliased Triangle resampling), kept
+    /// as the A/B reference for the adopted `fast_image_resize` implementation.
+    fn triangle_yolox_canvas(source: &DynamicImage, size: usize) -> RgbImage {
+        let (resized_width, resized_height) = yolox_scaled_dimensions(source, size);
+        let resized = source.resize_exact(
+            resized_width,
+            resized_height,
+            imageops::FilterType::Triangle,
+        );
+        let mut canvas = ImageBuffer::from_pixel(size as u32, size as u32, Rgb([114, 114, 114]));
+        imageops::replace(&mut canvas, &resized.to_rgb8(), 0, 0);
+        canvas
     }
 }

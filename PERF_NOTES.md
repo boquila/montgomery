@@ -81,8 +81,9 @@ ignored measurement harness `tests/cpu_backend.rs` (same methodology as the in-t
 | yolo26x | 980.9 | 1483.0 / 1451.4 | 2,313 |
 
 Steady state is attractive for n-scale (~1.2-1.4x faster than Flex) but slower for x-scale, and the
-first-run JIT compilation of every new kernel shape costs 2-250 **seconds** per variant — a
-non-starter for a CLI that loads per invocation.
+first run of a fresh process JIT-compiles every kernel shape: 2-250 **seconds** per variant on a
+cold on-disk compilation cache (96 s for yolo11n, 253 s for yolo11x on the first-ever run; a warm
+cache trims this to ~0.2-2 s) — still a poor fit for a CLI that loads per invocation on new machines.
 
 **Verdict: reject — numerically unsound on burn 0.21.0-pre.4.** The golden parity tests
 (`cubecl_cpu_{yolo11n,yolov10n,yolo26n}_matches_golden` in `tests/cpu_backend.rs`, same fixtures and
