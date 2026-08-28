@@ -156,6 +156,11 @@ hardware and library releases; treat them as a relative scale across variants, n
 YOLOX scale rows are not measured yet: the latency harness lives with the per-scale model tests that
 the Ultralytics families have and YOLOX does not.
 
+Methodology audit and alternative-CPU-backend measurements (Flex `x86-v4`, the `burn-cpu` CubeCL
+backend, rayon thread scaling, and the full product-path comparison against `ultralytics predict`)
+live in [PERF_NOTES.md](PERF_NOTES.md); the `cpu-simd` and `cpu-cubecl` features exist purely to
+reproduce those measurements and do not change the default build.
+
 | Model    | boquilens CPU (ms) | boquilens GPU (ms) | GPU vs CPU | Ultralytics PyTorch CPU (ms) |
 | -------- | -----------------: | -----------------: | ---------: | ---------------------------: |
 | yolov10n |              129.1 |               10.6 |      12.2x |                         19.0 |
