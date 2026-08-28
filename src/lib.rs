@@ -1,10 +1,11 @@
 //! A small, end-to-end object detection API built on [Burn](https://burn.dev).
 //!
-//! The stable MVP supports YOLOX-Nano trained on COCO, with experimental native
-//! YOLOv3-Tiny-Ultralytics, YOLOv10 (n/s/m/b/l/x), and YOLO26 (n/s/m/l/x) inference paths. Model
-//! inference and post-processing run from Rust — on the Flex CPU backend by default, or on the
-//! Wgpu GPU backend (Vulkan/DX12/Metal) when built with the `gpu` feature. No Python runtime or
-//! ONNX runtime is involved.
+//! The stable path supports YOLOX (nano/tiny/s/m/l/x) trained on COCO, with experimental native
+//! YOLOv3-Tiny-Ultralytics, YOLOv10 (n/s/m/b/l/x), YOLO26 (n/s/m/l/x), and YOLO11 (n/s/m/l/x)
+//! inference paths, plus YOLO11-seg (n/s) instance segmentation. Model inference and
+//! post-processing run from Rust — on the Flex CPU backend by default, or on the Wgpu GPU backend
+//! (Vulkan/DX12/Metal) when built with the `gpu` feature. No Python runtime or ONNX runtime is
+//! involved.
 
 extern crate alloc;
 
@@ -16,6 +17,11 @@ use std::path::PathBuf;
 use std::{error::Error, fmt, path::Path, str::FromStr};
 
 use crate::data::LetterboxedImage;
+#[cfg(feature = "pretrained")]
+use crate::models::yolo11::{
+    Yolo11LConfig, Yolo11MConfig, Yolo11NConfig, Yolo11SConfig, Yolo11SegNConfig, Yolo11SegSConfig,
+    Yolo11XConfig,
+};
 use crate::models::yolo26::head::MAX_DETECTIONS as YOLO26_MAX_DETECTIONS;
 #[cfg(feature = "pretrained")]
 use crate::models::yolo26::{
@@ -32,7 +38,8 @@ use crate::models::yolov10::{
 #[cfg(feature = "pretrained")]
 use crate::models::yolox::weights;
 use crate::models::yolox::{Yolox, boxes::BoundingBox, boxes::nms};
-use burn::tensor::{Device, Tensor, TensorData, backend::Backend};
+use burn::tensor::{Device, ElementConversion, Tensor, TensorData, backend::Backend};
+#[cfg(feature = "pretrained")]
 use burn_flex::Flex;
 use image::{DynamicImage, ImageBuffer, Rgb};
 use serde::Serialize;
@@ -48,6 +55,11 @@ pub const INPUT_SIZE: usize = 640;
 pub enum ModelId {
     #[default]
     YoloxNano,
+    YoloxTiny,
+    YoloxS,
+    YoloxM,
+    YoloxL,
+    YoloxX,
     Yolov3TinyU,
     Yolov10N,
     Yolov10S,
@@ -55,6 +67,13 @@ pub enum ModelId {
     Yolov10B,
     Yolov10L,
     Yolov10X,
+    Yolo11N,
+    Yolo11S,
+    Yolo11M,
+    Yolo11L,
+    Yolo11X,
+    Yolo11NSeg,
+    Yolo11SSeg,
     Yolo26N,
     Yolo26S,
     Yolo26M,
@@ -66,6 +85,11 @@ impl ModelId {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::YoloxNano => "yolox-nano",
+            Self::YoloxTiny => "yolox-tiny",
+            Self::YoloxS => "yolox-s",
+            Self::YoloxM => "yolox-m",
+            Self::YoloxL => "yolox-l",
+            Self::YoloxX => "yolox-x",
             Self::Yolov3TinyU => "yolov3-tinyu",
             Self::Yolov10N => "yolov10n",
             Self::Yolov10S => "yolov10s",
@@ -73,6 +97,13 @@ impl ModelId {
             Self::Yolov10B => "yolov10b",
             Self::Yolov10L => "yolov10l",
             Self::Yolov10X => "yolov10x",
+            Self::Yolo11N => "yolo11n",
+            Self::Yolo11S => "yolo11s",
+            Self::Yolo11M => "yolo11m",
+            Self::Yolo11L => "yolo11l",
+            Self::Yolo11X => "yolo11x",
+            Self::Yolo11NSeg => "yolo11n-seg",
+            Self::Yolo11SSeg => "yolo11s-seg",
             Self::Yolo26N => "yolo26n",
             Self::Yolo26S => "yolo26s",
             Self::Yolo26M => "yolo26m",
@@ -94,6 +125,11 @@ impl FromStr for ModelId {
     fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
         match value {
             "yolox-nano" | "yolox_nano" | "nano" => Ok(Self::YoloxNano),
+            "yolox-tiny" | "yolox_tiny" | "tiny" => Ok(Self::YoloxTiny),
+            "yolox-s" | "yolox_s" | "s" => Ok(Self::YoloxS),
+            "yolox-m" | "yolox_m" | "m" => Ok(Self::YoloxM),
+            "yolox-l" | "yolox_l" | "l" => Ok(Self::YoloxL),
+            "yolox-x" | "yolox_x" | "x" => Ok(Self::YoloxX),
             "yolov3-tinyu" | "yolov3_tinyu" => Ok(Self::Yolov3TinyU),
             "yolov10n" | "yolov10-nano" => Ok(Self::Yolov10N),
             "yolov10s" | "yolov10-small" => Ok(Self::Yolov10S),
@@ -101,14 +137,21 @@ impl FromStr for ModelId {
             "yolov10b" | "yolov10-balanced" => Ok(Self::Yolov10B),
             "yolov10l" | "yolov10-large" => Ok(Self::Yolov10L),
             "yolov10x" | "yolov10-xlarge" => Ok(Self::Yolov10X),
+            "yolo11n" | "yolo11-nano" => Ok(Self::Yolo11N),
+            "yolo11s" | "yolo11-small" => Ok(Self::Yolo11S),
+            "yolo11m" | "yolo11-medium" => Ok(Self::Yolo11M),
+            "yolo11l" | "yolo11-large" => Ok(Self::Yolo11L),
+            "yolo11x" | "yolo11-xlarge" => Ok(Self::Yolo11X),
+            "yolo11n-seg" | "yolo11n_seg" => Ok(Self::Yolo11NSeg),
+            "yolo11s-seg" | "yolo11s_seg" => Ok(Self::Yolo11SSeg),
             "yolo26n" | "yolo26-nano" => Ok(Self::Yolo26N),
             "yolo26s" | "yolo26-small" => Ok(Self::Yolo26S),
             "yolo26m" | "yolo26-medium" => Ok(Self::Yolo26M),
             "yolo26l" | "yolo26-large" => Ok(Self::Yolo26L),
             "yolo26x" | "yolo26-xlarge" => Ok(Self::Yolo26X),
             _ => Err(format!(
-                "unknown model '{value}'; available models: yolox-nano, yolov3-tinyu, \
-                 yolov10n/s/m/b/l/x, yolo26n/s/m/l/x"
+                "unknown model '{value}'; available models: yolox-nano/tiny/s/m/l/x, \
+                 yolov3-tinyu, yolov10n/s/m/b/l/x, yolo11n/s/m/l/x, yolo11n/s-seg, yolo26n/s/m/l/x"
             )),
         }
     }
@@ -133,6 +176,48 @@ pub struct Detection {
     pub xmax: f32,
     /// Bottom edge in source-image pixels.
     pub ymax: f32,
+}
+
+/// An instance mask for one detected object, in the original source-image coordinate space.
+///
+/// `data` is a boolean coverage bitmask over the full source image, row-major with `width`
+/// elements per row: `data[y * width + x]` is `true` when source-image pixel `(x, y)` is covered
+/// by the object's instance mask. A `Vec<bool>` stores one byte per element, so one mask costs
+/// `width * height` bytes (about 0.75 MB per instance for a 1024x768 image); masks exist only for
+/// the models and predictor methods that produce them.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct InstanceMask {
+    /// Mask (and source image) width in pixels.
+    pub width: u32,
+    /// Mask (and source image) height in pixels.
+    pub height: u32,
+    /// Row-major boolean coverage over the source image.
+    pub data: Vec<bool>,
+}
+
+/// A detected object with its instance segmentation mask, in the original source-image
+/// coordinate space.
+///
+/// The bounding box follows the same contract as [`Detection`]: unnormalized floating-point
+/// `XYXY` pixel edges clipped to the source image. The `mask` is boolean coverage over the full
+/// source image (see [`InstanceMask`]); pixels are the model's instance-mask prediction binarized
+/// with Ultralytics' semantics and mapped through the letterbox geometry exactly like the box
+/// edges.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SegmentationDetection {
+    pub class_id: usize,
+    pub class_name: &'static str,
+    pub confidence: f32,
+    /// Left edge in source-image pixels.
+    pub xmin: f32,
+    /// Top edge in source-image pixels.
+    pub ymin: f32,
+    /// Right edge in source-image pixels.
+    pub xmax: f32,
+    /// Bottom edge in source-image pixels.
+    pub ymax: f32,
+    /// Boolean instance coverage over the source image.
+    pub mask: InstanceMask,
 }
 
 /// Thresholds used during class-aware non-maximum suppression.
@@ -173,6 +258,13 @@ enum RuntimeModel<B: Backend> {
     Yolov10B(Box<crate::models::yolov10::Yolov10B<B>>),
     Yolov10L(Box<crate::models::yolov10::Yolov10L<B>>),
     Yolov10X(Box<crate::models::yolov10::Yolov10X<B>>),
+    Yolo11N(Box<crate::models::yolo11::Yolo11N<B>>),
+    Yolo11S(Box<crate::models::yolo11::Yolo11S<B>>),
+    Yolo11M(Box<crate::models::yolo11::Yolo11M<B>>),
+    Yolo11L(Box<crate::models::yolo11::Yolo11L<B>>),
+    Yolo11X(Box<crate::models::yolo11::Yolo11X<B>>),
+    Yolo11SegN(Box<crate::models::yolo11::Yolo11SegN<B>>),
+    Yolo11SegS(Box<crate::models::yolo11::Yolo11SegS<B>>),
     Yolo26N(Box<crate::models::yolo26::Yolo26N<B>>),
     Yolo26S(Box<crate::models::yolo26::Yolo26S<B>>),
     Yolo26M(Box<crate::models::yolo26::Yolo26M<B>>),
@@ -230,12 +322,24 @@ fn load_ultralytics_checkpoint<B: Backend>(
         ModelId::Yolov10B => Box::new(load_variant!(Yolov10BConfig, RuntimeModel::Yolov10B)),
         ModelId::Yolov10L => Box::new(load_variant!(Yolov10LConfig, RuntimeModel::Yolov10L)),
         ModelId::Yolov10X => Box::new(load_variant!(Yolov10XConfig, RuntimeModel::Yolov10X)),
+        ModelId::Yolo11N => Box::new(load_variant!(Yolo11NConfig, RuntimeModel::Yolo11N)),
+        ModelId::Yolo11S => Box::new(load_variant!(Yolo11SConfig, RuntimeModel::Yolo11S)),
+        ModelId::Yolo11M => Box::new(load_variant!(Yolo11MConfig, RuntimeModel::Yolo11M)),
+        ModelId::Yolo11L => Box::new(load_variant!(Yolo11LConfig, RuntimeModel::Yolo11L)),
+        ModelId::Yolo11X => Box::new(load_variant!(Yolo11XConfig, RuntimeModel::Yolo11X)),
+        ModelId::Yolo11NSeg => Box::new(load_variant!(Yolo11SegNConfig, RuntimeModel::Yolo11SegN)),
+        ModelId::Yolo11SSeg => Box::new(load_variant!(Yolo11SegSConfig, RuntimeModel::Yolo11SegS)),
         ModelId::Yolo26N => Box::new(load_variant!(Yolo26NConfig, RuntimeModel::Yolo26N)),
         ModelId::Yolo26S => Box::new(load_variant!(Yolo26SConfig, RuntimeModel::Yolo26S)),
         ModelId::Yolo26M => Box::new(load_variant!(Yolo26MConfig, RuntimeModel::Yolo26M)),
         ModelId::Yolo26L => Box::new(load_variant!(Yolo26LConfig, RuntimeModel::Yolo26L)),
         ModelId::Yolo26X => Box::new(load_variant!(Yolo26XConfig, RuntimeModel::Yolo26X)),
-        ModelId::YoloxNano => {
+        ModelId::YoloxNano
+        | ModelId::YoloxTiny
+        | ModelId::YoloxS
+        | ModelId::YoloxM
+        | ModelId::YoloxL
+        | ModelId::YoloxX => {
             return Err("YOLOX accepts its official .pth checkpoint directly and is loaded without the Ultralytics state bridge".into());
         }
     };
@@ -246,6 +350,21 @@ fn load_ultralytics_checkpoint<B: Backend>(
     worker
         .join()
         .map_err(|_| format!("{model_id} model loader thread panicked"))?
+}
+
+/// Resolve the YOLOX graph constructor for a YOLOX scale identifier. Every YOLOX scale shares the
+/// same [`Yolox`] graph; the scale is baked into the depth/width parameters passed here.
+#[cfg(feature = "pretrained")]
+fn yolox_constructor<B: Backend>(model_id: ModelId) -> fn(usize, &Device<B>) -> Yolox<B> {
+    match model_id {
+        ModelId::YoloxNano => Yolox::<B>::yolox_nano,
+        ModelId::YoloxTiny => Yolox::<B>::yolox_tiny,
+        ModelId::YoloxS => Yolox::<B>::yolox_s,
+        ModelId::YoloxM => Yolox::<B>::yolox_m,
+        ModelId::YoloxL => Yolox::<B>::yolox_l,
+        ModelId::YoloxX => Yolox::<B>::yolox_x,
+        _ => unreachable!("non-YOLOX models do not use the YOLOX constructor"),
+    }
 }
 
 /// Uniform end-to-end detection entry point shared by every YOLOv10/YOLO26 scale variant, so the
@@ -269,6 +388,305 @@ macro_rules! impl_end_to_end_detector {
 
 impl_end_to_end_detector!(yolov10: [Yolov10N, Yolov10S, Yolov10M, Yolov10B, Yolov10L, Yolov10X]);
 impl_end_to_end_detector!(yolo26: [Yolo26N, Yolo26S, Yolo26M, Yolo26L, Yolo26X]);
+
+/// Uniform classic-detection entry point shared by every YOLO11 scale variant, so the runtime can
+/// dispatch to any of them without naming the concrete scale type.
+trait ClassicDetector<B: Backend> {
+    fn detect(&self, input: Tensor<B, 4>) -> (Tensor<B, 3>, Tensor<B, 3>);
+}
+
+macro_rules! impl_classic_detector {
+    ($family:ident: [$($model:ident),+ $(,)?]) => {
+        $(
+            impl<B: Backend> ClassicDetector<B> for crate::models::$family::$model<B> {
+                fn detect(&self, input: Tensor<B, 4>) -> (Tensor<B, 3>, Tensor<B, 3>) {
+                    let output = self.forward(input);
+                    (output.boxes, output.scores)
+                }
+            }
+        )+
+    };
+}
+
+impl_classic_detector!(yolo11: [Yolo11N, Yolo11S, Yolo11M, Yolo11L, Yolo11X]);
+
+impl<B: Backend, M: ClassicDetector<B>> ClassicDetector<B> for Box<M> {
+    fn detect(&self, input: Tensor<B, 4>) -> (Tensor<B, 3>, Tensor<B, 3>) {
+        (**self).detect(input)
+    }
+}
+
+/// Decode and suppress classic (NMS-based) predictions for any scale variant.
+///
+/// The YOLO11 head emits center-size model-input boxes exactly like Ultralytics' classic head, so
+/// they feed the generic class-aware NMS helper directly.
+fn run_classic_detections<B: Backend>(
+    model: &impl ClassicDetector<B>,
+    input: Tensor<B, 4>,
+    iou_threshold: f32,
+    confidence_threshold: f32,
+) -> Vec<Vec<Vec<BoundingBox>>> {
+    let (boxes, scores) = model.detect(input / 255.0);
+    nms(boxes, scores, iou_threshold, confidence_threshold)
+}
+
+/// Uniform classic instance-segmentation entry point shared by the YOLO11-seg scale variants, so
+/// the runtime can dispatch to any of them without naming the concrete scale type.
+trait ClassicSegmenter<B: Backend> {
+    fn segment(&self, input: Tensor<B, 4>) -> crate::models::yolo11::SegmentOutput<B>;
+}
+
+macro_rules! impl_classic_segmenter {
+    ($family:ident: [$($model:ident),+ $(,)?]) => {
+        $(
+            impl<B: Backend> ClassicSegmenter<B> for crate::models::$family::$model<B> {
+                fn segment(&self, input: Tensor<B, 4>) -> crate::models::yolo11::SegmentOutput<B> {
+                    self.forward(input)
+                }
+            }
+        )+
+    };
+}
+
+impl_classic_segmenter!(yolo11: [Yolo11SegN, Yolo11SegS]);
+
+impl<B: Backend, M: ClassicSegmenter<B>> ClassicSegmenter<B> for Box<M> {
+    fn segment(&self, input: Tensor<B, 4>) -> crate::models::yolo11::SegmentOutput<B> {
+        (**self).segment(input)
+    }
+}
+
+/// One NMS-surviving segmentation candidate: a box plus the anchor index its 32 mask
+/// coefficients live at.
+struct SegmentationCandidate {
+    bbox: BoundingBox,
+    class_id: usize,
+    anchor: usize,
+}
+
+/// CPU-side result of the segmentation decode: NMS survivors plus everything the mask assembly
+/// needs (prototypes and per-anchor coefficients), already synced from the backend.
+struct SegmentationOutputCpu {
+    candidates: Vec<SegmentationCandidate>,
+    /// Prototype masks, row-major `[channels, proto_height, proto_width]`.
+    prototypes: Vec<f32>,
+    proto_channels: usize,
+    proto_width: usize,
+    proto_height: usize,
+    /// Raw mask coefficients, row-major `[channels, anchors]`.
+    coefficients: Vec<f32>,
+    anchors: usize,
+}
+
+/// Decode and suppress classic (NMS-based) segmentation predictions for any scale variant.
+///
+/// Mirrors Ultralytics' segmentation inference path: the head's `[boxes, scores, coefficients]`
+/// rows are filtered by the best class score, suppressed with class-aware NMS (per-class greedy
+/// suppression on center-size boxes converted to XYXY), and the mask coefficients of every
+/// surviving anchor are carried along for the mask assembly.
+fn run_classic_segmentations<B: Backend>(
+    model: &impl ClassicSegmenter<B>,
+    input: Tensor<B, 4>,
+    iou_threshold: f32,
+    confidence_threshold: f32,
+) -> SegmentationOutputCpu {
+    let output = model.segment(input / 255.0);
+    let [_, proto_channels, proto_height, proto_width] = output.prototypes.dims();
+    let [_, _, anchors] = output.coefficients.dims();
+    let [_, anchors_scores, num_classes] = output.scores.dims();
+    assert_eq!(anchors, anchors_scores, "head anchor mismatch");
+
+    let boxes: Vec<f32> = output
+        .boxes
+        .into_data()
+        .iter::<B::FloatElem>()
+        .map(|value| value.elem::<f32>())
+        .collect();
+    let scores: Vec<f32> = output
+        .scores
+        .into_data()
+        .iter::<B::FloatElem>()
+        .map(|value| value.elem::<f32>())
+        .collect();
+    let coefficients: Vec<f32> = output
+        .coefficients
+        .into_data()
+        .iter::<B::FloatElem>()
+        .map(|value| value.elem::<f32>())
+        .collect();
+    let prototypes: Vec<f32> = output
+        .prototypes
+        .into_data()
+        .iter::<B::FloatElem>()
+        .map(|value| value.elem::<f32>())
+        .collect();
+
+    // Best class per anchor, thresholded (the `nms` helper's filter semantics).
+    let mut by_class: Vec<Vec<(BoundingBox, usize)>> =
+        (0..num_classes).map(|_| Vec::new()).collect();
+    for anchor in 0..anchors {
+        let row = &scores[anchor * num_classes..(anchor + 1) * num_classes];
+        let (best_class, best_score) = row
+            .iter()
+            .enumerate()
+            .max_by(|(_, a), (_, b)| a.total_cmp(b))
+            .map(|(class, score)| (class, *score))
+            .unwrap_or((0, f32::NEG_INFINITY));
+        if best_score < confidence_threshold {
+            continue;
+        }
+        let bbox = &boxes[anchor * 4..anchor * 4 + 4];
+        by_class[best_class].push((
+            BoundingBox {
+                xmin: bbox[0] - bbox[2] / 2.0,
+                ymin: bbox[1] - bbox[3] / 2.0,
+                xmax: bbox[0] + bbox[2] / 2.0,
+                ymax: bbox[1] + bbox[3] / 2.0,
+                confidence: best_score,
+            },
+            anchor,
+        ));
+    }
+
+    // Per-class greedy suppression with the shared IoU definition (a box survives when its IoU
+    // with every previously kept box of the same class is at most the threshold).
+    let mut candidates = Vec::new();
+    for (class_id, mut class_candidates) in by_class.into_iter().enumerate() {
+        class_candidates.sort_by(|a, b| b.0.confidence.partial_cmp(&a.0.confidence).unwrap());
+        let mut kept: Vec<(BoundingBox, usize)> = Vec::new();
+        for (bbox, anchor) in class_candidates {
+            if kept.iter().all(|(kept_box, _)| {
+                crate::models::yolox::boxes::iou(kept_box, &bbox) <= iou_threshold
+            }) {
+                kept.push((bbox, anchor));
+            }
+        }
+        candidates.extend(
+            kept.into_iter()
+                .map(|(bbox, anchor)| SegmentationCandidate {
+                    bbox,
+                    class_id,
+                    anchor,
+                }),
+        );
+    }
+
+    SegmentationOutputCpu {
+        candidates,
+        prototypes,
+        proto_channels,
+        proto_width,
+        proto_height,
+        coefficients,
+        anchors,
+    }
+}
+
+/// Regroup segmentation candidates into the per-class box layout shared by the detection paths.
+fn classic_candidates_to_boxes(output: SegmentationOutputCpu) -> Vec<Vec<Vec<BoundingBox>>> {
+    let mut per_class: Vec<Vec<BoundingBox>> =
+        (0..COCO_CLASSES.len()).map(|_| Vec::new()).collect();
+    for candidate in output.candidates {
+        per_class[candidate.class_id].push(candidate.bbox);
+    }
+    vec![per_class]
+}
+
+/// Assemble one instance mask in the letterboxed canvas frame.
+///
+/// Mirrors Ultralytics' `process_mask(..., upsample=True)` exactly: the mask is the raw linear
+/// combination `coefficients @ prototypes` (no sigmoid), bilinearly upsampled to the letterboxed
+/// canvas at `align_corners = False` semantics, binarized at `> 0`, and cropped to the box.
+fn canvas_instance_mask(
+    output: &SegmentationOutputCpu,
+    anchor: usize,
+    canvas_width: usize,
+    canvas_height: usize,
+    box_canvas: [f32; 4],
+) -> Vec<bool> {
+    let channels = output.proto_channels;
+    let proto_width = output.proto_width;
+    let proto_height = output.proto_height;
+    let plane = proto_width * proto_height;
+
+    // Mask logits at prototype resolution.
+    let mut logits = vec![0_f64; plane];
+    for channel in 0..channels {
+        let coefficient = output.coefficients[channel * output.anchors + anchor] as f64;
+        let proto = &output.prototypes[channel * plane..(channel + 1) * plane];
+        for (index, value) in proto.iter().enumerate() {
+            logits[index] += coefficient * *value as f64;
+        }
+    }
+
+    // Bilinear upsample to the canvas, threshold at > 0, and crop to the box, per canvas pixel.
+    let scale_x = proto_width as f64 / canvas_width.max(1) as f64;
+    let scale_y = proto_height as f64 / canvas_height.max(1) as f64;
+    let mut mask = vec![false; canvas_width * canvas_height];
+    for y in 0..canvas_height {
+        // crop_mask keeps rows `y1 <= y < y2` (box edges in canvas pixels).
+        if (y as f32) < box_canvas[1] || (y as f32) >= box_canvas[3] {
+            continue;
+        }
+        let source_y = ((y as f64 + 0.5) * scale_y - 0.5).max(0.0);
+        let y0 = source_y.floor();
+        let y1 = (y0 + 1.0).min((proto_height - 1) as f64);
+        let y0 = y0 as usize;
+        let lambda_y = source_y - y0 as f64;
+        for x in 0..canvas_width {
+            // crop_mask keeps columns `x1 <= x < x2`.
+            if (x as f32) < box_canvas[0] || (x as f32) >= box_canvas[2] {
+                continue;
+            }
+            let source_x = ((x as f64 + 0.5) * scale_x - 0.5).max(0.0);
+            let x0 = source_x.floor();
+            let x1 = (x0 + 1.0).min((proto_width - 1) as f64);
+            let x0 = x0 as usize;
+            let lambda_x = source_x - x0 as f64;
+            let top = logits[y0 * proto_width + x0] * (1.0 - lambda_x)
+                + logits[y0 * proto_width + x1 as usize] * lambda_x;
+            let bottom = logits[y1 as usize * proto_width + x0] * (1.0 - lambda_x)
+                + logits[y1 as usize * proto_width + x1 as usize] * lambda_x;
+            mask[y * canvas_width + x] = top * (1.0 - lambda_y) + bottom * lambda_y > 0.0;
+        }
+    }
+    mask
+}
+
+/// Sample a canvas-frame boolean mask onto the full source-image grid.
+///
+/// Every source pixel `(x, y)` samples the canvas mask at the nearest canvas pixel to
+/// `(x * scale + pad_x, y * scale + pad_y)` — the exact inverse of the letterbox geometry that
+/// [`LetterboxedImage::to_source_box`] applies to box edges. Pixels outside the canvas (possible
+/// only through rounding at the borders) stay uncovered.
+fn source_instance_mask(
+    canvas_mask: &[bool],
+    canvas_width: usize,
+    canvas_height: usize,
+    prepared: &LetterboxedImage,
+) -> InstanceMask {
+    let (scale, pad_x, pad_y) = prepared.letterbox_geometry();
+    let (source_width, source_height) = prepared.source_dimensions();
+    let mut data = vec![false; source_width as usize * source_height as usize];
+    let mut column_samples = Vec::with_capacity(source_width as usize);
+    for x in 0..source_width {
+        let canvas_x = (x as f32 * scale + pad_x + 0.5).floor();
+        column_samples.push(canvas_x.clamp(0.0, canvas_width as f32 - 1.0) as usize);
+    }
+    for y in 0..source_height {
+        let canvas_y = (y as f32 * scale + pad_y + 0.5).floor();
+        let canvas_y = canvas_y.clamp(0.0, canvas_height as f32 - 1.0) as usize;
+        for x in 0..source_width {
+            data[y as usize * source_width as usize + x as usize] =
+                canvas_mask[canvas_y * canvas_width + column_samples[x as usize]];
+        }
+    }
+    InstanceMask {
+        width: source_width,
+        height: source_height,
+        data,
+    }
+}
 
 impl<B: Backend, M: EndToEndDetector<B>> EndToEndDetector<B> for Box<M> {
     fn detect(&self, input: Tensor<B, 4>) -> (Tensor<B, 3>, Tensor<B, 3>) {
@@ -303,7 +721,12 @@ impl<B: Backend> Predictor<B> {
     ) -> Result<Self> {
         let options = options.validate()?;
         match model_id {
-            ModelId::YoloxNano => Self::load_yolox_nano_on_device(model_id, options, device),
+            ModelId::YoloxNano
+            | ModelId::YoloxTiny
+            | ModelId::YoloxS
+            | ModelId::YoloxM
+            | ModelId::YoloxL
+            | ModelId::YoloxX => Self::load_yolox_on_device(model_id, options, device),
             ModelId::Yolov3TinyU
             | ModelId::Yolov10N
             | ModelId::Yolov10S
@@ -311,6 +734,13 @@ impl<B: Backend> Predictor<B> {
             | ModelId::Yolov10B
             | ModelId::Yolov10L
             | ModelId::Yolov10X
+            |             ModelId::Yolo11N
+            | ModelId::Yolo11S
+            | ModelId::Yolo11M
+            | ModelId::Yolo11L
+            | ModelId::Yolo11X
+            | ModelId::Yolo11NSeg
+            | ModelId::Yolo11SSeg
             | ModelId::Yolo26N
             | ModelId::Yolo26S
             | ModelId::Yolo26M
@@ -348,15 +778,20 @@ impl<B: Backend> Predictor<B> {
         let options = options.validate()?;
         let checkpoint = checkpoint.into();
         match model_id {
-            ModelId::YoloxNano => {
+            ModelId::YoloxNano
+            | ModelId::YoloxTiny
+            | ModelId::YoloxS
+            | ModelId::YoloxM
+            | ModelId::YoloxL
+            | ModelId::YoloxX => {
                 let worker = std::thread::Builder::new()
                     .name("boquilens-model-loader".into())
                     .stack_size(64 * 1024 * 1024)
                     .spawn({
                         let device = device.clone();
                         move || {
-                            let mut model: Yolox<B> =
-                                Yolox::yolox_nano(COCO_CLASSES.len(), &device);
+                            let constructor = yolox_constructor::<B>(model_id);
+                            let mut model: Yolox<B> = constructor(COCO_CLASSES.len(), &device);
                             model.load_pytorch_weights(checkpoint)?;
                             Ok::<_, Box<dyn Error + Send + Sync>>(RuntimeModel::Yolox(Box::new(
                                 model,
@@ -391,8 +826,38 @@ impl<B: Backend> Predictor<B> {
         Self::new(ModelId::YoloxNano, options)
     }
 
+    /// Load pretrained COCO weights, downloading them to the model cache on first use.
     #[cfg(feature = "pretrained")]
-    fn load_yolox_nano_on_device(
+    pub fn yolox_tiny(options: PredictOptions) -> Result<Self> {
+        Self::new(ModelId::YoloxTiny, options)
+    }
+
+    /// Load pretrained COCO weights, downloading them to the model cache on first use.
+    #[cfg(feature = "pretrained")]
+    pub fn yolox_s(options: PredictOptions) -> Result<Self> {
+        Self::new(ModelId::YoloxS, options)
+    }
+
+    /// Load pretrained COCO weights, downloading them to the model cache on first use.
+    #[cfg(feature = "pretrained")]
+    pub fn yolox_m(options: PredictOptions) -> Result<Self> {
+        Self::new(ModelId::YoloxM, options)
+    }
+
+    /// Load pretrained COCO weights, downloading them to the model cache on first use.
+    #[cfg(feature = "pretrained")]
+    pub fn yolox_l(options: PredictOptions) -> Result<Self> {
+        Self::new(ModelId::YoloxL, options)
+    }
+
+    /// Load pretrained COCO weights, downloading them to the model cache on first use.
+    #[cfg(feature = "pretrained")]
+    pub fn yolox_x(options: PredictOptions) -> Result<Self> {
+        Self::new(ModelId::YoloxX, options)
+    }
+
+    #[cfg(feature = "pretrained")]
+    fn load_yolox_on_device(
         model_id: ModelId,
         options: PredictOptions,
         device: Device<B>,
@@ -405,8 +870,27 @@ impl<B: Backend> Predictor<B> {
             .spawn({
                 let device = device.clone();
                 move || {
-                    let model: Yolox<B> =
-                        Yolox::yolox_nano_pretrained(weights::YoloxNano::Coco, &device)?;
+                    let model: Yolox<B> = match model_id {
+                        ModelId::YoloxNano => {
+                            Yolox::yolox_nano_pretrained(weights::YoloxNano::Coco, &device)?
+                        }
+                        ModelId::YoloxTiny => {
+                            Yolox::yolox_tiny_pretrained(weights::YoloxTiny::Coco, &device)?
+                        }
+                        ModelId::YoloxS => {
+                            Yolox::yolox_s_pretrained(weights::YoloxS::Coco, &device)?
+                        }
+                        ModelId::YoloxM => {
+                            Yolox::yolox_m_pretrained(weights::YoloxM::Coco, &device)?
+                        }
+                        ModelId::YoloxL => {
+                            Yolox::yolox_l_pretrained(weights::YoloxL::Coco, &device)?
+                        }
+                        ModelId::YoloxX => {
+                            Yolox::yolox_x_pretrained(weights::YoloxX::Coco, &device)?
+                        }
+                        _ => unreachable!("non-YOLOX models are rejected before this loader"),
+                    };
                     Ok::<_, Box<dyn Error + Send + Sync>>(RuntimeModel::Yolox(Box::new(model)))
                 }
             })?;
@@ -437,6 +921,13 @@ impl<B: Backend> Predictor<B> {
             | RuntimeModel::Yolov10B(_)
             | RuntimeModel::Yolov10L(_)
             | RuntimeModel::Yolov10X(_)
+            | RuntimeModel::Yolo11N(_)
+            | RuntimeModel::Yolo11S(_)
+            | RuntimeModel::Yolo11M(_)
+            | RuntimeModel::Yolo11L(_)
+            | RuntimeModel::Yolo11X(_)
+            | RuntimeModel::Yolo11SegN(_)
+            | RuntimeModel::Yolo11SegS(_)
             | RuntimeModel::Yolo26N(_)
             | RuntimeModel::Yolo26S(_)
             | RuntimeModel::Yolo26M(_)
@@ -511,6 +1002,38 @@ impl<B: Backend> Predictor<B> {
                 YOLOV10_MAX_DETECTIONS,
                 self.options.confidence,
             ),
+            RuntimeModel::Yolo11N(model) => {
+                // YOLO11 is the first NMS-based Ultralytics detect family here: its classic DFL
+                // head output (center-size boxes plus per-class sigmoid scores) is decoded by the
+                // head and suppressed by the generic class-aware NMS helper, mirroring
+                // Ultralytics' non_max_suppression at conf 0.25 / IoU 0.45.
+                run_classic_detections(model, input, self.options.iou, self.options.confidence)
+            }
+            RuntimeModel::Yolo11S(model) => {
+                run_classic_detections(model, input, self.options.iou, self.options.confidence)
+            }
+            RuntimeModel::Yolo11M(model) => {
+                run_classic_detections(model, input, self.options.iou, self.options.confidence)
+            }
+            RuntimeModel::Yolo11L(model) => {
+                run_classic_detections(model, input, self.options.iou, self.options.confidence)
+            }
+            RuntimeModel::Yolo11X(model) => {
+                run_classic_detections(model, input, self.options.iou, self.options.confidence)
+            }
+            RuntimeModel::Yolo11SegN(model) => {
+                // Segmentation models share the classic detection decode; predict() exposes the
+                // box branch only (masks require predict_segmentation).
+                classic_candidates_to_boxes(run_classic_segmentations(
+                    model,
+                    input,
+                    self.options.iou,
+                    self.options.confidence,
+                ))
+            }
+            RuntimeModel::Yolo11SegS(model) => classic_candidates_to_boxes(
+                run_classic_segmentations(model, input, self.options.iou, self.options.confidence),
+            ),
             RuntimeModel::Yolo26N(model) => {
                 // YOLO26 is end-to-end like YOLOv10 and consumes the same RGB normalization. Its
                 // DFL-free one2one head is likewise decoded by top-score selection and a
@@ -559,6 +1082,103 @@ impl<B: Backend> Predictor<B> {
         let detections = self.predict(&image);
         Ok((image, detections))
     }
+
+    /// Run instance segmentation on an already-decoded image.
+    ///
+    /// Returns one [`SegmentationDetection`] per surviving instance: the same box contract as
+    /// [`Predictor::predict`] plus a boolean source-image coverage mask. Detections whose cropped
+    /// mask is empty are dropped, mirroring Ultralytics' segmentation postprocess. Requires a
+    /// segmentation model (`yolo11n-seg`/`yolo11s-seg`); detect models should use
+    /// [`Predictor::predict`].
+    pub fn predict_segmentation(&self, image: &DynamicImage) -> Result<Vec<SegmentationDetection>> {
+        let prepared = self.prepare_segmentation(image)?;
+        let (canvas_width, canvas_height) = (
+            prepared.image().width() as usize,
+            prepared.image().height() as usize,
+        );
+        let input = image_to_tensor(prepared.image().clone(), &self.device).unsqueeze::<4>();
+        let output = match &self.model {
+            RuntimeModel::Yolo11SegN(model) => {
+                run_classic_segmentations(model, input, self.options.iou, self.options.confidence)
+            }
+            RuntimeModel::Yolo11SegS(model) => {
+                run_classic_segmentations(model, input, self.options.iou, self.options.confidence)
+            }
+            _ => {
+                return Err(format!(
+                    "{} is not a segmentation model; instance masks are available for yolo11n-seg \
+                     and yolo11s-seg",
+                    self.model_id
+                )
+                .into());
+            }
+        };
+
+        let mut detections = Vec::new();
+        for candidate in &output.candidates {
+            let canvas_mask = canvas_instance_mask(
+                &output,
+                candidate.anchor,
+                canvas_width,
+                canvas_height,
+                [
+                    candidate.bbox.xmin,
+                    candidate.bbox.ymin,
+                    candidate.bbox.xmax,
+                    candidate.bbox.ymax,
+                ],
+            );
+            // Ultralytics drops post-NMS detections whose cropped mask is fully empty.
+            if !canvas_mask.iter().any(|covered| *covered) {
+                continue;
+            }
+            let mask = source_instance_mask(&canvas_mask, canvas_width, canvas_height, &prepared);
+            let [xmin, ymin, xmax, ymax] = prepared.to_source_box([
+                candidate.bbox.xmin,
+                candidate.bbox.ymin,
+                candidate.bbox.xmax,
+                candidate.bbox.ymax,
+            ]);
+            detections.push(SegmentationDetection {
+                class_id: candidate.class_id,
+                class_name: COCO_CLASSES[candidate.class_id],
+                confidence: candidate.bbox.confidence,
+                xmin,
+                ymin,
+                xmax,
+                ymax,
+                mask,
+            });
+        }
+
+        detections.sort_by(|a, b| b.confidence.total_cmp(&a.confidence));
+        Ok(detections)
+    }
+
+    /// Decode an image from disk and run instance segmentation.
+    pub fn predict_segmentation_path(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> Result<(DynamicImage, Vec<SegmentationDetection>)> {
+        let image = image::open(path)?;
+        let detections = self.predict_segmentation(&image)?;
+        Ok((image, detections))
+    }
+
+    /// Letterbox an image the way the loaded segmentation model expects.
+    fn prepare_segmentation(&self, image: &DynamicImage) -> Result<LetterboxedImage> {
+        match &self.model {
+            RuntimeModel::Yolo11SegN(_) | RuntimeModel::Yolo11SegS(_) => {
+                Ok(LetterboxedImage::ultralytics(image, INPUT_SIZE, 32))
+            }
+            _ => Err(format!(
+                "{} is not a segmentation model; instance masks are available for yolo11n-seg and \
+                 yolo11s-seg",
+                self.model_id
+            )
+            .into()),
+        }
+    }
 }
 
 /// Convert imported Ultralytics-family tensor state into boquilens' versioned native Burnpack
@@ -581,10 +1201,20 @@ pub fn pack_weights(
     input: impl Into<PathBuf>,
     output: impl Into<PathBuf>,
 ) -> Result<PackedWeights> {
-    if matches!(model_id, ModelId::YoloxNano) {
+    if matches!(
+        model_id,
+        ModelId::YoloxNano
+            | ModelId::YoloxTiny
+            | ModelId::YoloxS
+            | ModelId::YoloxM
+            | ModelId::YoloxL
+            | ModelId::YoloxX
+    ) {
         return Err(
             "native weight packing is currently implemented only for the Ultralytics-family models \
-             (yolov3-tinyu, yolov10n/s/m/b/l/x, and yolo26n/s/m/l/x)"
+             (yolov3-tinyu, yolov10n/s/m/b/l/x, yolo11n/s/m/l/x, yolo11n/s-seg, and yolo26n/s/m/l/x); \
+             YOLOX loads \
+             its official .pth checkpoint directly"
                 .into(),
         );
     }
@@ -628,15 +1258,29 @@ pub fn pack_weights(
                 ModelId::Yolov10B => pack_variant!(Yolov10BConfig),
                 ModelId::Yolov10L => pack_variant!(Yolov10LConfig),
                 ModelId::Yolov10X => pack_variant!(Yolov10XConfig),
+                ModelId::Yolo11N => pack_variant!(Yolo11NConfig),
+                ModelId::Yolo11S => pack_variant!(Yolo11SConfig),
+                ModelId::Yolo11M => pack_variant!(Yolo11MConfig),
+                ModelId::Yolo11L => pack_variant!(Yolo11LConfig),
+                ModelId::Yolo11X => pack_variant!(Yolo11XConfig),
+                ModelId::Yolo11NSeg => pack_variant!(Yolo11SegNConfig),
+                ModelId::Yolo11SSeg => pack_variant!(Yolo11SegSConfig),
                 ModelId::Yolo26N => pack_variant!(Yolo26NConfig),
                 ModelId::Yolo26S => pack_variant!(Yolo26SConfig),
                 ModelId::Yolo26M => pack_variant!(Yolo26MConfig),
                 ModelId::Yolo26L => pack_variant!(Yolo26LConfig),
                 ModelId::Yolo26X => pack_variant!(Yolo26XConfig),
-                ModelId::YoloxNano => {
+                ModelId::YoloxNano
+                | ModelId::YoloxTiny
+                | ModelId::YoloxS
+                | ModelId::YoloxM
+                | ModelId::YoloxL
+                | ModelId::YoloxX => {
                     return Err(
                         "native weight packing is currently implemented only for the Ultralytics-family models \
-                         (yolov3-tinyu, yolov10n/s/m/b/l/x, and yolo26n/s/m/l/x)"
+                         (yolov3-tinyu, yolov10n/s/m/b/l/x, yolo11n/s/m/l/x, yolo11n/s-seg, and yolo26n/s/m/l/x); \
+             YOLOX loads \
+                         its official .pth checkpoint directly"
                             .into(),
                     );
                 }
@@ -786,6 +1430,65 @@ pub fn annotate(image: &DynamicImage, detections: &[Detection]) -> DynamicImage 
         );
     }
     DynamicImage::ImageRgb8(output)
+}
+
+/// Draw instance-mask outlines and detection rectangles on a copy of the image.
+///
+/// The outline is the mask's boolean boundary: every covered pixel with at least one uncovered
+/// 4-neighbor is drawn in the class color, then the boxes are stroked on top. Masks live in
+/// source-image pixels, so no coordinate mapping happens here.
+pub fn annotate_segmentation(
+    image: &DynamicImage,
+    detections: &[SegmentationDetection],
+) -> DynamicImage {
+    let mut output = image.to_rgb8();
+    for detection in detections {
+        draw_mask_outline(
+            &mut output,
+            &detection.mask,
+            class_color(detection.class_id),
+        );
+    }
+    for detection in detections {
+        let color = class_color(detection.class_id);
+        draw_rect(
+            &mut output,
+            detection.xmin as u32,
+            detection.ymin as u32,
+            detection.xmax as u32,
+            detection.ymax as u32,
+            color,
+        );
+    }
+    DynamicImage::ImageRgb8(output)
+}
+
+/// Stroke the boundary pixels of a source-space boolean mask.
+fn draw_mask_outline(
+    image: &mut ImageBuffer<Rgb<u8>, Vec<u8>>,
+    mask: &InstanceMask,
+    color: Rgb<u8>,
+) {
+    let width = mask.width as usize;
+    let height = mask.height as usize;
+    if width == 0 || height == 0 {
+        return;
+    }
+    let covered = |x: usize, y: usize| mask.data[y * width + x];
+    for y in 0..height {
+        for x in 0..width {
+            if !covered(x, y) {
+                continue;
+            }
+            let boundary = (x == 0 || !covered(x - 1, y))
+                || (x + 1 == width || !covered(x + 1, y))
+                || (y == 0 || !covered(x, y - 1))
+                || (y + 1 == height || !covered(x, y + 1));
+            if boundary {
+                image.put_pixel(x as u32, y as u32, color);
+            }
+        }
+    }
 }
 
 fn class_color(class_id: usize) -> Rgb<u8> {
@@ -938,6 +1641,11 @@ mod tests {
     fn parses_stable_model_names() {
         assert_eq!("yolox-nano".parse(), Ok(ModelId::YoloxNano));
         assert_eq!("nano".parse(), Ok(ModelId::YoloxNano));
+        assert_eq!("yolox-tiny".parse(), Ok(ModelId::YoloxTiny));
+        assert_eq!("yolox-s".parse(), Ok(ModelId::YoloxS));
+        assert_eq!("yolox-m".parse(), Ok(ModelId::YoloxM));
+        assert_eq!("yolox-l".parse(), Ok(ModelId::YoloxL));
+        assert_eq!("yolox-x".parse(), Ok(ModelId::YoloxX));
         assert_eq!("yolov3-tinyu".parse(), Ok(ModelId::Yolov3TinyU));
         assert_eq!("yolov10n".parse(), Ok(ModelId::Yolov10N));
         assert_eq!("yolov10s".parse(), Ok(ModelId::Yolov10S));
@@ -945,6 +1653,13 @@ mod tests {
         assert_eq!("yolov10b".parse(), Ok(ModelId::Yolov10B));
         assert_eq!("yolov10l".parse(), Ok(ModelId::Yolov10L));
         assert_eq!("yolov10x".parse(), Ok(ModelId::Yolov10X));
+        assert_eq!("yolo11n".parse(), Ok(ModelId::Yolo11N));
+        assert_eq!("yolo11s".parse(), Ok(ModelId::Yolo11S));
+        assert_eq!("yolo11m".parse(), Ok(ModelId::Yolo11M));
+        assert_eq!("yolo11l".parse(), Ok(ModelId::Yolo11L));
+        assert_eq!("yolo11x".parse(), Ok(ModelId::Yolo11X));
+        assert_eq!("yolo11n-seg".parse(), Ok(ModelId::Yolo11NSeg));
+        assert_eq!("yolo11s-seg".parse(), Ok(ModelId::Yolo11SSeg));
         assert_eq!("yolo26n".parse(), Ok(ModelId::Yolo26N));
         assert_eq!("yolo26s".parse(), Ok(ModelId::Yolo26S));
         assert_eq!("yolo26m".parse(), Ok(ModelId::Yolo26M));
@@ -956,12 +1671,21 @@ mod tests {
     #[cfg(feature = "pretrained")]
     #[test]
     fn native_weight_packer_rejects_unsupported_model_and_extension() {
-        assert!(
-            pack_weights(ModelId::YoloxNano, "unused.pt", "unused.bpk")
-                .unwrap_err()
-                .to_string()
-                .contains("Ultralytics-family models")
-        );
+        for model_id in [
+            ModelId::YoloxNano,
+            ModelId::YoloxTiny,
+            ModelId::YoloxS,
+            ModelId::YoloxM,
+            ModelId::YoloxL,
+            ModelId::YoloxX,
+        ] {
+            assert!(
+                pack_weights(model_id, "unused.pt", "unused.bpk")
+                    .unwrap_err()
+                    .to_string()
+                    .contains("Ultralytics-family models")
+            );
+        }
         for model_id in [
             ModelId::Yolov3TinyU,
             ModelId::Yolov10N,
@@ -970,6 +1694,13 @@ mod tests {
             ModelId::Yolov10B,
             ModelId::Yolov10L,
             ModelId::Yolov10X,
+            ModelId::Yolo11N,
+            ModelId::Yolo11S,
+            ModelId::Yolo11M,
+            ModelId::Yolo11L,
+            ModelId::Yolo11X,
+            ModelId::Yolo11NSeg,
+            ModelId::Yolo11SSeg,
             ModelId::Yolo26N,
             ModelId::Yolo26S,
             ModelId::Yolo26M,
@@ -1002,4 +1733,198 @@ mod tests {
         assert_eq!(*output.get_pixel(7, 8), class_color(0));
         assert_eq!(*output.get_pixel(4, 5), Rgb([0, 0, 0]));
     }
+
+    fn test_box_iou(a: (f32, f32, f32, f32), b: (f32, f32, f32, f32)) -> f32 {
+        let width = (a.2.min(b.2) - a.0.max(b.0)).max(0.0);
+        let height = (a.3.min(b.3) - a.1.max(b.1)).max(0.0);
+        let intersection = width * height;
+        let area_a = (a.2 - a.0) * (a.3 - a.1);
+        let area_b = (b.2 - b.0) * (b.3 - b.1);
+        intersection / (area_a + area_b - intersection)
+    }
+
+    /// Compare the seg runtime end to end against the official Ultralytics prediction on the
+    /// reference image, including per-detection mask IoU in source-image space. Run the
+    /// generator first:
+    /// `python tools/export_yolo11_seg_e2e.py target/<id>.pt assets/dog_bike_man.jpg target --model <id>`
+    #[cfg(feature = "pretrained")]
+    macro_rules! seg_e2e_test {
+        ($fn_name:ident, $model_id:expr, $id:literal) => {
+            #[test]
+            #[ignore]
+            fn $fn_name() {
+                let expected_path =
+                    std::path::PathBuf::from(format!("target/{}-e2e-expected.json", $id));
+                assert!(
+                    expected_path.exists(),
+                    "generate the official expectation with tools/export_yolo11_seg_e2e.py first"
+                );
+                #[derive(serde::Deserialize)]
+                struct Expected {
+                    detections: Vec<ExpectedDetection>,
+                }
+                #[derive(serde::Deserialize)]
+                struct ExpectedDetection {
+                    class_id: usize,
+                    confidence: f32,
+                    box_xyxy_px: [f32; 4],
+                    mask_file: String,
+                }
+
+                let expected: Expected =
+                    serde_json::from_slice(&std::fs::read(&expected_path).unwrap()).unwrap();
+                let checkpoint = std::path::PathBuf::from(format!(
+                    "target/{}-coco-ultralytics-v8.4-boquilens-v1.bpk",
+                    $id
+                ));
+                assert!(
+                    checkpoint.exists(),
+                    "pack the {} artifact with pack-weights first",
+                    $id
+                );
+                let predictor =
+                    Predictor::<Flex>::from_checkpoint($model_id, checkpoint, Default::default())
+                        .unwrap();
+                let (image, detections) = predictor
+                    .predict_segmentation_path("assets/dog_bike_man.jpg")
+                    .unwrap();
+                let _ = image;
+                assert_eq!(
+                    detections.len(),
+                    expected.detections.len(),
+                    "detection count differs from Ultralytics"
+                );
+
+                let mut used = vec![false; expected.detections.len()];
+                for detection in &detections {
+                    // Match by class and best box IoU (both sides use the same decode, so the
+                    // boxes are near-identical; the matching tolerates ordering).
+                    let (index, match_iou) = expected
+                        .detections
+                        .iter()
+                        .enumerate()
+                        .filter(|(index, candidate)| {
+                            !used[*index] && candidate.class_id == detection.class_id
+                        })
+                        .map(|(index, candidate)| {
+                            (
+                                index,
+                                test_box_iou(
+                                    (
+                                        detection.xmin,
+                                        detection.ymin,
+                                        detection.xmax,
+                                        detection.ymax,
+                                    ),
+                                    (
+                                        candidate.box_xyxy_px[0],
+                                        candidate.box_xyxy_px[1],
+                                        candidate.box_xyxy_px[2],
+                                        candidate.box_xyxy_px[3],
+                                    ),
+                                ),
+                            )
+                        })
+                        .max_by(|a, b| a.1.total_cmp(&b.1))
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "no unmatched Ultralytics detection for {}",
+                                detection.class_name
+                            )
+                        });
+                    assert!(match_iou > 0.9, "box match IoU too low: {match_iou}");
+                    used[index] = true;
+                    let candidate = &expected.detections[index];
+
+                    let confidence_delta = (detection.confidence - candidate.confidence).abs();
+                    assert!(
+                        confidence_delta <= 5e-3,
+                        "{} confidence: {} vs {}",
+                        detection.class_name,
+                        detection.confidence,
+                        candidate.confidence
+                    );
+                    // f16 weight rounding can flip a sharp (multi-peak) DFL side distribution and
+                    // move a single box edge by a couple of pixels (observed worst case ~2.8 px);
+                    // box IoU stays high and the mask IoU below is the real parity gate.
+                    let box_iou = test_box_iou(
+                        (
+                            detection.xmin,
+                            detection.ymin,
+                            detection.xmax,
+                            detection.ymax,
+                        ),
+                        (
+                            candidate.box_xyxy_px[0],
+                            candidate.box_xyxy_px[1],
+                            candidate.box_xyxy_px[2],
+                            candidate.box_xyxy_px[3],
+                        ),
+                    );
+                    assert!(
+                        box_iou >= 0.98,
+                        "{} box IoU {box_iou} below 0.98",
+                        detection.class_name
+                    );
+                    for (actual, expected_edge) in [
+                        detection.xmin,
+                        detection.ymin,
+                        detection.xmax,
+                        detection.ymax,
+                    ]
+                    .iter()
+                    .zip(candidate.box_xyxy_px.iter())
+                    {
+                        assert!(
+                            (actual - expected_edge).abs() <= 3.5,
+                            "{} box edge {actual} vs {expected_edge}",
+                            detection.class_name
+                        );
+                    }
+
+                    let official = image::open(format!("target/{}", candidate.mask_file))
+                        .unwrap()
+                        .into_luma8();
+                    assert_eq!(official.width(), detection.mask.width);
+                    assert_eq!(official.height(), detection.mask.height);
+                    let mut intersection = 0_u64;
+                    let mut union = 0_u64;
+                    for (actual, expected_pixel) in
+                        detection.mask.data.iter().zip(official.pixels())
+                    {
+                        let expected_pixel = expected_pixel[0] > 0;
+                        match (*actual, expected_pixel) {
+                            (true, true) => intersection += 1,
+                            (true, false) | (false, true) => union += 1,
+                            (false, false) => {}
+                        }
+                    }
+                    let mask_iou = intersection as f64 / (intersection + union) as f64;
+                    println!(
+                        "{:<14} conf={:.3} mask_px={} mask_IoU={:.4}",
+                        detection.class_name,
+                        detection.confidence,
+                        detection.mask.data.iter().filter(|pixel| **pixel).count(),
+                        mask_iou
+                    );
+                    assert!(
+                        mask_iou >= 0.95,
+                        "{} mask IoU {mask_iou} below 0.95",
+                        detection.class_name
+                    );
+                }
+            }
+        };
+    }
+
+    seg_e2e_test!(
+        yolo11n_seg_matches_ultralytics_end_to_end,
+        ModelId::Yolo11NSeg,
+        "yolo11n-seg"
+    );
+    seg_e2e_test!(
+        yolo11s_seg_matches_ultralytics_end_to_end,
+        ModelId::Yolo11SSeg,
+        "yolo11s-seg"
+    );
 }

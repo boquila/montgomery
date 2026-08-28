@@ -34,6 +34,12 @@ pub struct Pafpn<B: Backend> {
 }
 
 impl<B: Backend> Pafpn<B> {
+    /// The CSPDarknet backbone, exposed for checkpoint parity tests.
+    #[cfg(test)]
+    pub(crate) fn backbone(&self) -> &CspDarknet<B> {
+        &self.backbone
+    }
+
     pub fn forward(&self, x: Tensor<B, 4>) -> FpnFeatures<B> {
         fn upsample<B: Backend>(x_in: Tensor<B, 4>, scale: usize) -> Tensor<B, 4> {
             let [_, _, h, w] = x_in.dims();

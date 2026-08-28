@@ -393,6 +393,7 @@ name = "boquilens"
 version = "0.1.0"
 dependencies = [
  "burn",
+ "burn-cpu",
  "burn-flex",
  "burn-store",
  "burn-wgpu",
@@ -424,6 +425,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b1d4fe21af264a4e657504821016abb82bbea91629217a5b3885ed1e17b12f9d"
 dependencies = [
  "burn-core",
+ "burn-cpu",
  "burn-dispatch",
  "burn-nn",
  "burn-optim",
@@ -484,6 +486,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "burn-cpu"
+version = "0.21.0-pre.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba8dd535f689ba86167c1508d47053691b1a9295c67d2adf9a0de886fe21091d"
+dependencies = [
+ "burn-backend",
+ "burn-cubecl",
+ "burn-fusion",
+ "cubecl",
+]
+
+[[package]]
 name = "burn-cubecl"
 version = "0.21.0-pre.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -540,6 +554,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ef6a416e4ecb511a819a7ebd8d410b4826a95c93421d0329bc3e07302ec404b"
 dependencies = [
  "burn-backend",
+ "burn-cpu",
  "burn-wgpu",
  "paste",
 ]

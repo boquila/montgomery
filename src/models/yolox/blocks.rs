@@ -112,8 +112,11 @@ impl BaseConvConfig {
             .with_groups(groups)
             .with_bias(false);
         let bn = BatchNormConfig::new(out_channels)
-            .with_epsilon(1e-3)
-            .with_momentum(0.03);
+            // Official YOLOX uses plain PyTorch `nn.BatchNorm2d` defaults. This differs from the
+            // Ultralytics convention (eps 1e-3, momentum 0.03); small running-variance channels
+            // make the epsilon discrepancy visible at inference time.
+            .with_epsilon(1e-5)
+            .with_momentum(0.1);
 
         Self { conv, bn }
     }

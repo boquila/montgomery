@@ -109,7 +109,7 @@ impl WeightsMeta for YoloxTiny {
         Weights {
             url: "https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_tiny.pth",
             num_classes: 80,
-            sha256: None,
+            sha256: Some("9de513de589ac98bb92d3bca53b5af7b9acfa9b0bacb831f7999d0f7afaee8f0"),
         }
     }
 }
@@ -125,7 +125,7 @@ impl WeightsMeta for YoloxS {
         Weights {
             url: "https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_s.pth",
             num_classes: 80,
-            sha256: None,
+            sha256: Some("f55ded7181e1b0c13285c56e7790b8f0e8f8db590fe4edb37f0b7f345c913a30"),
         }
     }
 }
@@ -141,7 +141,7 @@ impl WeightsMeta for YoloxM {
         Weights {
             url: "https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_m.pth",
             num_classes: 80,
-            sha256: None,
+            sha256: Some("60076992b32da82951c90cfa7bd6ab70eba9eda243e08b940a396f60ac2d19b6"),
         }
     }
 }
@@ -157,7 +157,7 @@ impl WeightsMeta for YoloxL {
         Weights {
             url: "https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_l.pth",
             num_classes: 80,
-            sha256: None,
+            sha256: Some("1e6b7fa6240375370b2a8a8eab9066b3cdd43fd1d0bfa8d2027fd3a51def2917"),
         }
     }
 }
@@ -173,7 +173,7 @@ impl WeightsMeta for YoloxX {
         Weights {
             url: "https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_x.pth",
             num_classes: 80,
-            sha256: None,
+            sha256: Some("5652330b6ae860043f091b8f550a60c10e1129f416edfdb65c259be6caf355cf"),
         }
     }
 }

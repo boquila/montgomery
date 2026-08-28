@@ -106,6 +106,16 @@ impl LetterboxedImage {
         &self.image
     }
 
+    /// The letterbox scale (source pixels per model-input pixel) and centered padding.
+    pub(crate) fn letterbox_geometry(&self) -> (f32, f32, f32) {
+        (self.scale, self.pad_x as f32, self.pad_y as f32)
+    }
+
+    /// The original source-image dimensions.
+    pub(crate) fn source_dimensions(&self) -> (u32, u32) {
+        (self.source_width, self.source_height)
+    }
+
     pub(crate) fn to_source_box(&self, bbox: [f32; 4]) -> [f32; 4] {
         let map_x = |value: f32| {
             ((value - self.pad_x as f32) / self.scale).clamp(0.0, self.source_width as f32)

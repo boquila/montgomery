@@ -15,6 +15,13 @@ Orientation first:
   `src/models/yolo26/` (DFL-free end-to-end), or `src/models/yolov3_tiny/` (classic NMS path).
 - Inference modes in the wild: one2one end-to-end heads are top-k selected + confidence filtered
   (`end2end_topk_detections` in `src/lib.rs`); plain heads go through class-aware NMS.
+- Non-Ultralytics families need the same ground-truth discipline with different tooling. YOLOX
+  (the stable family) consumes its official `.pth` directly (no pack-weights bridge), and its
+  golden fixtures come from the *official YOLOX repository sources* instead of the Ultralytics
+  package: `tools/export_yolox_fixtures.py` assembles a small import package from a plain YOLOX
+  checkout under `target/yolox-ref/`, loads the checkpoint with `strict=True`, and dumps per-stage
+  tensor statistics (backbone dark3/4/5, PAFPN outputs, decoded head) that the Rust ignored tests
+  compare at 2e-4.
 
 ## 1. Identify the architecture
 
@@ -49,9 +56,13 @@ Orientation first:
 2. Verify every layer index and channel count against your step-1 table. Shapes expose things the
    YAML cannot: `Bottleneck` defaults to `e=0.5` (half-width) but C3k's inner chain passes
    `e=1.0`; attention wrappers appear as `m.0.attn.*`; Sequential indices become path segments.
-3. Remember that released checkpoints can predate source refactors: `yolov10n.pt` has the old
-   inlined C2PSA (`model.10.attn.*`) while 8.3+ builds `model.10.m.0.attn.*`. Always structure the
-   Rust module around the checkpoint's keys, not the current source.
+3. Remember that released checkpoints can predate source refactors, and the pickled module
+   attributes — not the current source — define the checkpoint's inference graph: `yolov10n.pt` has
+   the old inlined C2PSA (`model.10.attn.*`) while 8.3+ builds `model.10.m.0.attn.*`, and
+   `yolo11n.pt` predates the SPPF `act=False` refactor, so its `cv1` still applies SiLU even though
+   current source constructs it activation-free (YOLO26 checkpoints postdate it and genuinely have
+   none). Always structure the Rust module around the checkpoint's keys *and live attribute
+   values*, not the current source.
 
 ## 3. Implement `src/models/<id>/`
 
@@ -139,14 +150,63 @@ pixel (f16 artifact rounding accounts for the residual). Record the artifact byt
 - `NOTICE`: provenance and licensing (Ultralytics-family weights and derived artifacts are
   AGPL-3.0; the YOLOX path is Apache-2.0).
 
+## 8. Bringing up a new task (instance segmentation)
+
+Adding a task to an already-ported family is a smaller version of the loop above, with the vendored
+task head as the ground truth. The YOLO11-seg bring-up (n/s) is the template.
+
+1. **Feasibility gate first**: verify the `-seg` checkpoints actually exist in the assets release
+   (HTTP HEAD the release URLs; never trust release notes from memory) and load one with the venv
+   before writing any Rust. Pick the family whose existing runtime dispatch extends most cleanly —
+   for segmentation that was YOLO11, because Ultralytics' `Segment` head is the classic Detect head
+   plus extras and its postprocess rides the exact NMS path the family already has.
+2. **Dump the task head's layer table**: build `DetectionModel("<id>-seg.yaml", verbose=True)` and
+   read `parse_model`'s rewrites for the task head. For Segment: the body (layers 0-22) is the
+   detect model's, the head moves to `model.23`, `npr` (prototype channels) is width-scaled as
+   `make_divisible(min(256, max_channels) * width, 8)`, and the `cv4` mask tower is full 3x3 Convs
+   (not the light DWConv `cv3` flavor) with width `max(ch[0] / 4, nm)`. Verify every shape from the
+   checkpoint state dict, including the pickled module attributes (`head.nm`, `head.npr`).
+3. **Read the task's inference postprocess in the vendored source** — head module, `ops.py`, and
+   the task predictor. For Segment: `_inference` concatenates the raw mask coefficients after the
+   sigmoid scores (no sigmoid on coefficients, no normalization in the PyTorch predict path —
+   verify rather than assume), NMS carries the coefficients along, and `process_mask(upsample=True)`
+   assembles `coefficients @ prototypes` as raw logits, bilinearly upsamples to the letterboxed
+   canvas, thresholds at `> 0` (not sigmoid), crops to the box, and drops detections whose cropped
+   mask is empty. Mirror every one of those steps; "sigmoid then threshold" is numerically equivalent
+   only in isolation, not after bilinear interpolation.
+4. **Architecture**: reuse the family's body and detection head (composition keeps the decode in
+   one place — `Yolo11SegHead` wraps `Yolo11Head`) and add the task head modules with checkpoint
+   key names as field names. The mask tensors join the model output (`SegmentOutput`); the decode,
+   NMS, and mask assembly stay in the runtime.
+5. **Weights path** is unchanged: `tools/export_ultralytics_state.py` is model-agnostic (it dumps
+   whatever `state_dict()` holds), so only the Rust key remaps need the new head rules (one per
+   path-segment pattern), plus `ModelId` arms, packer arms, and verified artifact bytes/SHA-256.
+6. **Fixtures and parity**: extend the family's fixture exporter for the task (the seg fixture adds
+   `protos` and `mask_coeffs` tensors at the same 2e-4 tolerance), and add an end-to-end fixture
+   tool (`tools/export_yolo11_seg_e2e.py`) that records the official prediction — boxes plus masks
+   resampled onto the source-image grid with the same letterbox mapping the runtime uses — so the
+   ignored Rust test can compare per-detection mask IoU (target >= 0.95).
+7. **Public API**: a new result type (`SegmentationDetection` with `InstanceMask`), a new predictor
+   method that does not disturb `predict()`, letterbox geometry shared with the boxes, and CLI
+   wiring (`--model <id>-seg`, `--masks`) that leaves detect-model behavior untouched.
+
 ## Pitfall checklist
 
 - Channels: `make_divisible(min(c, max_channels) * width, 8)`, depth-scaled repeats, SPPF not
   being a repeat module, C3k2's m/l/x `c3k` override.
 - Bottleneck widths: half-width default (`e=0.5`) vs explicit `e=1.0` chains — verify from shapes.
-- Checkpoint key drift between the training-time release and current source (C2PSA `m.0`).
+- Checkpoint key drift between the training-time release and current source (C2PSA `m.0`), and
+  attribute drift the same way: a pickled `Conv.act` may still be SiLU where the current source
+  passes `act=False` (YOLO11's SPPF `cv1`).
 - Enum modules break key matching; tuples/Vecs serialize as `0/1`/index segments.
 - One2many head keys are silently dropped — that is desired; missing one2one keys are not.
-- BN epsilon is 1e-3 (Ultralytics initialization), not PyTorch's 1e-5.
+- BN epsilon is 1e-3 (Ultralytics initialization), not PyTorch's 1e-5 — **except for YOLOX**, which
+  uses plain `nn.BatchNorm2d` defaults (eps 1e-5, momentum 0.1). Using the Ultralytics values there
+  passed every existing test yet silently degraded detections for months; only the golden tensor
+  comparison against the official sources exposed it.
 - End-to-end heads: no NMS anywhere; top-k + confidence filter only.
+- Golden statistics (mean/rms/min/max + 128 evenly spaced samples) cannot see a single-anchor
+  deviation: one f16-flipped DFL distribution shifts one box edge by a couple of pixels while every
+  statistic stays green. Only the end-to-end comparison against the official runtime catches that
+  class of drift.
 - Generated checkpoints, states, fixtures, images, and `.bpk` artifacts stay under `target/`.

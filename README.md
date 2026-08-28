@@ -8,23 +8,31 @@ or ONNX Runtime.
 
 ## Models
 
-Every model runs **object detection** on COCO-80 classes at 640 px input. The only runtime mode is
-**Predict** (via the CLI and the Rust API); training and validation are out of scope. Experimental
-models additionally support a one-time `pack-weights` conversion into boquilens' native Burnpack
-format.
+Every model runs **object detection** on COCO-80 classes at 640 px input; the YOLO11-seg variants
+additionally run **instance segmentation**. The only runtime mode is **Predict** (via the CLI and
+the Rust API); training and validation are out of scope. Experimental models additionally support a
+one-time `pack-weights` conversion into boquilens' native Burnpack format.
 
-| Model    | Status       | Task   | Modes   | Variants       | Weights                          |
-| -------- | ------------ | ------ | ------- | -------------- | -------------------------------- |
-| YOLOX    | stable       | Detect | Predict | nano           | official `.pth`, auto-downloaded |
-| YOLOv3   | experimental | Detect | Predict | tiny-u         | one-time `.bpk` pack             |
-| YOLOv10  | experimental | Detect | Predict | n, s, m, b, l, x | one-time `.bpk` pack           |
-| YOLO26   | experimental | Detect | Predict | n, s, m, l, x  | one-time `.bpk` pack             |
+| Model    | Status       | Task             | Modes   | Variants               | Weights                          |
+| -------- | ------------ | ---------------- | ------- | ---------------------- | -------------------------------- |
+| YOLOX    | stable       | Detect           | Predict | nano, tiny, s, m, l, x | official `.pth`, auto-downloaded |
+| YOLOv3   | experimental | Detect           | Predict | tiny-u                 | one-time `.bpk` pack             |
+| YOLOv10  | experimental | Detect           | Predict | n, s, m, b, l, x       | one-time `.bpk` pack             |
+| YOLO11   | experimental | Detect, Segment  | Predict | n, s, m, l, x (+n/s -seg) | one-time `.bpk` pack          |
+| YOLO26   | experimental | Detect           | Predict | n, s, m, l, x          | one-time `.bpk` pack             |
 
 Variant naming follows each family (YOLOX scales as nano/tiny/s/m/l/x, v3 ships a tiny model, and
 the modern families use n/s/m/l/x; YOLOv10 replaces the xl scale with b). Pass the variant-suffixed
-CLI name: `yolox-nano`, `yolov3-tinyu`, `yolov10n`, `yolov10s`, ..., `yolo26x`. YOLOX ships
+CLI name: `yolox-nano`, `yolox-tiny`, `yolox-s`, `yolox-m`, `yolox-l`, `yolox-x`, `yolov3-tinyu`,
+`yolov10n`, ..., `yolo11n`, ..., `yolo11n-seg`, `yolo11s-seg`, ..., `yolo26x`. YOLOX ships
 Apache-2.0 weights downloaded from the official release. Ultralytics-family weights are AGPL-3.0,
-and the native artifacts derived from them inherit that license (see [NOTICE](NOTICE)).
+and the native artifacts derived from them inherit that license (see [NOTICE](NOTICE)). Every model
+runs at 640 px input; note that YOLOX-Tiny's official evaluation resolution is 416 px, so its
+published mAP (32.8) does not transfer one-to-one. YOLO11 is the only modern family whose
+predictions pass through classic class-aware non-maximum suppression (the others are NMS-free
+end-to-end). The YOLO11-seg models share that NMS path and add Ultralytics' Segment head: 32 mask
+prototypes at stride 4 plus per-detection mask coefficients; instance masks are returned as
+boolean coverage over the source image.
 
 Verified v1 artifacts:
 
@@ -42,11 +50,19 @@ Verified v1 artifacts:
 | yolo26m      |  41,216,928 | `50A0BE494BA93D5663084161999B3D2B2C9ABB6DABB163D0AED2DB6F37591249` |
 | yolo26l      |  50,140,064 | `19D2C802F3266571FC7298DB9C3AB0E912D4DD6004B1D37510124F92A428A171` |
 | yolo26x      | 112,210,080 | `D1B1B94FC28423CC4FFD4EA04DEEAE3FE4A352B7E0D8F442D6CE9FA616C813A9` |
+| yolo11n      |   5,399,968 | `36ACCB9BCEF72CD1DD3D534F54BE845C9EE4EE1697AD65C731FE028028E68BDF` |
+| yolo11s      |  19,140,768 | `4277237339A0975D1E86FBFB7787D861982F9B64B857C458E0D998671AA63DB9` |
+| yolo11m      |  40,561,568 | `ACFE957B42A17D81C9988772E2A1576592B3DB293DC8D52AFC91BCECB5595073` |
+| yolo11l      |  51,208,352 | `84FE90D17143FB894CEFE6557D3619F000E1602BDC331905FE56E6AC996F953F` |
+| yolo11x      | 114,597,280 | `1AC48B4A48165632F7B54A7B2E8471C9FB782CE436DE795C3155BCEF848C156E` |
+| yolo11n-seg  |   5,919,808 | `A29FF611095F39E3875A22B03B93DC1FDCD5AE40A1310AA5DF4D3813E17B1FF4` |
+| yolo11s-seg  |  20,465,216 | `FD9841F96748BD32A50EF508340F86A161B331D44F3D16678A96BED1A76342BE` |
 
 ### Preparing experimental weights
 
 One-time conversion of an official Ultralytics checkpoint (Python is a conversion-time dependency
-only); substitute the model name for `yolov3-tinyu`, `yolov10n/s/m/b/l/x`, or `yolo26n/s/m/l/x`:
+only); substitute the model name for `yolov3-tinyu`, `yolov10n/s/m/b/l/x`, `yolo11n/s/m/l/x`,
+`yolo11n/s-seg`, or `yolo26n/s/m/l/x`:
 
 ```console
 python -m pip install torch ultralytics
@@ -62,13 +78,16 @@ After that, inference only needs the `.bpk` artifact and Rust.
 ```console
 cargo run --release -- predict --model yolox-nano --source assets/dog_bike_man.jpg
 cargo run --release -- predict --model yolo26n --weights target/yolo26n-coco-ultralytics-v8.4-boquilens-v1.bpk --source image.jpg --json --confidence 0.30
+cargo run --release -- predict --model yolo11n-seg --weights target/yolo11n-seg-coco-ultralytics-v8.4-boquilens-v1.bpk --source image.jpg --masks
 cargo run -- --help
 ```
 
 Detections are printed as a table or JSON and an annotated PNG is written next to the input
 (`--output` overrides). Boxes are unnormalized, continuous `XYXY` pixel edges in the original
 source image, clipped to its bounds and sorted by confidence; the JSON output carries matching
-coordinate metadata.
+coordinate metadata. Segmentation models accept `--masks` to stroke the instance-mask outlines on
+the annotated image and report per-detection covered-pixel counts (JSON gains a mask summary; the
+full bitmask is available through the Rust API).
 
 ### Rust API
 
@@ -76,10 +95,31 @@ coordinate metadata.
 use boquilens::{PredictOptions, Predictor};
 
 fn main() -> boquilens::Result<()> {
-    let predictor = Predictor::yolox_nano(PredictOptions::default())?;
+    // Every YOLOX scale has a dedicated helper (yolox_nano, yolox_tiny, yolox_s, yolox_m,
+    // yolox_l, yolox_x); other models load through Predictor::new with a ModelId.
+    let predictor = Predictor::yolox_x(PredictOptions::default())?;
     let (_image, detections) = predictor.predict_path("image.jpg")?;
     for detection in detections {
         println!("{}: {:.1}%", detection.class_name, detection.confidence * 100.0);
+    }
+    Ok(())
+}
+```
+
+Instance segmentation is available for the YOLO11-seg variants through
+`Predictor::predict_segmentation` / `predict_segmentation_path`, which return
+`SegmentationDetection` values: the same box fields as `Detection` plus a boolean source-image
+coverage mask (`InstanceMask`, `width * height` bytes):
+
+```rust,no_run
+use boquilens::{ModelId, PredictOptions, Predictor};
+
+fn main() -> boquilens::Result<()> {
+    let predictor = Predictor::new(ModelId::Yolo11NSeg, PredictOptions::default())?;
+    let (_image, detections) = predictor.predict_segmentation_path("image.jpg")?;
+    for detection in detections {
+        let covered = detection.mask.data.iter().filter(|pixel| **pixel).count();
+        println!("{}: {:.1}% mask_px={}", detection.class_name, detection.confidence * 100.0, covered);
     }
     Ok(())
 }
@@ -113,6 +153,8 @@ cargo test --locked --release --features gpu measures_single_inference_latency_g
 
 Reference machine: AMD Ryzen 9 9950X3D (16C/32T), 32 GB RAM, Windows 11. Absolute numbers move with
 hardware and library releases; treat them as a relative scale across variants, not a benchmark claim.
+YOLOX scale rows are not measured yet: the latency harness lives with the per-scale model tests that
+the Ultralytics families have and YOLOX does not.
 
 | Model    | boquilens CPU (ms) | boquilens GPU (ms) | GPU vs CPU | Ultralytics PyTorch CPU (ms) |
 | -------- | -----------------: | -----------------: | ---------: | ---------------------------: |
@@ -127,6 +169,13 @@ hardware and library releases; treat them as a relative scale across variants, n
 | yolo26m  |              478.0 |               53.5 |       8.9x |                         85.2 |
 | yolo26l  |              619.3 |               66.1 |       9.4x |                        109.7 |
 | yolo26x  |              975.2 |              124.8 |       7.8x |                        196.8 |
+| yolo11n  |              130.1 |                8.5 |      15.3x |                         17.8 |
+| yolo11s  |              243.8 |               17.3 |      14.1x |                         31.7 |
+| yolo11m  |              486.7 |               45.6 |      10.7x |                         68.9 |
+| yolo11l  |              634.6 |               56.5 |      11.2x |                         92.8 |
+| yolo11x  |              991.6 |              115.6 |       8.6x |                        179.1 |
+| yolo11n-seg |            173.9 |               13.5 |      12.9x |                         22.8 |
+| yolo11s-seg |            307.4 |               29.9 |      10.3x |                         44.8 |
 
 - **CPU.** The CPU columns are the always-available path: Burn's Flex backend. Preprocessing and
   top-k postprocessing are not included and add a small constant per image. Flex currently trails
@@ -147,12 +196,31 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo check --locked --no-default-features --lib
 ```
 
-Golden parity fixtures are generated per model against the official Ultralytics checkpoints and
-consumed by the ignored tests (the fixture exporters cover every detect scale via `--model`):
+Golden parity fixtures are generated per model against the official checkpoints and consumed by the
+ignored tests (the fixture exporters cover every detect and seg scale via `--model`). YOLOX uses its
+own exporter, which runs the official YOLOX PyTorch sources instead of the Ultralytics package:
 
 ```console
 python tools/export_yolo26_fixtures.py target/yolo26m.pt assets/dog_bike_man.jpg target --model yolo26m
 cargo test --locked yolo26m -- --ignored
+
+python tools/export_yolo11_fixtures.py target/yolo11n.pt assets/dog_bike_man.jpg target --model yolo11n
+cargo test --locked yolo11n -- --ignored
+
+python tools/export_yolo11_fixtures.py target/yolo11n-seg.pt assets/dog_bike_man.jpg target --model yolo11n-seg
+cargo test --locked yolo11n-seg -- --ignored
+
+& target\.venv\Scripts\python.exe tools\export_yolox_fixtures.py target\checkpoints\yolox_tiny.pth assets\dog_bike_man.jpg target --model yolox-tiny
+cargo test --locked yolox_tiny -- --ignored
+```
+
+The segmentation variants additionally compare the full runtime end to end against the official
+Ultralytics predict (boxes plus per-detection mask IoU in source-image space); their expectation is
+generated with:
+
+```console
+python tools/export_yolo11_seg_e2e.py target/yolo11n-seg.pt assets/dog_bike_man.jpg target --model yolo11n-seg
+cargo test --locked yolo11n_seg_matches_ultralytics_end_to_end -- --ignored --nocapture
 ```
 
 See [AGENTS.md](AGENTS.md) for the full model-porting workflow and invariants.

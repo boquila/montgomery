@@ -9,9 +9,15 @@ license = "AGPL-3.0"
 default = ["pretrained"]
 pretrained = ["burn/network", "dep:burn-store", "dep:dirs", "dep:sha2"]
 gpu = ["burn/wgpu", "dep:burn-wgpu", "burn-wgpu/vulkan", "burn-wgpu/webgpu", "burn-wgpu/metal"]
+# Experimental CPU configurations measured in PERF_NOTES.md; neither changes the default path.
+# burn-flex's default features already include simd (macerator/gemm) and rayon; x86-v4 adds the
+# AVX-512 codegen paths of the gemm crate on top.
+cpu-simd = ["burn-flex/simd", "burn-flex/x86-v4"]
+cpu-cubecl = ["burn/cpu", "dep:burn-cpu"]
 
 [dependencies]
 burn = { version = "=0.21.0-pre.4", default-features = false }
+burn-cpu = { version = "=0.21.0-pre.4", optional = true }
 burn-flex = "=0.21.0-pre.4"
 burn-store = { version = "=0.21.0-pre.4", default-features = false, features = ["std", "pytorch", "burnpack", "memmap"], optional = true }
 burn-wgpu = { version = "=0.21.0-pre.4", optional = true }
