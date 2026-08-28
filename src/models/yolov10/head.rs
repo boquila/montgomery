@@ -7,7 +7,7 @@ use burn::{
 use super::blocks::{Conv, ConvConfig};
 use super::body::Yolov10Features;
 
-const NUM_CLASSES: usize = 80;
+const DEFAULT_NUM_CLASSES: usize = 80;
 const REG_MAX: usize = 16;
 
 /// Ultralytics v10Detect inference parameters.
@@ -44,6 +44,7 @@ struct DetectionBranch<B: Backend> {
     cls_dw_1: Conv<B>,
     cls_pw_1: Conv<B>,
     cls_out: Conv2d<B>,
+    num_classes: usize,
 }
 
 impl<B: Backend> DetectionBranch<B> {
@@ -58,7 +59,7 @@ impl<B: Backend> DetectionBranch<B> {
         let scores = self
             .cls_out
             .forward(cls)
-            .reshape([batch, NUM_CLASSES, height * width]);
+            .reshape([batch, self.num_classes, height * width]);
         (boxes, scores)
     }
 }
@@ -67,6 +68,7 @@ struct DetectionBranchConfig {
     input_channels: usize,
     box_channels: usize,
     cls_channels: usize,
+    num_classes: usize,
 }
 
 impl DetectionBranchConfig {
@@ -85,9 +87,10 @@ impl DetectionBranchConfig {
                 .depthwise()
                 .init(device),
             cls_pw_1: ConvConfig::new(self.cls_channels, self.cls_channels, 1, 1).init(device),
-            cls_out: Conv2dConfig::new([self.cls_channels, NUM_CLASSES], [1, 1])
+            cls_out: Conv2dConfig::new([self.cls_channels, self.num_classes], [1, 1])
                 .with_bias(true)
                 .init(device),
+            num_classes: self.num_classes,
         }
     }
 }
@@ -166,6 +169,7 @@ pub struct Yolov10HeadConfig {
     p5_channels: usize,
     box_channels: usize,
     cls_channels: usize,
+    num_classes: usize,
 }
 
 impl Yolov10HeadConfig {
@@ -176,14 +180,22 @@ impl Yolov10HeadConfig {
     /// `nc = 80` the box width is 64 except at x scale (ch[0] = 320) where it is 80.
     pub fn new(p3_channels: usize, p4_channels: usize, p5_channels: usize) -> Self {
         let box_channels = (16).max(p3_channels / 4).max(4 * REG_MAX);
-        let cls_channels = p3_channels.max(NUM_CLASSES.min(100));
+        let cls_channels = p3_channels.max(DEFAULT_NUM_CLASSES.min(100));
         Self {
             p3_channels,
             p4_channels,
             p5_channels,
             box_channels,
             cls_channels,
+            num_classes: DEFAULT_NUM_CLASSES,
         }
+    }
+
+    pub fn with_num_classes(mut self, num_classes: usize) -> Self {
+        assert!(num_classes > 0, "class count must be positive");
+        self.num_classes = num_classes;
+        self.cls_channels = self.p3_channels.max(num_classes.min(100));
+        self
     }
 
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov10Head<B> {
@@ -191,6 +203,7 @@ impl Yolov10HeadConfig {
             input_channels,
             box_channels: self.box_channels,
             cls_channels: self.cls_channels,
+            num_classes: self.num_classes,
         };
         Yolov10Head {
             p3: config(self.p3_channels).init(device),
@@ -238,7 +251,7 @@ mod tests {
                 let input = Tensor::zeros([1, 3, 64, 64], &device);
                 let output = head.forward(body.forward(input));
                 assert_eq!(output.boxes.dims(), [1, 84, 4]);
-                assert_eq!(output.scores.dims(), [1, 84, NUM_CLASSES]);
+                assert_eq!(output.scores.dims(), [1, 84, DEFAULT_NUM_CLASSES]);
             })
             .expect("shape-test worker should start");
         worker.join().expect("shape-test worker should not panic");

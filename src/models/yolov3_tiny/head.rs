@@ -6,7 +6,7 @@ use burn::{
 
 use super::body::{Conv, ConvConfig, Yolov3TinyFeatures};
 
-const NUM_CLASSES: usize = 80;
+const DEFAULT_NUM_CLASSES: usize = 80;
 const REG_MAX: usize = 16;
 
 /// Raw predictions before DFL projection and anchor-grid decoding.
@@ -33,6 +33,7 @@ struct DetectionBranch<B: Backend> {
     cls_0: Conv<B>,
     cls_1: Conv<B>,
     cls_2: Conv2d<B>,
+    num_classes: usize,
 }
 
 impl<B: Backend> DetectionBranch<B> {
@@ -45,13 +46,14 @@ impl<B: Backend> DetectionBranch<B> {
         let scores = self
             .cls_2
             .forward(self.cls_1.forward(self.cls_0.forward(input)))
-            .reshape([batch, NUM_CLASSES, height * width]);
+            .reshape([batch, self.num_classes, height * width]);
         (boxes, scores)
     }
 }
 
 struct DetectionBranchConfig {
     input_channels: usize,
+    num_classes: usize,
 }
 
 impl DetectionBranchConfig {
@@ -67,9 +69,10 @@ impl DetectionBranchConfig {
                 .init(device),
             cls_0: ConvConfig::new(self.input_channels, class_channels, 3, 1).init(device),
             cls_1: ConvConfig::new(class_channels, class_channels, 3, 1).init(device),
-            cls_2: Conv2dConfig::new([class_channels, NUM_CLASSES], [1, 1])
+            cls_2: Conv2dConfig::new([class_channels, self.num_classes], [1, 1])
                 .with_bias(true)
                 .init(device),
+            num_classes: self.num_classes,
         }
     }
 }
@@ -134,18 +137,33 @@ impl<B: Backend> DetectHead<B> {
     }
 }
 
-#[derive(Debug, Default)]
-pub struct DetectHeadConfig;
+#[derive(Debug)]
+pub struct DetectHeadConfig {
+    num_classes: usize,
+}
+
+impl Default for DetectHeadConfig {
+    fn default() -> Self {
+        Self::new(DEFAULT_NUM_CLASSES)
+    }
+}
 
 impl DetectHeadConfig {
+    pub fn new(num_classes: usize) -> Self {
+        assert!(num_classes > 0, "class count must be positive");
+        Self { num_classes }
+    }
+
     pub fn init<B: Backend>(&self, device: &Device<B>) -> DetectHead<B> {
         DetectHead {
             p4: DetectionBranchConfig {
                 input_channels: 256,
+                num_classes: self.num_classes,
             }
             .init(device),
             p5: DetectionBranchConfig {
                 input_channels: 512,
+                num_classes: self.num_classes,
             }
             .init(device),
         }
@@ -186,11 +204,11 @@ mod tests {
             .spawn(|| {
                 let device = Default::default();
                 let body = Yolov3TinyBodyConfig.init::<Flex>(&device);
-                let head = DetectHeadConfig.init::<Flex>(&device);
+                let head = DetectHeadConfig::default().init::<Flex>(&device);
                 let input = Tensor::zeros([1, 3, 64, 64], &device);
                 let output = head.forward(body.forward(input));
                 assert_eq!(output.boxes.dims(), [1, 20, 4]);
-                assert_eq!(output.scores.dims(), [1, 20, NUM_CLASSES]);
+                assert_eq!(output.scores.dims(), [1, 20, DEFAULT_NUM_CLASSES]);
             })
             .expect("shape-test worker should start");
         worker.join().expect("shape-test worker should not panic");

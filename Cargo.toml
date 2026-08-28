@@ -6,9 +6,22 @@ description = "Object detection in Rust with Burn"
 license = "AGPL-3.0"
 
 [features]
-default = ["pretrained"]
+default = ["pretrained", "onnx"]
 pretrained = ["burn/network", "dep:burn-store", "dep:dirs", "dep:sha2"]
+# Offline ONNX production is a Rust-to-SafeTensors-to-Python bridge. The feature adds no runtime
+# dependency to ONNX consumers; it only exposes the exporter and its CLI orchestration.
+onnx = ["pretrained"]
 gpu = ["burn/wgpu", "dep:burn-wgpu", "burn-wgpu/vulkan", "burn-wgpu/webgpu", "burn-wgpu/metal"]
+training = [
+    "gpu",
+    "burn/autodiff",
+    "burn/dataset",
+    "burn/train",
+    "dep:rand",
+    "dep:rand_chacha",
+    "dep:serde_yaml",
+    "dep:sha2",
+]
 # Experimental CPU configurations measured in PERF_NOTES.md; neither changes the default path.
 # burn-flex's default features already include simd (macerator/gemm) and rayon; x86-v4 adds the
 # AVX-512 codegen paths of the gemm crate on top.
@@ -26,8 +39,11 @@ dirs = { version = "6", optional = true }
 fast_image_resize = { version = "=6.0.0", features = ["image"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 itertools = { version = "0.14", default-features = false, features = ["use_alloc"] }
+rand = { version = "0.9", optional = true }
+rand_chacha = { version = "0.9", features = ["serde"], optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_yaml = { version = "0.9", optional = true }
 sha2 = { version = "0.10", optional = true }
 
 [[bin]]

@@ -9,7 +9,7 @@ use super::{
         Yolov10BodyN, Yolov10BodyNConfig, Yolov10BodyS, Yolov10BodySConfig, Yolov10BodyX,
         Yolov10BodyXConfig,
     },
-    head::{DecodedPredictions, Yolov10Head, Yolov10HeadConfig},
+    head::{DecodedPredictions, RawPredictions, Yolov10Head, Yolov10HeadConfig},
 };
 
 #[cfg(feature = "pretrained")]
@@ -151,6 +151,10 @@ impl<B: Backend> Yolov10N<B> {
         self.head.forward(self.body.forward(input))
     }
 
+    pub fn forward_train(&self, input: Tensor<B, 4>) -> RawPredictions<B> {
+        self.head.forward_raw(self.body.forward(input))
+    }
+
     /// Import tensor-only state exported from an official Ultralytics YOLOv10n checkpoint.
     #[cfg(feature = "pretrained")]
     pub fn load_pytorch_weights(
@@ -191,9 +195,19 @@ pub struct Yolov10NConfig;
 
 impl Yolov10NConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov10N<B> {
+        self.init_with_classes(80, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolov10N<B> {
         Yolov10N {
             body: Yolov10BodyNConfig.init(device),
-            head: Yolov10HeadConfig::new(64, 128, 256).init(device),
+            head: Yolov10HeadConfig::new(64, 128, 256)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }
@@ -208,6 +222,10 @@ pub struct Yolov10S<B: Backend> {
 impl<B: Backend> Yolov10S<B> {
     pub fn forward(&self, input: Tensor<B, 4>) -> DecodedPredictions<B> {
         self.head.forward(self.body.forward(input))
+    }
+
+    pub fn forward_train(&self, input: Tensor<B, 4>) -> RawPredictions<B> {
+        self.head.forward_raw(self.body.forward(input))
     }
 
     /// Import tensor-only state exported from an official Ultralytics YOLOv10s checkpoint.
@@ -250,9 +268,19 @@ pub struct Yolov10SConfig;
 
 impl Yolov10SConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov10S<B> {
+        self.init_with_classes(80, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolov10S<B> {
         Yolov10S {
             body: Yolov10BodySConfig.init(device),
-            head: Yolov10HeadConfig::new(128, 256, 512).init(device),
+            head: Yolov10HeadConfig::new(128, 256, 512)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }
@@ -268,6 +296,10 @@ pub struct Yolov10M<B: Backend> {
 impl<B: Backend> Yolov10M<B> {
     pub fn forward(&self, input: Tensor<B, 4>) -> DecodedPredictions<B> {
         self.head.forward(self.body.forward(input))
+    }
+
+    pub fn forward_train(&self, input: Tensor<B, 4>) -> RawPredictions<B> {
+        self.head.forward_raw(self.body.forward(input))
     }
 
     /// Import tensor-only state exported from an official Ultralytics YOLOv10m checkpoint.
@@ -310,9 +342,19 @@ pub struct Yolov10MConfig;
 
 impl Yolov10MConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov10M<B> {
+        self.init_with_classes(80, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolov10M<B> {
         Yolov10M {
             body: Yolov10BodyMConfig.init(device),
-            head: Yolov10HeadConfig::new(192, 384, 576).init(device),
+            head: Yolov10HeadConfig::new(192, 384, 576)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }
@@ -327,6 +369,10 @@ pub struct Yolov10B<B: Backend> {
 impl<B: Backend> Yolov10B<B> {
     pub fn forward(&self, input: Tensor<B, 4>) -> DecodedPredictions<B> {
         self.head.forward(self.body.forward(input))
+    }
+
+    pub fn forward_train(&self, input: Tensor<B, 4>) -> RawPredictions<B> {
+        self.head.forward_raw(self.body.forward(input))
     }
 
     /// Import tensor-only state exported from an official Ultralytics YOLOv10b checkpoint.
@@ -369,9 +415,19 @@ pub struct Yolov10BConfig;
 
 impl Yolov10BConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov10B<B> {
+        self.init_with_classes(80, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolov10B<B> {
         Yolov10B {
             body: Yolov10BodyBConfig.init(device),
-            head: Yolov10HeadConfig::new(256, 512, 512).init(device),
+            head: Yolov10HeadConfig::new(256, 512, 512)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }
@@ -386,6 +442,10 @@ pub struct Yolov10L<B: Backend> {
 impl<B: Backend> Yolov10L<B> {
     pub fn forward(&self, input: Tensor<B, 4>) -> DecodedPredictions<B> {
         self.head.forward(self.body.forward(input))
+    }
+
+    pub fn forward_train(&self, input: Tensor<B, 4>) -> RawPredictions<B> {
+        self.head.forward_raw(self.body.forward(input))
     }
 
     /// Import tensor-only state exported from an official Ultralytics YOLOv10l checkpoint.
@@ -428,9 +488,19 @@ pub struct Yolov10LConfig;
 
 impl Yolov10LConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov10L<B> {
+        self.init_with_classes(80, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolov10L<B> {
         Yolov10L {
             body: Yolov10BodyLConfig.init(device),
-            head: Yolov10HeadConfig::new(256, 512, 512).init(device),
+            head: Yolov10HeadConfig::new(256, 512, 512)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }
@@ -445,6 +515,10 @@ pub struct Yolov10X<B: Backend> {
 impl<B: Backend> Yolov10X<B> {
     pub fn forward(&self, input: Tensor<B, 4>) -> DecodedPredictions<B> {
         self.head.forward(self.body.forward(input))
+    }
+
+    pub fn forward_train(&self, input: Tensor<B, 4>) -> RawPredictions<B> {
+        self.head.forward_raw(self.body.forward(input))
     }
 
     /// Import tensor-only state exported from an official Ultralytics YOLOv10x checkpoint.
@@ -487,9 +561,19 @@ pub struct Yolov10XConfig;
 
 impl Yolov10XConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov10X<B> {
+        self.init_with_classes(80, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolov10X<B> {
         Yolov10X {
             body: Yolov10BodyXConfig.init(device),
-            head: Yolov10HeadConfig::new(320, 640, 640).init(device),
+            head: Yolov10HeadConfig::new(320, 640, 640)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }

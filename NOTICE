@@ -39,3 +39,15 @@ for satisfying the license applicable to that model and their use case.
 The bundled sample image is "Man with Bike and Pet Dog circa 1900" (archive ref DDX1319-2-3),
 by East Riding Archives, obtained through Wikimedia Commons/Flickr Commons:
 https://commons.wikimedia.org/wiki/File:Man_with_Bike_and_Pet_Dog_circa_1900_%28archive_ref_DDX1319-2-3%29_%2826507570321%29.jpg
+
+The native training augmentation modules in src/data/augmentation are modified Rust adaptations
+of the Ultralytics data augmentation pipeline at commit
+461196cf09175b64c9b9bd8babebf081c0540520 (version v8.4.117-2-g461196cf0):
+https://github.com/ultralytics/ultralytics
+Ultralytics is distributed under AGPL-3.0. The adapted implementation is modified for native Rust
+data containers, deterministic worker-independent random streams, and record/replay diagnostics.
+Ultralytics does not endorse boquilens.
+
+The classification RandAugment policy structure and RandomErasing/RandomResizedCrop behavior are
+adapted from torchvision, distributed under the BSD 3-Clause License. The applicable license text
+is included in LICENSE-TORCHVISION. PyTorch and torchvision do not endorse boquilens.

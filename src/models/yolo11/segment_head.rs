@@ -6,7 +6,7 @@ use burn::{
 
 use super::blocks::{Conv, ConvConfig};
 use super::body::Yolo11Features;
-use super::head::{Yolo11Head, Yolo11HeadConfig};
+use super::head::{RawPredictions, Yolo11Head, Yolo11HeadConfig};
 
 /// Number of mask prototypes and per-detection mask coefficients (`nm`).
 pub const NUM_MASKS: usize = 32;
@@ -106,6 +106,13 @@ pub struct SegmentOutput<B: Backend> {
     pub prototypes: Tensor<B, 4>,
 }
 
+/// Raw segmentation tensors used by detection assignment and prototype-mask loss.
+pub struct SegmentTrainOutput<B: Backend> {
+    pub detection: RawPredictions<B>,
+    pub coefficients: Tensor<B, 3>,
+    pub prototypes: Tensor<B, 4>,
+}
+
 /// Ultralytics YOLO11 `Segment` head: the classic DFL detection head plus the Proto module and
 /// one mask-coefficient branch per scale.
 ///
@@ -122,6 +129,29 @@ pub struct Yolo11SegHead<B: Backend> {
 }
 
 impl<B: Backend> Yolo11SegHead<B> {
+    pub fn forward_train(&self, features: Yolo11Features<B>) -> SegmentTrainOutput<B> {
+        let Yolo11Features { p3, p4, p5 } = features;
+        let detection = self.detect.forward_raw(Yolo11Features {
+            p3: p3.clone(),
+            p4: p4.clone(),
+            p5: p5.clone(),
+        });
+        let prototypes = self.proto.forward(p3.clone());
+        let coefficients = Tensor::cat(
+            vec![
+                self.p3_mask.forward(p3),
+                self.p4_mask.forward(p4),
+                self.p5_mask.forward(p5),
+            ],
+            2,
+        );
+        SegmentTrainOutput {
+            detection,
+            coefficients,
+            prototypes,
+        }
+    }
+
     pub fn forward(&self, features: Yolo11Features<B>) -> SegmentOutput<B> {
         let Yolo11Features { p3, p4, p5 } = features;
         let decoded = self.detect.forward(Yolo11Features {
@@ -176,6 +206,11 @@ impl Yolo11SegHeadConfig {
             mask_input_channels: [p3_channels, p4_channels, p5_channels],
             mask_channels: (p3_channels / 4).max(NUM_MASKS),
         }
+    }
+
+    pub fn with_num_classes(mut self, num_classes: usize) -> Self {
+        self.detect = self.detect.with_num_classes(num_classes);
+        self
     }
 
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo11SegHead<B> {

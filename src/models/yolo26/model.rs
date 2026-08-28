@@ -8,7 +8,7 @@ use super::{
         Yolo26BodyLConfig, Yolo26BodyLarge, Yolo26BodyMConfig, Yolo26BodyNConfig,
         Yolo26BodySConfig, Yolo26BodySmall, Yolo26BodyXConfig,
     },
-    head::{DecodedPredictions, Yolo26Head, Yolo26HeadConfig},
+    head::{DecodedPredictions, RawPredictions, Yolo26Head, Yolo26HeadConfig},
 };
 
 #[cfg(feature = "pretrained")]
@@ -150,6 +150,10 @@ impl<B: Backend> Yolo26N<B> {
         self.head.forward(self.body.forward(input))
     }
 
+    pub fn forward_train(&self, input: Tensor<B, 4>) -> RawPredictions<B> {
+        self.head.forward_raw(self.body.forward(input))
+    }
+
     /// Import tensor-only state exported from an official Ultralytics YOLO26n checkpoint.
     #[cfg(feature = "pretrained")]
     pub fn load_pytorch_weights(
@@ -190,9 +194,19 @@ pub struct Yolo26NConfig;
 
 impl Yolo26NConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo26N<B> {
+        self.init_with_classes(80, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolo26N<B> {
         Yolo26N {
             body: Yolo26BodyNConfig.init(device),
-            head: Yolo26HeadConfig::new(64, 128, 256).init(device),
+            head: Yolo26HeadConfig::new(64, 128, 256)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }
@@ -207,6 +221,10 @@ pub struct Yolo26S<B: Backend> {
 impl<B: Backend> Yolo26S<B> {
     pub fn forward(&self, input: Tensor<B, 4>) -> DecodedPredictions<B> {
         self.head.forward(self.body.forward(input))
+    }
+
+    pub fn forward_train(&self, input: Tensor<B, 4>) -> RawPredictions<B> {
+        self.head.forward_raw(self.body.forward(input))
     }
 
     /// Import tensor-only state exported from an official Ultralytics YOLO26s checkpoint.
@@ -249,9 +267,19 @@ pub struct Yolo26SConfig;
 
 impl Yolo26SConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo26S<B> {
+        self.init_with_classes(80, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolo26S<B> {
         Yolo26S {
             body: Yolo26BodySConfig.init(device),
-            head: Yolo26HeadConfig::new(128, 256, 512).init(device),
+            head: Yolo26HeadConfig::new(128, 256, 512)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }
@@ -267,6 +295,10 @@ pub struct Yolo26M<B: Backend> {
 impl<B: Backend> Yolo26M<B> {
     pub fn forward(&self, input: Tensor<B, 4>) -> DecodedPredictions<B> {
         self.head.forward(self.body.forward(input))
+    }
+
+    pub fn forward_train(&self, input: Tensor<B, 4>) -> RawPredictions<B> {
+        self.head.forward_raw(self.body.forward(input))
     }
 
     /// Import tensor-only state exported from an official Ultralytics YOLO26m checkpoint.
@@ -309,9 +341,19 @@ pub struct Yolo26MConfig;
 
 impl Yolo26MConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo26M<B> {
+        self.init_with_classes(80, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolo26M<B> {
         Yolo26M {
             body: Yolo26BodyMConfig.init(device),
-            head: Yolo26HeadConfig::new(256, 512, 512).init(device),
+            head: Yolo26HeadConfig::new(256, 512, 512)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }
@@ -326,6 +368,10 @@ pub struct Yolo26L<B: Backend> {
 impl<B: Backend> Yolo26L<B> {
     pub fn forward(&self, input: Tensor<B, 4>) -> DecodedPredictions<B> {
         self.head.forward(self.body.forward(input))
+    }
+
+    pub fn forward_train(&self, input: Tensor<B, 4>) -> RawPredictions<B> {
+        self.head.forward_raw(self.body.forward(input))
     }
 
     /// Import tensor-only state exported from an official Ultralytics YOLO26l checkpoint.
@@ -368,9 +414,19 @@ pub struct Yolo26LConfig;
 
 impl Yolo26LConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo26L<B> {
+        self.init_with_classes(80, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolo26L<B> {
         Yolo26L {
             body: Yolo26BodyLConfig.init(device),
-            head: Yolo26HeadConfig::new(256, 512, 512).init(device),
+            head: Yolo26HeadConfig::new(256, 512, 512)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }
@@ -385,6 +441,10 @@ pub struct Yolo26X<B: Backend> {
 impl<B: Backend> Yolo26X<B> {
     pub fn forward(&self, input: Tensor<B, 4>) -> DecodedPredictions<B> {
         self.head.forward(self.body.forward(input))
+    }
+
+    pub fn forward_train(&self, input: Tensor<B, 4>) -> RawPredictions<B> {
+        self.head.forward_raw(self.body.forward(input))
     }
 
     /// Import tensor-only state exported from an official Ultralytics YOLO26x checkpoint.
@@ -427,9 +487,19 @@ pub struct Yolo26XConfig;
 
 impl Yolo26XConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo26X<B> {
+        self.init_with_classes(80, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolo26X<B> {
         Yolo26X {
             body: Yolo26BodyXConfig.init(device),
-            head: Yolo26HeadConfig::new(384, 768, 768).init(device),
+            head: Yolo26HeadConfig::new(384, 768, 768)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }

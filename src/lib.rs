@@ -13,6 +13,10 @@ extern crate alloc;
 
 mod data;
 pub mod models;
+#[cfg(feature = "training")]
+pub mod training;
+#[cfg(feature = "onnx")]
+pub mod export;
 
 #[cfg(feature = "pretrained")]
 use std::path::PathBuf;
@@ -57,7 +61,7 @@ use burn::tensor::{Device, ElementConversion, Tensor, TensorData, backend::Backe
 #[cfg(feature = "pretrained")]
 use burn_flex::Flex;
 use image::{DynamicImage, ImageBuffer, Rgb};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 #[cfg(feature = "pretrained")]
 use sha2::{Digest, Sha256};
 
@@ -73,7 +77,7 @@ pub const CLASSIFY_INPUT_SIZE: usize = 224;
 pub const CLASSIFICATION_TOP_K: usize = 5;
 
 /// Stable identifier for a model architecture/scale in the boquilens catalog.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ModelId {
     #[default]
@@ -143,6 +147,73 @@ pub enum ModelId {
 }
 
 impl ModelId {
+    /// Exhaustive catalog used by registries whose coverage must track every public model.
+    pub const ALL: [Self; 63] = [
+        Self::YoloxNano,
+        Self::YoloxTiny,
+        Self::YoloxS,
+        Self::YoloxM,
+        Self::YoloxL,
+        Self::YoloxX,
+        Self::Yolov3TinyU,
+        Self::Yolov10N,
+        Self::Yolov10S,
+        Self::Yolov10M,
+        Self::Yolov10B,
+        Self::Yolov10L,
+        Self::Yolov10X,
+        Self::Yolo11N,
+        Self::Yolo11S,
+        Self::Yolo11M,
+        Self::Yolo11L,
+        Self::Yolo11X,
+        Self::Yolo11NSeg,
+        Self::Yolo11SSeg,
+        Self::Yolo11MSeg,
+        Self::Yolo11LSeg,
+        Self::Yolo11XSeg,
+        Self::Yolo11NCls,
+        Self::Yolo11SCls,
+        Self::Yolo11MCls,
+        Self::Yolo11LCls,
+        Self::Yolo11XCls,
+        Self::Yolov8N,
+        Self::Yolov8S,
+        Self::Yolov8M,
+        Self::Yolov8L,
+        Self::Yolov8X,
+        Self::Yolov8NSeg,
+        Self::Yolov8SSeg,
+        Self::Yolov8MSeg,
+        Self::Yolov8LSeg,
+        Self::Yolov8XSeg,
+        Self::Yolov8NCls,
+        Self::Yolov8SCls,
+        Self::Yolov8MCls,
+        Self::Yolov8LCls,
+        Self::Yolov8XCls,
+        Self::Yolo12N,
+        Self::Yolo12S,
+        Self::Yolo12M,
+        Self::Yolo12L,
+        Self::Yolo12X,
+        Self::Yolo26N,
+        Self::Yolo26S,
+        Self::Yolo26M,
+        Self::Yolo26L,
+        Self::Yolo26X,
+        Self::Yolo26NSeg,
+        Self::Yolo26SSeg,
+        Self::Yolo26MSeg,
+        Self::Yolo26LSeg,
+        Self::Yolo26XSeg,
+        Self::Yolo26NCls,
+        Self::Yolo26SCls,
+        Self::Yolo26MCls,
+        Self::Yolo26LCls,
+        Self::Yolo26XCls,
+    ];
+
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::YoloxNano => "yolox-nano",

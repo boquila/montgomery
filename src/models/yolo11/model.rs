@@ -8,8 +8,8 @@ use super::{
         Yolo11BodyLConfig, Yolo11BodyLarge, Yolo11BodyMConfig, Yolo11BodyNConfig,
         Yolo11BodySConfig, Yolo11BodySmall, Yolo11BodyXConfig,
     },
-    head::{DecodedPredictions, Yolo11Head, Yolo11HeadConfig},
-    segment_head::{SegmentOutput, Yolo11SegHead, Yolo11SegHeadConfig},
+    head::{DecodedPredictions, RawPredictions, Yolo11Head, Yolo11HeadConfig},
+    segment_head::{SegmentOutput, SegmentTrainOutput, Yolo11SegHead, Yolo11SegHeadConfig},
 };
 
 #[cfg(feature = "pretrained")]
@@ -79,6 +79,10 @@ impl<B: Backend> Yolo11N<B> {
         self.head.forward(self.body.forward(input))
     }
 
+    pub fn forward_train(&self, input: Tensor<B, 4>) -> RawPredictions<B> {
+        self.head.forward_raw(self.body.forward(input))
+    }
+
     /// Import tensor-only state exported from an official Ultralytics YOLO11n checkpoint.
     #[cfg(feature = "pretrained")]
     pub fn load_pytorch_weights(
@@ -119,9 +123,19 @@ pub struct Yolo11NConfig;
 
 impl Yolo11NConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo11N<B> {
+        self.init_with_classes(80, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolo11N<B> {
         Yolo11N {
             body: Yolo11BodyNConfig.init(device),
-            head: Yolo11HeadConfig::new(64, 128, 256).init(device),
+            head: Yolo11HeadConfig::new(64, 128, 256)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }
@@ -136,6 +150,10 @@ pub struct Yolo11S<B: Backend> {
 impl<B: Backend> Yolo11S<B> {
     pub fn forward(&self, input: Tensor<B, 4>) -> DecodedPredictions<B> {
         self.head.forward(self.body.forward(input))
+    }
+
+    pub fn forward_train(&self, input: Tensor<B, 4>) -> RawPredictions<B> {
+        self.head.forward_raw(self.body.forward(input))
     }
 
     /// Import tensor-only state exported from an official Ultralytics YOLO11s checkpoint.
@@ -178,9 +196,19 @@ pub struct Yolo11SConfig;
 
 impl Yolo11SConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo11S<B> {
+        self.init_with_classes(80, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolo11S<B> {
         Yolo11S {
             body: Yolo11BodySConfig.init(device),
-            head: Yolo11HeadConfig::new(128, 256, 512).init(device),
+            head: Yolo11HeadConfig::new(128, 256, 512)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }
@@ -196,6 +224,10 @@ pub struct Yolo11M<B: Backend> {
 impl<B: Backend> Yolo11M<B> {
     pub fn forward(&self, input: Tensor<B, 4>) -> DecodedPredictions<B> {
         self.head.forward(self.body.forward(input))
+    }
+
+    pub fn forward_train(&self, input: Tensor<B, 4>) -> RawPredictions<B> {
+        self.head.forward_raw(self.body.forward(input))
     }
 
     /// Import tensor-only state exported from an official Ultralytics YOLO11m checkpoint.
@@ -238,9 +270,19 @@ pub struct Yolo11MConfig;
 
 impl Yolo11MConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo11M<B> {
+        self.init_with_classes(80, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolo11M<B> {
         Yolo11M {
             body: Yolo11BodyMConfig.init(device),
-            head: Yolo11HeadConfig::new(256, 512, 512).init(device),
+            head: Yolo11HeadConfig::new(256, 512, 512)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }
@@ -255,6 +297,10 @@ pub struct Yolo11L<B: Backend> {
 impl<B: Backend> Yolo11L<B> {
     pub fn forward(&self, input: Tensor<B, 4>) -> DecodedPredictions<B> {
         self.head.forward(self.body.forward(input))
+    }
+
+    pub fn forward_train(&self, input: Tensor<B, 4>) -> RawPredictions<B> {
+        self.head.forward_raw(self.body.forward(input))
     }
 
     /// Import tensor-only state exported from an official Ultralytics YOLO11l checkpoint.
@@ -297,9 +343,19 @@ pub struct Yolo11LConfig;
 
 impl Yolo11LConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo11L<B> {
+        self.init_with_classes(80, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolo11L<B> {
         Yolo11L {
             body: Yolo11BodyLConfig.init(device),
-            head: Yolo11HeadConfig::new(256, 512, 512).init(device),
+            head: Yolo11HeadConfig::new(256, 512, 512)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }
@@ -314,6 +370,10 @@ pub struct Yolo11X<B: Backend> {
 impl<B: Backend> Yolo11X<B> {
     pub fn forward(&self, input: Tensor<B, 4>) -> DecodedPredictions<B> {
         self.head.forward(self.body.forward(input))
+    }
+
+    pub fn forward_train(&self, input: Tensor<B, 4>) -> RawPredictions<B> {
+        self.head.forward_raw(self.body.forward(input))
     }
 
     /// Import tensor-only state exported from an official Ultralytics YOLO11x checkpoint.
@@ -356,9 +416,19 @@ pub struct Yolo11XConfig;
 
 impl Yolo11XConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo11X<B> {
+        self.init_with_classes(80, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolo11X<B> {
         Yolo11X {
             body: Yolo11BodyXConfig.init(device),
-            head: Yolo11HeadConfig::new(384, 768, 768).init(device),
+            head: Yolo11HeadConfig::new(384, 768, 768)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }
@@ -496,6 +566,10 @@ impl<B: Backend> Yolo11SegN<B> {
         self.head.forward(self.body.forward(input))
     }
 
+    pub fn forward_train(&self, input: Tensor<B, 4>) -> SegmentTrainOutput<B> {
+        self.head.forward_train(self.body.forward(input))
+    }
+
     /// Import tensor-only state exported from an official Ultralytics YOLO11n-seg checkpoint.
     #[cfg(feature = "pretrained")]
     pub fn load_pytorch_weights(
@@ -536,9 +610,19 @@ pub struct Yolo11SegNConfig;
 
 impl Yolo11SegNConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo11SegN<B> {
+        self.init_with_classes(80, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolo11SegN<B> {
         Yolo11SegN {
             body: Yolo11BodyNConfig.init(device),
-            head: Yolo11SegHeadConfig::new(64, 128, 256, 64).init(device),
+            head: Yolo11SegHeadConfig::new(64, 128, 256, 64)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }
@@ -553,6 +637,10 @@ pub struct Yolo11SegS<B: Backend> {
 impl<B: Backend> Yolo11SegS<B> {
     pub fn forward(&self, input: Tensor<B, 4>) -> SegmentOutput<B> {
         self.head.forward(self.body.forward(input))
+    }
+
+    pub fn forward_train(&self, input: Tensor<B, 4>) -> SegmentTrainOutput<B> {
+        self.head.forward_train(self.body.forward(input))
     }
 
     /// Import tensor-only state exported from an official Ultralytics YOLO11s-seg checkpoint.
@@ -595,9 +683,19 @@ pub struct Yolo11SegSConfig;
 
 impl Yolo11SegSConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo11SegS<B> {
+        self.init_with_classes(80, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolo11SegS<B> {
         Yolo11SegS {
             body: Yolo11BodySConfig.init(device),
-            head: Yolo11SegHeadConfig::new(128, 256, 512, 128).init(device),
+            head: Yolo11SegHeadConfig::new(128, 256, 512, 128)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }
@@ -616,6 +714,10 @@ pub struct Yolo11SegM<B: Backend> {
 impl<B: Backend> Yolo11SegM<B> {
     pub fn forward(&self, input: Tensor<B, 4>) -> SegmentOutput<B> {
         self.head.forward(self.body.forward(input))
+    }
+
+    pub fn forward_train(&self, input: Tensor<B, 4>) -> SegmentTrainOutput<B> {
+        self.head.forward_train(self.body.forward(input))
     }
 
     /// Import tensor-only state exported from an official Ultralytics YOLO11m-seg checkpoint.
@@ -658,9 +760,19 @@ pub struct Yolo11SegMConfig;
 
 impl Yolo11SegMConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo11SegM<B> {
+        self.init_with_classes(80, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolo11SegM<B> {
         Yolo11SegM {
             body: Yolo11BodyMConfig.init(device),
-            head: Yolo11SegHeadConfig::new(256, 512, 512, 256).init(device),
+            head: Yolo11SegHeadConfig::new(256, 512, 512, 256)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }
@@ -675,6 +787,10 @@ pub struct Yolo11SegL<B: Backend> {
 impl<B: Backend> Yolo11SegL<B> {
     pub fn forward(&self, input: Tensor<B, 4>) -> SegmentOutput<B> {
         self.head.forward(self.body.forward(input))
+    }
+
+    pub fn forward_train(&self, input: Tensor<B, 4>) -> SegmentTrainOutput<B> {
+        self.head.forward_train(self.body.forward(input))
     }
 
     /// Import tensor-only state exported from an official Ultralytics YOLO11l-seg checkpoint.
@@ -717,9 +833,19 @@ pub struct Yolo11SegLConfig;
 
 impl Yolo11SegLConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo11SegL<B> {
+        self.init_with_classes(80, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolo11SegL<B> {
         Yolo11SegL {
             body: Yolo11BodyLConfig.init(device),
-            head: Yolo11SegHeadConfig::new(256, 512, 512, 256).init(device),
+            head: Yolo11SegHeadConfig::new(256, 512, 512, 256)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }
@@ -734,6 +860,10 @@ pub struct Yolo11SegX<B: Backend> {
 impl<B: Backend> Yolo11SegX<B> {
     pub fn forward(&self, input: Tensor<B, 4>) -> SegmentOutput<B> {
         self.head.forward(self.body.forward(input))
+    }
+
+    pub fn forward_train(&self, input: Tensor<B, 4>) -> SegmentTrainOutput<B> {
+        self.head.forward_train(self.body.forward(input))
     }
 
     /// Import tensor-only state exported from an official Ultralytics YOLO11x-seg checkpoint.
@@ -776,9 +906,19 @@ pub struct Yolo11SegXConfig;
 
 impl Yolo11SegXConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo11SegX<B> {
+        self.init_with_classes(80, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolo11SegX<B> {
         Yolo11SegX {
             body: Yolo11BodyXConfig.init(device),
-            head: Yolo11SegHeadConfig::new(384, 768, 768, 384).init(device),
+            head: Yolo11SegHeadConfig::new(384, 768, 768, 384)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }

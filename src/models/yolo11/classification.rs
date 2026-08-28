@@ -41,6 +41,10 @@ macro_rules! cls_model {
                 self.head.forward(self.body.forward(input))
             }
 
+            pub fn forward_train(&self, input: Tensor<B, 4>) -> Tensor<B, 2> {
+                self.head.forward_train(self.body.forward(input))
+            }
+
             /// Import tensor-only state exported from an official Ultralytics checkpoint.
             #[cfg(feature = "pretrained")]
             pub fn load_pytorch_weights(
@@ -139,45 +143,95 @@ pub struct Yolo11ClsXConfig;
 
 impl Yolo11ClsNConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo11ClsN<B> {
+        self.init_with_classes(crate::models::yolo26::classification::NUM_CLASSES, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolo11ClsN<B> {
         Yolo11ClsN {
             body: Yolo26ClassifyBodyNConfig.init(device),
-            head: ClassifyHeadConfig::new(256).init(device),
+            head: ClassifyHeadConfig::new(256)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }
 
 impl Yolo11ClsSConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo11ClsS<B> {
+        self.init_with_classes(crate::models::yolo26::classification::NUM_CLASSES, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolo11ClsS<B> {
         Yolo11ClsS {
             body: Yolo26ClassifyBodySConfig.init(device),
-            head: ClassifyHeadConfig::new(512).init(device),
+            head: ClassifyHeadConfig::new(512)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }
 
 impl Yolo11ClsMConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo11ClsM<B> {
+        self.init_with_classes(crate::models::yolo26::classification::NUM_CLASSES, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolo11ClsM<B> {
         Yolo11ClsM {
             body: Yolo26ClassifyBodyMConfig.init(device),
-            head: ClassifyHeadConfig::new(512).init(device),
+            head: ClassifyHeadConfig::new(512)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }
 
 impl Yolo11ClsLConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo11ClsL<B> {
+        self.init_with_classes(crate::models::yolo26::classification::NUM_CLASSES, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolo11ClsL<B> {
         Yolo11ClsL {
             body: Yolo26ClassifyBodyLConfig.init(device),
-            head: ClassifyHeadConfig::new(512).init(device),
+            head: ClassifyHeadConfig::new(512)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }
 
 impl Yolo11ClsXConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo11ClsX<B> {
+        self.init_with_classes(crate::models::yolo26::classification::NUM_CLASSES, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolo11ClsX<B> {
         Yolo11ClsX {
             body: Yolo26ClassifyBodyXConfig.init(device),
-            head: ClassifyHeadConfig::new(768).init(device),
+            head: ClassifyHeadConfig::new(768)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }

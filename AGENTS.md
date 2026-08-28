@@ -57,6 +57,10 @@ end.
   module is shared from `src/models/yolo11/head.rs`), NMS-based postprocessing, native Burnpack
   loading, and version metadata.
 - `src/data/letterbox.rs`: model-specific preprocessing and reversible source-image geometry.
+- `src/data/augmentation/`: feature-gated native training augmentation pinned to Ultralytics
+  `v8.4.117-2-g461196cf0`, including deterministic traceable detect/segment/classify pipelines,
+  mixed-image transforms, mask formatting, and classification policies. Compatibility details and
+  known tolerance classes live in `AUGMENTATION_COMPATIBILITY.md`.
 - `src/lib.rs`: `ModelId`, `Predictor`, detection results, NMS integration, and weight packing API.
 - `src/main.rs`: the `predict` and `pack-weights` CLI commands.
 - `tools/`: development-only Ultralytics checkpoint conversion, golden-fixture generators, and the
@@ -268,6 +272,10 @@ belong under `target/` and must not be committed.
   (layers 2/4) at 0.25 expansion, and the l/x scales extend the backbone `A2C2f` stages with
   `(residual=True, mlp_ratio=1.2)`.
 - Keep model graph code independent of CLI, filesystem, rendering, and image decoding.
+- Training detection/segmentation augmentation stays HWC BGR `u8` until Format; default Format
+  emits CHW RGB `u8`, while classification converts to RGB before torchvision-compatible policy
+  transforms and emits normalized CHW `f32` after RandomErasing. Native seed output is a stable
+  boquilens contract; cross-language parity uses injected parameters/traces, not equal seed values.
 - Keep `ModelId` and CLI model names synchronized when adding a model.
 - Preserve the explicit stable/experimental distinction in user-facing docs.
 

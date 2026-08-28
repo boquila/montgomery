@@ -64,22 +64,39 @@ impl<B: Backend> ClassifyHead<B> {
         let probs = burn::tensor::activation::softmax(logits.clone(), 1);
         ClassificationOutput { logits, probs }
     }
+
+    pub fn forward_train(&self, input: Tensor<B, 4>) -> Tensor<B, 2> {
+        let [batch, _, _, _] = input.dims();
+        let pooled = burn::tensor::module::adaptive_avg_pool2d(self.conv.forward(input), [1, 1])
+            .reshape([batch, HEAD_HIDDEN]);
+        self.linear.forward(pooled)
+    }
 }
 
 #[derive(Debug)]
 pub struct ClassifyHeadConfig {
     input_channels: usize,
+    num_classes: usize,
 }
 
 impl ClassifyHeadConfig {
     pub fn new(input_channels: usize) -> Self {
-        Self { input_channels }
+        Self {
+            input_channels,
+            num_classes: NUM_CLASSES,
+        }
+    }
+
+    pub fn with_num_classes(mut self, num_classes: usize) -> Self {
+        assert!(num_classes > 0, "class count must be positive");
+        self.num_classes = num_classes;
+        self
     }
 
     pub fn init<B: Backend>(&self, device: &Device<B>) -> ClassifyHead<B> {
         ClassifyHead {
             conv: conv_cfg(self.input_channels, HEAD_HIDDEN, 1, 1).init(device),
-            linear: nn::LinearConfig::new(HEAD_HIDDEN, NUM_CLASSES).init(device),
+            linear: nn::LinearConfig::new(HEAD_HIDDEN, self.num_classes).init(device),
         }
     }
 }
@@ -158,6 +175,10 @@ impl<B: Backend> Yolo26ClsN<B> {
         self.head.forward(self.body.forward(input))
     }
 
+    pub fn forward_train(&self, input: Tensor<B, 4>) -> Tensor<B, 2> {
+        self.head.forward_train(self.body.forward(input))
+    }
+
     /// Import tensor-only state exported from an official Ultralytics YOLO26n-cls checkpoint.
     #[cfg(feature = "pretrained")]
     pub fn load_pytorch_weights(
@@ -204,9 +225,19 @@ pub struct Yolo26ClsNConfig;
 
 impl Yolo26ClsNConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo26ClsN<B> {
+        self.init_with_classes(NUM_CLASSES, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolo26ClsN<B> {
         Yolo26ClsN {
             body: Yolo26ClassifyBodyNConfig.init(device),
-            head: ClassifyHeadConfig::new(256).init(device),
+            head: ClassifyHeadConfig::new(256)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }
@@ -221,6 +252,10 @@ pub struct Yolo26ClsS<B: Backend> {
 impl<B: Backend> Yolo26ClsS<B> {
     pub fn forward(&self, input: Tensor<B, 4>) -> ClassificationOutput<B> {
         self.head.forward(self.body.forward(input))
+    }
+
+    pub fn forward_train(&self, input: Tensor<B, 4>) -> Tensor<B, 2> {
+        self.head.forward_train(self.body.forward(input))
     }
 
     /// Import tensor-only state exported from an official Ultralytics YOLO26s-cls checkpoint.
@@ -269,9 +304,19 @@ pub struct Yolo26ClsSConfig;
 
 impl Yolo26ClsSConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo26ClsS<B> {
+        self.init_with_classes(NUM_CLASSES, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolo26ClsS<B> {
         Yolo26ClsS {
             body: Yolo26ClassifyBodySConfig.init(device),
-            head: ClassifyHeadConfig::new(512).init(device),
+            head: ClassifyHeadConfig::new(512)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }
@@ -286,6 +331,10 @@ pub struct Yolo26ClsM<B: Backend> {
 impl<B: Backend> Yolo26ClsM<B> {
     pub fn forward(&self, input: Tensor<B, 4>) -> ClassificationOutput<B> {
         self.head.forward(self.body.forward(input))
+    }
+
+    pub fn forward_train(&self, input: Tensor<B, 4>) -> Tensor<B, 2> {
+        self.head.forward_train(self.body.forward(input))
     }
 
     /// Import tensor-only state exported from an official Ultralytics YOLO26m-cls checkpoint.
@@ -334,9 +383,19 @@ pub struct Yolo26ClsMConfig;
 
 impl Yolo26ClsMConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo26ClsM<B> {
+        self.init_with_classes(NUM_CLASSES, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolo26ClsM<B> {
         Yolo26ClsM {
             body: Yolo26ClassifyBodyMConfig.init(device),
-            head: ClassifyHeadConfig::new(512).init(device),
+            head: ClassifyHeadConfig::new(512)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }
@@ -351,6 +410,10 @@ pub struct Yolo26ClsL<B: Backend> {
 impl<B: Backend> Yolo26ClsL<B> {
     pub fn forward(&self, input: Tensor<B, 4>) -> ClassificationOutput<B> {
         self.head.forward(self.body.forward(input))
+    }
+
+    pub fn forward_train(&self, input: Tensor<B, 4>) -> Tensor<B, 2> {
+        self.head.forward_train(self.body.forward(input))
     }
 
     /// Import tensor-only state exported from an official Ultralytics YOLO26l-cls checkpoint.
@@ -399,9 +462,19 @@ pub struct Yolo26ClsLConfig;
 
 impl Yolo26ClsLConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo26ClsL<B> {
+        self.init_with_classes(NUM_CLASSES, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolo26ClsL<B> {
         Yolo26ClsL {
             body: Yolo26ClassifyBodyLConfig.init(device),
-            head: ClassifyHeadConfig::new(512).init(device),
+            head: ClassifyHeadConfig::new(512)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }
@@ -416,6 +489,10 @@ pub struct Yolo26ClsX<B: Backend> {
 impl<B: Backend> Yolo26ClsX<B> {
     pub fn forward(&self, input: Tensor<B, 4>) -> ClassificationOutput<B> {
         self.head.forward(self.body.forward(input))
+    }
+
+    pub fn forward_train(&self, input: Tensor<B, 4>) -> Tensor<B, 2> {
+        self.head.forward_train(self.body.forward(input))
     }
 
     /// Import tensor-only state exported from an official Ultralytics YOLO26x-cls checkpoint.
@@ -464,9 +541,19 @@ pub struct Yolo26ClsXConfig;
 
 impl Yolo26ClsXConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo26ClsX<B> {
+        self.init_with_classes(NUM_CLASSES, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolo26ClsX<B> {
         Yolo26ClsX {
             body: Yolo26ClassifyBodyXConfig.init(device),
-            head: ClassifyHeadConfig::new(768).init(device),
+            head: ClassifyHeadConfig::new(768)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }

@@ -35,6 +35,12 @@ YOLOX ships Apache-2.0 weights downloaded from the official release.
 Ultralytics-family weights are AGPL-3.0, and the native artifacts derived from them inherit that
 license (see [NOTICE](NOTICE)). Every detect model runs at 640 px input; note that YOLOX-Tiny's
 official evaluation resolution is 416 px, so its published mAP (32.8) does not transfer one-to-one.
+
+The non-default `training` Cargo feature exposes experimental native training building blocks,
+including deterministic detect/segment/classify augmentation; it does not add a public training
+CLI yet. See [AUGMENTATION_COMPATIBILITY.md](AUGMENTATION_COMPATIBILITY.md) for the pinned oracle,
+supported policies, and parity methodology.
+
 YOLO11, YOLOv8, and YOLO12 are the modern detect families whose predictions pass through classic
 class-aware non-maximum suppression (the others are NMS-free end-to-end); YOLOv8's head keeps the
 legacy full-3x3-conv classification towers while YOLO11/YOLO12 use the light DWConv flavor, and

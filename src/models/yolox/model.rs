@@ -4,7 +4,7 @@ use burn::{
 };
 
 use super::{
-    head::{Head, HeadConfig},
+    head::{Head, HeadConfig, RawPredictions},
     pafpn::{Pafpn, PafpnConfig},
 };
 
@@ -26,6 +26,12 @@ impl<B: Backend> Yolox<B> {
     pub fn forward(&self, x: Tensor<B, 4>) -> Tensor<B, 3> {
         let features = self.backbone.forward(x);
         self.head.forward(features)
+    }
+
+    /// Raw logits and differentiably decoded boxes for native training.
+    pub fn forward_train(&self, x: Tensor<B, 4>) -> RawPredictions<B> {
+        let features = self.backbone.forward(x);
+        self.head.forward_train(features)
     }
 
     /// YOLOX-Nano from [`YOLOX: Exceeding YOLO Series in 2021`](https://arxiv.org/abs/2107.08430).

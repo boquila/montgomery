@@ -5,7 +5,7 @@ use burn::{
 
 use super::{
     body::{Yolov3TinyBody, Yolov3TinyBodyConfig},
-    head::{DecodedPredictions, DetectHead, DetectHeadConfig},
+    head::{DecodedPredictions, DetectHead, DetectHeadConfig, RawPredictions},
 };
 
 #[cfg(feature = "pretrained")]
@@ -28,6 +28,10 @@ pub struct Yolov3Tiny<B: Backend> {
 impl<B: Backend> Yolov3Tiny<B> {
     pub fn forward(&self, input: Tensor<B, 4>) -> DecodedPredictions<B> {
         self.head.forward(self.body.forward(input))
+    }
+
+    pub fn forward_train(&self, input: Tensor<B, 4>) -> RawPredictions<B> {
+        self.head.forward_raw(self.body.forward(input))
     }
 
     /// Import tensor-only state exported from an official Ultralytics YOLOv3-Tiny-U checkpoint.
@@ -83,9 +87,18 @@ pub struct Yolov3TinyConfig;
 
 impl Yolov3TinyConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov3Tiny<B> {
+        self.init_with_classes(80, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolov3Tiny<B> {
+        assert!(num_classes > 0, "class count must be positive");
         Yolov3Tiny {
             body: Yolov3TinyBodyConfig.init(device),
-            head: DetectHeadConfig.init(device),
+            head: DetectHeadConfig::new(num_classes).init(device),
         }
     }
 }
