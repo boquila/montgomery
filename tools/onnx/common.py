@@ -14,6 +14,7 @@ import onnx
 import onnxruntime as ort
 import torch
 from onnx import TensorProto, shape_inference
+from safetensors.numpy import load_file as load_safetensors
 
 from compare import compare_output
 
@@ -135,7 +136,9 @@ def validate_model(path: Path, manifest: dict, output_names: list[str]) -> tuple
 
 def _cases(shape: list[int]) -> Iterable[tuple[str, np.ndarray]]:
     yield "zeros", np.zeros(shape, dtype=np.float32)
-    yield "random-seed-1729", np.random.default_rng(1729).random(shape, dtype=np.float32)
+    indices = np.arange(np.prod(shape), dtype=np.uint64)
+    hashed = (indices * np.uint64(1_103_515_245) + np.uint64(12_345)) & np.uint64(0x00FF_FFFF)
+    yield "random-index-hash", (hashed.astype(np.float32) / np.float32(16_777_215.0)).reshape(shape)
     _, _, height, width = shape
     yy, xx = np.meshgrid(
         np.linspace(0.0, 1.0, height, dtype=np.float32),
@@ -154,15 +157,36 @@ def validate_runtime(
 ) -> list[dict[str, object]]:
     session = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
     reports: list[dict[str, object]] = []
+    burn_references = {item["case"]: item for item in manifest.get("burn_references", [])}
     for case_name, input_array in _cases(manifest["input"]["shape"]):
         with torch.no_grad():
             expected = _outputs(wrapper(torch.from_numpy(input_array)))
         actual = session.run(output_names, {"images": input_array})
         if len(expected) != len(actual):
             raise RuntimeError(f"{case_name}: output count mismatch")
+        burn = None
+        if burn_references:
+            reference = burn_references.get(case_name)
+            if reference is None:
+                raise RuntimeError(f"missing Burn reference for validation case {case_name}")
+            reference_path = path.parent / reference["file"]
+            if file_sha256(reference_path) != reference["sha256"]:
+                raise RuntimeError(f"Burn reference hash mismatch for {case_name}")
+            burn = load_safetensors(str(reference_path))
+            if sorted(burn) != sorted(output_names):
+                raise RuntimeError(
+                    f"{case_name}: Burn reference outputs {sorted(burn)} do not match {output_names}"
+                )
         for name, torch_value, ort_value in zip(output_names, expected, actual):
-            report = compare_output(name, torch_value.detach().cpu().numpy(), ort_value)
+            torch_array = torch_value.detach().cpu().numpy()
+            if burn is not None:
+                burn_report = compare_output(name, burn[name], torch_array)
+                burn_report["case"] = case_name
+                burn_report["comparison"] = "burn-vs-pytorch"
+                reports.append(burn_report)
+            report = compare_output(name, torch_array, ort_value)
             report["case"] = case_name
+            report["comparison"] = "pytorch-vs-onnxruntime"
             reports.append(report)
     return reports
 

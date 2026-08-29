@@ -26,7 +26,7 @@ use crate::{COCO_CLASSES, ModelId, PredictOptions, Predictor, Result, data::IMAG
 pub use manifest::PublishedArtifact as OnnxArtifact;
 pub use spec::{ExternalDataPolicy, OnnxPrecision, OnnxProfile};
 
-use manifest::{BridgeManifest, GraphSourceManifest, InputContract};
+use manifest::{BridgeManifest, BurnReferenceManifest, GraphSourceManifest, InputContract};
 use spec::{EXPORT_SPEC_VERSION, ExportFamily, ExportSpec, ExportTask};
 
 const ULTRALYTICS_REVISION: &str = "461196cf09175b64c9b9bd8babebf081c0540520";
@@ -187,18 +187,42 @@ fn export_staged(
     let snapshot_path = intermediate.join("weights.safetensors");
     let checkpoint = weights.to_owned();
     let snapshot_for_worker = snapshot_path.clone();
-    let tensor_audit = std::thread::Builder::new()
+    let input_shape = options.input_shape;
+    let write_burn_references = options.verify && options.profile == OnnxProfile::Portable;
+    let (tensor_audit, burn_reference_files) = std::thread::Builder::new()
         .name("boquilens-onnx-snapshot".into())
         .stack_size(64 * 1024 * 1024)
         .spawn(move || {
             let predictor =
                 Predictor::<Flex>::from_checkpoint(model_id, checkpoint, PredictOptions::default())
                     .map_err(|error| format!("checkpoint loading failed: {error}"))?;
-            snapshot::write_snapshot(&predictor, &snapshot_for_worker, spec)
+            let audit = snapshot::write_snapshot(&predictor, &snapshot_for_worker, spec)?;
+            let references = if write_burn_references {
+                snapshot::write_references(
+                    &predictor,
+                    &snapshot_for_worker.parent().unwrap(),
+                    input_shape,
+                )?
+            } else {
+                Vec::new()
+            };
+            Ok::<_, Box<dyn std::error::Error + Send + Sync>>((audit, references))
         })?
         .join()
         .map_err(|_| "snapshot materialization worker panicked")??;
     let weights_sha256 = sha256_file(&snapshot_path)?;
+    let burn_references = burn_reference_files
+        .into_iter()
+        .map(|(case, file)| {
+            let sha256 = sha256_file(&intermediate.join(&file))?;
+            Ok(BurnReferenceManifest {
+                input_generator: case.clone(),
+                case,
+                file,
+                sha256,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
 
     let output_name = output
         .file_name()
@@ -270,6 +294,7 @@ fn export_staged(
         weights_file: "weights.safetensors".into(),
         weights_sha256,
         tensor_audit,
+        burn_references,
         input: InputContract {
             name: "images".into(),
             dtype: "float32".into(),

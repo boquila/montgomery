@@ -47,6 +47,7 @@ pub struct BridgeManifest {
     pub weights_file: String,
     pub weights_sha256: String,
     pub tensor_audit: TensorAudit,
+    pub burn_references: Vec<BurnReferenceManifest>,
     pub input: InputContract,
     pub profile: OnnxProfile,
     pub precision: OnnxPrecision,
@@ -62,6 +63,14 @@ pub struct BridgeManifest {
     pub boquilens_version: String,
     pub boquilens_git_commit: String,
     pub boquilens_git_dirty: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BurnReferenceManifest {
+    pub case: String,
+    pub input_generator: String,
+    pub file: String,
+    pub sha256: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
