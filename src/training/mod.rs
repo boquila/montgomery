@@ -11,11 +11,15 @@ pub mod config;
 pub mod data;
 pub mod dispatch;
 pub mod ema;
+pub mod engine;
 pub mod geometry;
 pub mod loss;
 pub mod metrics;
 pub mod optimizer;
+pub mod report;
+pub mod runtime;
 pub mod scheduler;
 pub mod state;
 
 pub use config::{ModelSpec, TaskKind, TrainingConfig};
+pub use engine::{TrainableTask, Trainer};

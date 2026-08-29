@@ -6,6 +6,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use burn::{
+    record::{BinBytesRecorder, FullPrecisionSettings, Record, Recorder},
+    tensor::backend::Backend,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -89,6 +93,46 @@ pub fn save_atomic(
     result
 }
 
+/// Atomically replace a named rolling checkpoint while retaining the previous directory until the
+/// new checkpoint has been fully written and hash-validated.
+pub fn replace_atomic(
+    destination: impl AsRef<Path>,
+    manifest: CheckpointManifest,
+    payloads: &[(&str, &[u8])],
+) -> Result<(), CheckpointError> {
+    let destination = destination.as_ref();
+    let parent = destination
+        .parent()
+        .ok_or_else(|| CheckpointError::new("checkpoint needs a parent directory"))?;
+    fs::create_dir_all(parent).map_err(CheckpointError::io)?;
+    let name = destination
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("checkpoint");
+    let incoming = parent.join(format!(".{name}.incoming-{}", std::process::id()));
+    let previous = parent.join(format!(".{name}.previous-{}", std::process::id()));
+    if incoming.exists() || previous.exists() {
+        return Err(CheckpointError::new(
+            "checkpoint rotation temporary path already exists",
+        ));
+    }
+    save_atomic(&incoming, manifest, payloads)?;
+    load(&incoming)?;
+    if destination.exists() {
+        fs::rename(destination, &previous).map_err(CheckpointError::io)?;
+    }
+    if let Err(error) = fs::rename(&incoming, destination) {
+        if previous.exists() {
+            let _ = fs::rename(&previous, destination);
+        }
+        return Err(CheckpointError::io(error));
+    }
+    if previous.exists() {
+        fs::remove_dir_all(previous).map_err(CheckpointError::io)?;
+    }
+    Ok(())
+}
+
 pub fn load(path: impl AsRef<Path>) -> Result<CheckpointManifest, CheckpointError> {
     let path = path.as_ref();
     let bytes = fs::read(path.join("manifest.json")).map_err(CheckpointError::io)?;
@@ -115,6 +159,28 @@ pub fn load(path: impl AsRef<Path>) -> Result<CheckpointManifest, CheckpointErro
         }
     }
     Ok(manifest)
+}
+
+/// Serialize a Burn model or optimizer record in full precision for a resumable checkpoint.
+pub fn encode_record<B: Backend, R: Record<B>>(record: R) -> Result<Vec<u8>, CheckpointError> {
+    Recorder::<B>::record(
+        &BinBytesRecorder::<FullPrecisionSettings>::default(),
+        record,
+        (),
+    )
+    .map_err(|error| CheckpointError::new(error.to_string()))
+}
+
+pub fn decode_record<B: Backend, R: Record<B>>(
+    bytes: Vec<u8>,
+    device: &B::Device,
+) -> Result<R, CheckpointError> {
+    Recorder::<B>::load(
+        &BinBytesRecorder::<FullPrecisionSettings>::default(),
+        bytes,
+        device,
+    )
+    .map_err(|error| CheckpointError::new(error.to_string()))
 }
 
 fn validate_payload_name(name: &str) -> Result<(), CheckpointError> {

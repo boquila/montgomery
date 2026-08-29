@@ -39,9 +39,9 @@ def load_manifest(path: Path) -> tuple[dict, Path]:
     if weights.parent != workdir:
         raise RuntimeError("weights path escapes private export directory")
     actual_hash = sha256(weights)
-    if actual_hash != manifest["weights_sha256"]:
+    if actual_hash != manifest["weights_file_sha256"]:
         raise RuntimeError(
-            f"SafeTensors hash mismatch: manifest {manifest['weights_sha256']}, actual {actual_hash}"
+            f"SafeTensors hash mismatch: manifest {manifest['weights_file_sha256']}, actual {actual_hash}"
         )
     return manifest, workdir
 

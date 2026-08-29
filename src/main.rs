@@ -81,7 +81,7 @@ struct ExportOnnxArgs {
     /// Official YOLOX 0.1.1rc0 checkout (YOLOX only).
     #[arg(long)]
     yolox_repo: Option<PathBuf>,
-    /// Select EMA or raw model state when a future training checkpoint contains both.
+    /// Reserved state preference for future multi-state training checkpoints (EMA only today).
     #[arg(long, value_enum, default_value = "ema")]
     checkpoint_state: CheckpointState,
     #[arg(long)]
@@ -92,7 +92,7 @@ struct ExportOnnxArgs {
     keep_intermediate: bool,
     #[arg(long)]
     reproducible: bool,
-    /// Skip PyTorch/ORT numerical comparison. Structural validation always remains mandatory.
+    /// Skip the exact Burn-vs-PyTorch comparison. ONNX Runtime validation remains mandatory.
     #[arg(long)]
     no_verify: bool,
     /// Print the resulting artifact record as JSON.

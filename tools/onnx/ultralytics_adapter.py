@@ -29,10 +29,17 @@ def _construct(manifest: dict, root: Path) -> torch.nn.Module:
     cfg = manifest["graph_config"]
     classes = int(manifest["num_classes"])
     if task == "classify":
-        return ClassificationModel(cfg=cfg, ch=3, nc=classes, verbose=False)
-    if task == "segment":
-        return SegmentationModel(cfg=cfg, ch=3, nc=classes, verbose=False)
-    return DetectionModel(cfg=cfg, ch=3, nc=classes, verbose=False)
+        model = ClassificationModel(cfg=cfg, ch=3, nc=classes, verbose=False)
+    elif task == "segment":
+        model = SegmentationModel(cfg=cfg, ch=3, nc=classes, verbose=False)
+    else:
+        model = DetectionModel(cfg=cfg, ch=3, nc=classes, verbose=False)
+    # Released v8/v11 checkpoints predate the source refactor that changed SPPF.cv1 to act=False.
+    # The native Burn graph intentionally follows the pickled checkpoint module, so the adapter
+    # must restore that parameter-free SiLU before parity/export.
+    if manifest["family"] in {"yolov8", "yolov10", "yolo11"} and task != "classify":
+        model.model[9].cv1.act = torch.nn.SiLU(inplace=True)
+    return model
 
 
 def _allowed_missing(key: str, manifest: dict) -> bool:
@@ -50,6 +57,15 @@ def _allowed_missing(key: str, manifest: dict) -> bool:
 
 def _load_strict(model: torch.nn.Module, weights: Path, manifest: dict, workdir: Path) -> None:
     state = load_file(str(weights), device="cpu")
+    if manifest["family"] == "yolo12":
+        modules = dict(model.named_modules())
+        for key, value in state.items():
+            if key.endswith(".attn.pe.conv.bias"):
+                module_name = key.removesuffix(".bias")
+                module = modules.get(module_name)
+                if not isinstance(module, torch.nn.Conv2d) or module.bias is not None:
+                    raise RuntimeError(f"cannot restore checkpoint-era YOLO12 attention bias {key}")
+                module.bias = torch.nn.Parameter(torch.zeros_like(value))
     expected = model.state_dict()
     wrong_shape = sorted(
         key

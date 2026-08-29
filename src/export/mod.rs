@@ -200,7 +200,7 @@ fn export_staged(
             let references = if write_burn_references {
                 snapshot::write_references(
                     &predictor,
-                    &snapshot_for_worker.parent().unwrap(),
+                    snapshot_for_worker.parent().unwrap(),
                     input_shape,
                 )?
             } else {
@@ -210,7 +210,8 @@ fn export_staged(
         })?
         .join()
         .map_err(|_| "snapshot materialization worker panicked")??;
-    let weights_sha256 = sha256_file(&snapshot_path)?;
+    let weights_file_sha256 = sha256_file(&snapshot_path)?;
+    let weights_sha256 = tensor_audit.content_sha256.clone();
     let burn_references = burn_reference_files
         .into_iter()
         .map(|(case, file)| {
@@ -286,12 +287,9 @@ fn export_staged(
             .unwrap_or("checkpoint")
             .into(),
         checkpoint_sha256,
-        checkpoint_state: match options.checkpoint_state {
-            CheckpointState::Ema => "ema",
-            CheckpointState::Model => "model",
-        }
-        .into(),
+        checkpoint_state: "exact-loaded-state".into(),
         weights_file: "weights.safetensors".into(),
+        weights_file_sha256,
         weights_sha256,
         tensor_audit,
         burn_references,
@@ -407,6 +405,9 @@ fn validate_options(
     }
     if options.precision != OnnxPrecision::Fp32 {
         return Err("argument validation: fp16 publication is disabled until its GPU parity gate is implemented; export fp32".into());
+    }
+    if options.checkpoint_state != CheckpointState::Ema {
+        return Err("argument validation: raw-model selection is disabled until native multi-state training checkpoints are supported; current inputs are already resolved inference states".into());
     }
     if options.dynamic_batch || options.dynamic_spatial {
         return Err("argument validation: dynamic axes are disabled until their multi-shape parity gates are implemented".into());

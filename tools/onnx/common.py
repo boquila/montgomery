@@ -16,14 +16,19 @@ import torch
 from onnx import TensorProto, shape_inference
 from safetensors.numpy import load_file as load_safetensors
 
-from compare import compare_output
+from compare import (
+    compare_end2end_detections,
+    compare_output,
+    compare_scored_boxes,
+    compare_yolox_predictions,
+)
 
 STANDARD_OPERATORS = {
     "Abs", "Add", "AveragePool", "BatchNormalization", "Cast", "Ceil", "Clip", "Concat",
     "Constant", "ConstantOfShape", "Conv", "ConvTranspose", "Div", "Equal", "Erf", "Exp",
     "Expand", "Flatten", "Floor", "Gather", "GatherElements", "GatherND", "Gemm",
     "GlobalAveragePool", "Greater", "Identity", "Less", "MatMul", "Max", "MaxPool", "Min",
-    "Mul", "Neg", "NonZero", "Pad", "Pow", "Range", "Reciprocal", "ReduceMax", "ReduceMean",
+    "Mod", "Mul", "Neg", "NonZero", "Pad", "Pow", "Range", "Reciprocal", "ReduceMax", "ReduceMean",
     "ReduceSum", "Relu", "Reshape", "Resize", "ScatterND", "Shape", "Sigmoid", "Slice",
     "Softmax", "Split", "Sqrt", "Squeeze", "Sub", "Tile", "TopK", "Transpose", "Unsqueeze",
     "Where",
@@ -145,7 +150,8 @@ def _cases(shape: list[int]) -> Iterable[tuple[str, np.ndarray]]:
         np.linspace(0.0, 1.0, width, dtype=np.float32),
         indexing="ij",
     )
-    structured = np.stack((xx, yy, ((np.indices((height, width)).sum(0) // 16) % 2).astype(np.float32)))
+    grid_y, grid_x = np.indices((height, width))
+    structured = np.stack((xx, yy, (((grid_x // 16) + (grid_y // 16)) % 2).astype(np.float32)))
     yield "gradient-checkerboard", np.broadcast_to(structured, shape).copy()
 
 
@@ -179,12 +185,47 @@ def validate_runtime(
                 )
         for name, torch_value, ort_value in zip(output_names, expected, actual):
             torch_array = torch_value.detach().cpu().numpy()
+            score_index = output_names.index("scores") if "scores" in output_names else None
+            torch_scores = (
+                expected[score_index].detach().cpu().numpy() if score_index is not None else None
+            )
             if burn is not None:
-                burn_report = compare_output(name, burn[name], torch_array)
+                if manifest["family"] == "yolox" and name == "predictions":
+                    burn_report = compare_yolox_predictions(burn[name], torch_array)
+                elif manifest["family"] == "yolov3-tiny" and name == "boxes":
+                    burn_report = compare_scored_boxes(
+                        name,
+                        burn[name],
+                        torch_array,
+                        burn["scores"],
+                        torch_scores,
+                    )
+                else:
+                    tolerance = 2e-3 if manifest["family"] == "yolov3-tiny" and name == "scores" else None
+                    burn_report = compare_output(name, burn[name], torch_array, tolerance)
                 burn_report["case"] = case_name
                 burn_report["comparison"] = "burn-vs-pytorch"
                 reports.append(burn_report)
-            report = compare_output(name, torch_array, ort_value)
+            if (
+                manifest["profile"] == "ultralytics"
+                and manifest["family"] in {"yolov10", "yolo26"}
+                and manifest["task"] in {"detect", "segment"}
+                and name == "output0"
+            ):
+                report = compare_end2end_detections(torch_array, ort_value)
+            elif manifest["family"] == "yolox" and name == "predictions":
+                report = compare_yolox_predictions(torch_array, ort_value)
+            elif manifest["family"] == "yolov3-tiny" and name == "boxes":
+                report = compare_scored_boxes(
+                    name,
+                    torch_array,
+                    ort_value,
+                    torch_scores,
+                    actual[score_index],
+                )
+            else:
+                tolerance = 2e-3 if manifest["family"] == "yolov3-tiny" and name == "scores" else None
+                report = compare_output(name, torch_array, ort_value, tolerance)
             report["case"] = case_name
             report["comparison"] = "pytorch-vs-onnxruntime"
             reports.append(report)
@@ -231,6 +272,10 @@ def export_and_validate(
             import onnxslim
         except ImportError as error:
             raise RuntimeError("--simplify requires the pinned optional onnxslim package") from error
+        if onnxslim.__version__.split("+", 1)[0] != "0.1.82":
+            raise RuntimeError(
+                f"--simplify requires onnxslim 0.1.82, got {onnxslim.__version__}"
+            )
         simplified = onnxslim.slim(onnx.load(str(output)))
         _set_metadata(simplified, _metadata(manifest))
         onnx.save(simplified, str(output))
@@ -251,7 +296,9 @@ def export_and_validate(
         )
 
     checked, operators = validate_model(output, manifest, output_names)
-    parity = validate_runtime(wrapper, output, manifest, output_names) if manifest["verify"] else []
+    # ONNX Runtime execution is a mandatory release gate. ``verify`` controls generation of the
+    # additional exact-loaded-Burn references for the portable profile.
+    parity = validate_runtime(wrapper, output, manifest, output_names)
     artifacts = []
     for path in [output, Path(str(output) + ".data")]:
         if not path.is_file():
@@ -294,7 +341,7 @@ def export_and_validate(
         "operator_inventory": operators,
         "simplified": bool(manifest["simplify"]),
         "external_data": external,
-        "validation": {"onnx_checker": True, "strict_shape_inference": True, "onnxruntime_cpu": bool(manifest["verify"]), "cases": parity},
+        "validation": {"onnx_checker": True, "strict_shape_inference": True, "onnxruntime_cpu": True, "burn_reference": bool(manifest["burn_references"]), "cases": parity},
         "artifacts": artifacts,
         "reproducibility": {"timestamp_omitted": bool(manifest["reproducible"]), "dirty_source": manifest["boquilens_git_dirty"]},
     }

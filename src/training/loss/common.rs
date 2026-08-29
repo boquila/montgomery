@@ -1,4 +1,30 @@
+use std::collections::BTreeMap;
+
 use burn::tensor::{Tensor, backend::Backend};
+
+/// Differentiable scalar plus detached diagnostics returned by every native criterion.
+///
+/// Assignment is deliberately allowed to synchronize detached predictions to the host, but the
+/// `total` tensor always remains connected to the original model output.
+pub struct LossOutput<B: Backend> {
+    pub total: Tensor<B, 1>,
+    pub components: BTreeMap<String, f32>,
+    pub targets: usize,
+    pub foreground: usize,
+    pub finite: bool,
+}
+
+pub fn scalar_value<B: Backend>(value: Tensor<B, 1>) -> f32 {
+    value
+        .detach()
+        .into_data()
+        .as_slice::<f32>()
+        .expect("loss scalar must use f32 storage")[0]
+}
+
+pub fn connected_zero<B: Backend, const D: usize>(tensor: Tensor<B, D>) -> Tensor<B, 1> {
+    tensor.sum() * 0.0
+}
 
 /// Numerically stable binary cross entropy from a raw logit.
 pub fn bce_with_logits(logit: f32, target: f32) -> f32 {

@@ -2,6 +2,15 @@ use crate::data::augmentation::{AugSample, AugmentationError, PartnerProvider};
 use rand::{SeedableRng, seq::SliceRandom};
 use rand_chacha::ChaCha20Rng;
 use sha2::{Digest, Sha256};
+use std::path::Path;
+
+use image::GenericImageView;
+
+use super::{
+    VisionSample,
+    manifest::{DatasetError, ResolvedDataset, yolo_label_path},
+    yolo::{YoloParseOptions, parse_labels},
+};
 
 /// Sample order is a pure function of global seed and epoch, independent of worker scheduling.
 pub fn epoch_permutation(length: usize, seed: u64, epoch: u64) -> Vec<usize> {
@@ -27,6 +36,38 @@ pub fn derived_seed(
     hash.update(sample_id.to_le_bytes());
     hash.update(draw.to_le_bytes());
     hash.finalize().into()
+}
+
+/// Decode one deterministic YOLO sample with contextual parsing errors.
+pub fn load_yolo_sample(
+    dataset: &ResolvedDataset,
+    image_path: impl AsRef<Path>,
+) -> Result<VisionSample, DatasetError> {
+    let image_path = image_path.as_ref();
+    let image = image::open(image_path).map_err(|error| {
+        DatasetError::new(format!(
+            "cannot decode training image {}: {error}",
+            image_path.display()
+        ))
+    })?;
+    let (width, height) = image.dimensions();
+    let image_id = image_path
+        .strip_prefix(&dataset.root)
+        .unwrap_or(image_path)
+        .to_string_lossy()
+        .replace('\\', "/");
+    let parsed = parse_labels(
+        yolo_label_path(image_path),
+        &image_id,
+        [width, height],
+        YoloParseOptions::new(dataset.class_names.len()),
+    )?;
+    Ok(VisionSample {
+        image,
+        targets: parsed.targets,
+        image_id,
+        source_size: [width, height],
+    })
 }
 
 /// Deterministic immutable sample pool for mixed-image augmentation.

@@ -7,6 +7,7 @@ use burn::{
 use burn_flex::Flex;
 use burn_store::{BurnToPyTorchAdapter, ModuleSnapshot, ModuleStore, SafetensorsStore};
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 
 use crate::{Predictor, Result, RuntimeModel};
 
@@ -41,6 +42,9 @@ struct ClassifyReference<B: Backend> {
 pub struct TensorAudit {
     pub tensor_count: usize,
     pub scalar_count: usize,
+    /// Stable digest over sorted tensor names, dtypes, shapes, and raw values. Unlike the
+    /// SafeTensors container hash, this is unaffected by metadata-map serialization order.
+    pub content_sha256: String,
     pub tensors: Vec<TensorAuditEntry>,
 }
 
@@ -138,6 +142,23 @@ pub(crate) fn write_snapshot(
     let tensors = read_store
         .get_all_snapshots()
         .map_err(|error| format!("snapshot audit failed: {error}"))?;
+    let mut content_digest = Sha256::new();
+    for (name, tensor) in tensors.iter() {
+        let dtype = format!("{:?}", tensor.dtype).to_lowercase();
+        content_digest.update((name.len() as u64).to_le_bytes());
+        content_digest.update(name.as_bytes());
+        content_digest.update((dtype.len() as u64).to_le_bytes());
+        content_digest.update(dtype.as_bytes());
+        content_digest.update((tensor.shape.len() as u64).to_le_bytes());
+        for dimension in tensor.shape.iter() {
+            content_digest.update((*dimension as u64).to_le_bytes());
+        }
+        let data = tensor
+            .to_data()
+            .map_err(|error| format!("snapshot content audit failed for {name}: {error}"))?;
+        content_digest.update((data.as_bytes().len() as u64).to_le_bytes());
+        content_digest.update(data.as_bytes());
+    }
     let entries = tensors
         .iter()
         .map(|(name, tensor)| TensorAuditEntry {
@@ -153,6 +174,7 @@ pub(crate) fn write_snapshot(
     Ok(TensorAudit {
         tensor_count: entries.len(),
         scalar_count,
+        content_sha256: format!("{:x}", content_digest.finalize()),
         tensors: entries,
     })
 }

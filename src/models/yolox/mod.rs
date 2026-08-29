@@ -13,4 +13,5 @@ mod pafpn;
 pub mod weights;
 
 pub use boxes::BoundingBox;
+pub use head::{FeatureLevelShape, RawPredictions};
 pub use model::{Yolox, YoloxConfig};

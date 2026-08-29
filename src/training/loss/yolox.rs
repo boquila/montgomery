@@ -1,11 +1,16 @@
 use std::collections::BTreeMap;
 
-use crate::training::{
-    assign::simota::{AnchorPrediction, GroundTruth, assign},
-    geometry::iou::iou,
+use burn::tensor::{Tensor, TensorData, backend::Backend};
+
+use crate::{
+    models::yolox::RawPredictions,
+    training::{
+        assign::simota::{AnchorPrediction, GroundTruth, assign},
+        geometry::{BoxXywh, iou::iou},
+    },
 };
 
-use super::common::bce_with_logits;
+use super::common::{LossOutput, bce_with_logits, bce_with_logits_tensor, scalar_value};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct YoloxLoss {
@@ -100,6 +105,167 @@ fn encode_l1(gt: &GroundTruth, prediction: &AnchorPrediction) -> [f32; 4] {
         (xywh.width / prediction.stride).max(1e-8).ln(),
         (xywh.height / prediction.stride).max(1e-8).ln(),
     ]
+}
+
+/// Differentiable YOLOX criterion with deterministic detached SimOTA assignment.
+///
+/// This first production implementation intentionally performs assignment on the host. Only the
+/// detached prediction copy crosses the device boundary; all loss terms below are evaluated from
+/// the original tensors and therefore backpropagate through the complete graph.
+pub fn tensor_loss<B: Backend>(
+    output: RawPredictions<B>,
+    targets: &[Vec<GroundTruth>],
+    use_l1: bool,
+) -> Result<LossOutput<B>, &'static str> {
+    let [batch, anchors, classes] = output.class_logits.dims();
+    if targets.len() != batch || classes == 0 {
+        return Err("YOLOX target batch or class count does not match predictions");
+    }
+    let decoded_host = output.decoded_boxes.clone().detach().into_data();
+    let regression_host = output.regression.clone().detach().into_data();
+    let objectness_host = output.objectness_logits.clone().detach().into_data();
+    let classes_host = output.class_logits.clone().detach().into_data();
+    let decoded = decoded_host
+        .as_slice::<f32>()
+        .map_err(|_| "YOLOX boxes are not f32")?;
+    let regression = regression_host
+        .as_slice::<f32>()
+        .map_err(|_| "YOLOX deltas are not f32")?;
+    let objectness = objectness_host
+        .as_slice::<f32>()
+        .map_err(|_| "YOLOX objectness is not f32")?;
+    let class_logits = classes_host
+        .as_slice::<f32>()
+        .map_err(|_| "YOLOX classes are not f32")?;
+
+    let mut dense_boxes = vec![0.0_f32; batch * anchors * 4];
+    let mut dense_raw = vec![0.0_f32; batch * anchors * 4];
+    let mut dense_classes = vec![0.0_f32; batch * anchors * classes];
+    let mut foreground = vec![0.0_f32; batch * anchors];
+    let mut foreground_count = 0;
+    let mut gt_count = 0;
+    let mut centers = Vec::with_capacity(anchors);
+    for level in output.levels {
+        for y in 0..level.height {
+            for x in 0..level.width {
+                centers.push([
+                    (x as f32 + 0.5) * level.stride as f32,
+                    (y as f32 + 0.5) * level.stride as f32,
+                    level.stride as f32,
+                ]);
+            }
+        }
+    }
+    if centers.len() != anchors {
+        return Err("YOLOX feature layouts do not match anchor count");
+    }
+    for image in 0..batch {
+        gt_count += targets[image].len();
+        let predictions = (0..anchors)
+            .map(|anchor| {
+                let box_offset = (image * anchors + anchor) * 4;
+                let class_offset = (image * anchors + anchor) * classes;
+                AnchorPrediction {
+                    box_xywh: BoxXywh {
+                        cx: decoded[box_offset],
+                        cy: decoded[box_offset + 1],
+                        width: decoded[box_offset + 2],
+                        height: decoded[box_offset + 3],
+                    },
+                    raw_box: regression[box_offset..box_offset + 4].try_into().unwrap(),
+                    objectness_logit: objectness[image * anchors + anchor],
+                    class_logits: class_logits[class_offset..class_offset + classes].to_vec(),
+                    center_xy: [centers[anchor][0], centers[anchor][1]],
+                    stride: centers[anchor][2],
+                }
+            })
+            .collect::<Vec<_>>();
+        for matched in assign(&targets[image], &predictions) {
+            let truth = &targets[image][matched.gt_index];
+            if truth.class_id >= classes {
+                return Err("YOLOX target class is outside model channels");
+            }
+            let flat = image * anchors + matched.anchor_index;
+            foreground[flat] = 1.0;
+            foreground_count += 1;
+            let box_offset = flat * 4;
+            let xywh = truth.bbox.to_xywh();
+            dense_boxes[box_offset..box_offset + 4].copy_from_slice(&[
+                xywh.cx,
+                xywh.cy,
+                xywh.width,
+                xywh.height,
+            ]);
+            dense_raw[box_offset..box_offset + 4]
+                .copy_from_slice(&encode_l1(truth, &predictions[matched.anchor_index]));
+            dense_classes[flat * classes + truth.class_id] = matched.overlap;
+        }
+    }
+
+    let device = output.class_logits.device();
+    let fg = Tensor::from_data(TensorData::new(foreground, [batch, anchors, 1]), &device);
+    let target_boxes =
+        Tensor::from_data(TensorData::new(dense_boxes, [batch, anchors, 4]), &device);
+    let target_raw = Tensor::from_data(TensorData::new(dense_raw, [batch, anchors, 4]), &device);
+    let target_classes = Tensor::from_data(
+        TensorData::new(dense_classes, [batch, anchors, classes]),
+        &device,
+    );
+    let normalizer = foreground_count.max(1) as f64;
+
+    let objectness_loss =
+        bce_with_logits_tensor(output.objectness_logits, fg.clone()).sum() / normalizer;
+    let classification_loss =
+        (bce_with_logits_tensor(output.class_logits, target_classes) * fg.clone()).sum()
+            / normalizer;
+    let predicted = output.decoded_boxes;
+    let pred_xy = predicted.clone().slice([0..batch, 0..anchors, 0..2]);
+    let pred_wh = predicted.clone().slice([0..batch, 0..anchors, 2..4]);
+    let target_xy = target_boxes.clone().slice([0..batch, 0..anchors, 0..2]);
+    let target_wh = target_boxes.slice([0..batch, 0..anchors, 2..4]);
+    let pred_lt = pred_xy.clone() - pred_wh.clone() * 0.5;
+    let pred_rb = pred_xy + pred_wh * 0.5;
+    let target_lt = target_xy.clone() - target_wh.clone() * 0.5;
+    let target_rb = target_xy + target_wh * 0.5;
+    let intersection = (pred_rb.clone().min_pair(target_rb.clone())
+        - pred_lt.clone().max_pair(target_lt.clone()))
+    .clamp_min(0.0);
+    let intersection = intersection.clone().slice([0..batch, 0..anchors, 0..1])
+        * intersection.slice([0..batch, 0..anchors, 1..2]);
+    let pred_size = pred_rb - pred_lt;
+    let target_size = target_rb - target_lt;
+    let pred_area = pred_size.clone().slice([0..batch, 0..anchors, 0..1])
+        * pred_size.slice([0..batch, 0..anchors, 1..2]);
+    let target_area = target_size.clone().slice([0..batch, 0..anchors, 0..1])
+        * target_size.slice([0..batch, 0..anchors, 1..2]);
+    let overlap = intersection.clone() / (pred_area + target_area - intersection + 1e-7);
+    let iou_loss = ((overlap.clone() * overlap).neg() + 1.0) * fg.clone();
+    let iou_loss = iou_loss.sum() / normalizer;
+    let l1_loss = if use_l1 {
+        ((output.regression - target_raw).abs() * fg).sum() / normalizer
+    } else {
+        output.regression.sum() * 0.0
+    };
+    let total = iou_loss.clone() * 5.0
+        + objectness_loss.clone()
+        + classification_loss.clone()
+        + l1_loss.clone();
+    let mut components = BTreeMap::new();
+    components.insert("iou_loss".into(), scalar_value(iou_loss));
+    components.insert("objectness_loss".into(), scalar_value(objectness_loss));
+    components.insert(
+        "classification_loss".into(),
+        scalar_value(classification_loss),
+    );
+    components.insert("l1_loss".into(), scalar_value(l1_loss));
+    let value = scalar_value(total.clone());
+    Ok(LossOutput {
+        total,
+        components,
+        targets: gt_count,
+        foreground: foreground_count,
+        finite: value.is_finite(),
+    })
 }
 
 #[cfg(test)]

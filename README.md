@@ -77,7 +77,8 @@ NMS/top-k policy, source-image coordinate reversal, and mask assembly outside th
 validated baseline; dynamic axes, FP16, and the separate `end2end` profile fail clearly until
 their own parity gates land. The sidecar is the normative input/output, preprocessing,
 postprocessing, validation, hash, and license contract. Exporting a checkpoint does not change the
-license of its architecture or weights; see [NOTICE](NOTICE).
+license of its architecture or weights; see [NOTICE](NOTICE). `--no-verify` omits only the extra
+exact-Burn comparison; checker, strict shape inference, and ONNX Runtime execution remain mandatory.
 
 YOLO11, YOLOv8, and YOLO12 are the modern detect families whose predictions pass through classic
 class-aware non-maximum suppression (the others are NMS-free end-to-end); YOLOv8's head keeps the

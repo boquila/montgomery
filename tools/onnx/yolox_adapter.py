@@ -41,8 +41,8 @@ def _shim(source: Path, workdir: Path) -> Path:
     target = workdir / "yolox-source-shim"
     models = target / "yolox/models"
     utils = target / "yolox/utils"
-    models.mkdir(parents=True)
-    utils.mkdir(parents=True)
+    models.mkdir(parents=True, exist_ok=True)
+    utils.mkdir(parents=True, exist_ok=True)
     for name in ("network_blocks.py", "darknet.py", "yolo_pafpn.py", "yolo_head.py", "yolox.py", "losses.py"):
         shutil.copyfile(source / "yolox/models" / name, models / name)
     (target / "yolox/__init__.py").write_text("", encoding="utf-8")

@@ -45,6 +45,7 @@ pub struct BridgeManifest {
     pub checkpoint_sha256: String,
     pub checkpoint_state: String,
     pub weights_file: String,
+    pub weights_file_sha256: String,
     pub weights_sha256: String,
     pub tensor_audit: TensorAudit,
     pub burn_references: Vec<BurnReferenceManifest>,

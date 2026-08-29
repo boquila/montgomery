@@ -1,4 +1,8 @@
-use super::common::cross_entropy;
+use std::collections::BTreeMap;
+
+use burn::tensor::{Int, Tensor, activation, backend::Backend};
+
+use super::common::{LossOutput, cross_entropy, scalar_value};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ClassificationMetrics {
@@ -43,6 +47,30 @@ pub fn classification_loss(
         top1_correct: top1,
         top5_correct: top5,
         count: logits.len(),
+    })
+}
+
+/// Mean differentiable cross entropy from raw classifier logits.
+pub fn tensor_loss<B: Backend>(
+    logits: Tensor<B, 2>,
+    classes: Tensor<B, 1, Int>,
+) -> Result<LossOutput<B>, &'static str> {
+    let [batch, num_classes] = logits.dims();
+    if batch == 0 || num_classes == 0 || classes.dims() != [batch] {
+        return Err("classification logits/classes have invalid shapes");
+    }
+    let targets: Tensor<B, 2, Int> = classes.one_hot(num_classes);
+    let targets = targets.float();
+    let total = -(activation::log_softmax(logits, 1) * targets).sum() / batch as f64;
+    let value = scalar_value(total.clone());
+    let mut components = BTreeMap::new();
+    components.insert("classification_loss".into(), value);
+    Ok(LossOutput {
+        total,
+        components,
+        targets: batch,
+        foreground: batch,
+        finite: value.is_finite(),
     })
 }
 
