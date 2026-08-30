@@ -2,8 +2,8 @@
 //! (n/s/m/l/x).
 //!
 //! The segmentation graph shares the complete detection body (layers 0-22) and one2one detection
-//! head with the detect family; Ultralytics' `Segment26` head adds a mask-coefficient tower
-//! (`one2one_cv4`, full 3x3 Conv towers like the classic Segment head) and the `Proto26` module.
+//! head with the detect family; Ultralytics' `Segment26` head adds mask-coefficient towers
+//! (`cv4`/`one2one_cv4`, full 3x3 Conv towers like the classic Segment head) and `Proto26`.
 //! Unlike YOLO11-seg's P3-only Proto, `Proto26` fuses all three feature levels: P4/P5 are 1x1
 //! refined, nearest-upsampled by 2x/4x, and summed onto P3 before the classic
 //! conv/upsample/conv/proto projection at stride 4.
@@ -26,6 +26,8 @@ use burn_store::{
 
 use super::blocks::{Conv, ConvConfig};
 use super::body::{Yolo26BodyLarge, Yolo26BodySmall};
+#[cfg(feature = "training")]
+use super::head::DualRawPredictions;
 use super::head::{DecodedPredictions, Yolo26Head, Yolo26HeadConfig};
 
 #[cfg(feature = "pretrained")]
@@ -37,8 +39,8 @@ pub const NUM_MASKS: usize = 32;
 /// `Proto26`: multi-scale prototype generator.
 ///
 /// Field names deliberately match the official `model.23.proto.*` checkpoint keys after
-/// remapping; the training-only semantic-segmentation head (`semseg`) is intentionally not
-/// implemented.
+/// remapping. The semantic tower exists only in training builds and is therefore absent from the
+/// default inference graph.
 #[derive(Module, Debug)]
 pub struct Proto26<B: Backend> {
     cv1: Conv<B>,
@@ -48,19 +50,46 @@ pub struct Proto26<B: Backend> {
     feat_refine_0: Conv<B>,
     feat_refine_1: Conv<B>,
     feat_fuse: Conv<B>,
+    #[cfg(feature = "training")]
+    sem_0: Conv<B>,
+    #[cfg(feature = "training")]
+    sem_1: Conv<B>,
+    #[cfg(feature = "training")]
+    sem_out: Conv2d<B>,
 }
 
 impl<B: Backend> Proto26<B> {
     /// Fuse the P4/P5 features onto P3 and project to the prototype maps at stride 4.
     pub fn forward(&self, p3: Tensor<B, 4>, p4: Tensor<B, 4>, p5: Tensor<B, 4>) -> Tensor<B, 4> {
+        self.forward_fused(p3, p4, p5).0
+    }
+
+    fn forward_fused(
+        &self,
+        p3: Tensor<B, 4>,
+        p4: Tensor<B, 4>,
+        p5: Tensor<B, 4>,
+    ) -> (Tensor<B, 4>, Tensor<B, 4>) {
         let feat = p3 + super::blocks::upsample_nearest_2x(self.feat_refine_0.forward(p4));
         let feat = feat
             + super::blocks::upsample_nearest_2x(super::blocks::upsample_nearest_2x(
                 self.feat_refine_1.forward(p5),
             ));
-        let x = self.cv1.forward(self.feat_fuse.forward(feat));
+        let x = self.cv1.forward(self.feat_fuse.forward(feat.clone()));
         let x = self.upsample.forward(x);
-        self.cv3.forward(self.cv2.forward(x))
+        let prototypes = self.cv3.forward(self.cv2.forward(x));
+        #[cfg(feature = "training")]
+        let semantic = self
+            .sem_out
+            .forward(self.sem_1.forward(self.sem_0.forward(feat)));
+        #[cfg(not(feature = "training"))]
+        let semantic = prototypes.clone().slice([
+            0..prototypes.dims()[0],
+            0..1,
+            0..prototypes.dims()[2],
+            0..prototypes.dims()[3],
+        ]) * 0.0;
+        (prototypes, semantic)
     }
 }
 
@@ -70,6 +99,8 @@ struct Proto26Config {
     p4_channels: usize,
     p5_channels: usize,
     hidden_channels: usize,
+    #[cfg(feature = "training")]
+    num_classes: usize,
 }
 
 impl Proto26Config {
@@ -87,6 +118,14 @@ impl Proto26Config {
             feat_refine_0: ConvConfig::new(self.p4_channels, self.p3_channels, 1, 1).init(device),
             feat_refine_1: ConvConfig::new(self.p5_channels, self.p3_channels, 1, 1).init(device),
             feat_fuse: ConvConfig::new(self.p3_channels, self.hidden_channels, 3, 1).init(device),
+            #[cfg(feature = "training")]
+            sem_0: ConvConfig::new(self.p3_channels, self.hidden_channels, 3, 1).init(device),
+            #[cfg(feature = "training")]
+            sem_1: ConvConfig::new(self.hidden_channels, self.hidden_channels, 3, 1).init(device),
+            #[cfg(feature = "training")]
+            sem_out: Conv2dConfig::new([self.hidden_channels, self.num_classes], [1, 1])
+                .with_bias(true)
+                .init(device),
         }
     }
 }
@@ -140,6 +179,17 @@ pub struct SegmentOutput<B: Backend> {
     pub prototypes: Tensor<B, 4>,
 }
 
+#[cfg(feature = "training")]
+pub struct DualSegmentTrainOutput<B: Backend> {
+    pub detection: DualRawPredictions<B>,
+    pub one_to_many_coefficients: Tensor<B, 3>,
+    pub one_to_one_coefficients: Tensor<B, 3>,
+    pub one_to_many_prototypes: Tensor<B, 4>,
+    pub one_to_one_prototypes: Tensor<B, 4>,
+    pub one_to_many_semantic: Tensor<B, 4>,
+    pub one_to_one_semantic: Tensor<B, 4>,
+}
+
 /// Ultralytics YOLO26 `Segment26` head: the shared end-to-end detect head plus the Proto26 module
 /// and one one2one mask-coefficient branch per scale.
 #[derive(Module, Debug)]
@@ -149,9 +199,54 @@ pub struct Yolo26SegHead<B: Backend> {
     p3_mask: MaskBranch<B>,
     p4_mask: MaskBranch<B>,
     p5_mask: MaskBranch<B>,
+    #[cfg(feature = "training")]
+    o2m_p3_mask: MaskBranch<B>,
+    #[cfg(feature = "training")]
+    o2m_p4_mask: MaskBranch<B>,
+    #[cfg(feature = "training")]
+    o2m_p5_mask: MaskBranch<B>,
 }
 
 impl<B: Backend> Yolo26SegHead<B> {
+    #[cfg(feature = "training")]
+    pub fn forward_train(
+        &self,
+        features: super::body::Yolo26Features<B>,
+    ) -> DualSegmentTrainOutput<B> {
+        let super::body::Yolo26Features { p3, p4, p5 } = features;
+        let detection = self.detect.forward_dual(super::body::Yolo26Features {
+            p3: p3.clone(),
+            p4: p4.clone(),
+            p5: p5.clone(),
+        });
+        let one_to_many_coefficients = Tensor::cat(
+            vec![
+                self.o2m_p3_mask.forward(p3.clone()),
+                self.o2m_p4_mask.forward(p4.clone()),
+                self.o2m_p5_mask.forward(p5.clone()),
+            ],
+            2,
+        );
+        let one_to_one_coefficients = Tensor::cat(
+            vec![
+                self.p3_mask.forward(p3.clone().detach()),
+                self.p4_mask.forward(p4.clone().detach()),
+                self.p5_mask.forward(p5.clone().detach()),
+            ],
+            2,
+        );
+        let (prototypes, semantic) = self.proto.forward_fused(p3, p4, p5);
+        DualSegmentTrainOutput {
+            detection,
+            one_to_many_coefficients,
+            one_to_one_coefficients,
+            one_to_many_prototypes: prototypes.clone(),
+            one_to_one_prototypes: prototypes.detach(),
+            one_to_many_semantic: semantic.clone(),
+            one_to_one_semantic: semantic.detach(),
+        }
+    }
+
     pub fn forward(&self, features: super::body::Yolo26Features<B>) -> SegmentOutput<B> {
         let coefficients = Tensor::cat(
             vec![
@@ -186,6 +281,7 @@ pub struct Yolo26SegHeadConfig {
     p5_channels: usize,
     proto_channels: usize,
     mask_channels: usize,
+    num_classes: usize,
 }
 
 impl Yolo26SegHeadConfig {
@@ -207,18 +303,28 @@ impl Yolo26SegHeadConfig {
             p5_channels,
             proto_channels,
             mask_channels: (p3_channels / 4).max(NUM_MASKS),
+            num_classes: 80,
         }
+    }
+
+    pub fn with_num_classes(mut self, num_classes: usize) -> Self {
+        assert!(num_classes > 0, "class count must be positive");
+        self.num_classes = num_classes;
+        self
     }
 
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo26SegHead<B> {
         Yolo26SegHead {
             detect: Yolo26HeadConfig::new(self.p3_channels, self.p4_channels, self.p5_channels)
+                .with_num_classes(self.num_classes)
                 .init(device),
             proto: Proto26Config {
                 p3_channels: self.p3_channels,
                 p4_channels: self.p4_channels,
                 p5_channels: self.p5_channels,
                 hidden_channels: self.proto_channels,
+                #[cfg(feature = "training")]
+                num_classes: self.num_classes,
             }
             .init(device),
             p3_mask: MaskBranchConfig {
@@ -236,6 +342,24 @@ impl Yolo26SegHeadConfig {
                 mask_channels: self.mask_channels,
             }
             .init(device),
+            #[cfg(feature = "training")]
+            o2m_p3_mask: MaskBranchConfig {
+                input_channels: self.p3_channels,
+                mask_channels: self.mask_channels,
+            }
+            .init(device),
+            #[cfg(feature = "training")]
+            o2m_p4_mask: MaskBranchConfig {
+                input_channels: self.p4_channels,
+                mask_channels: self.mask_channels,
+            }
+            .init(device),
+            #[cfg(feature = "training")]
+            o2m_p5_mask: MaskBranchConfig {
+                input_channels: self.p5_channels,
+                mask_channels: self.mask_channels,
+            }
+            .init(device),
         }
     }
 }
@@ -243,10 +367,11 @@ impl Yolo26SegHeadConfig {
 /// Build the PyTorch-state store shared by every YOLO26-seg scale variant.
 ///
 /// The body is layers 0-22 (identical to the detect checkpoint), the head is model.23, and the
-/// one2many mask tower plus the training-only `proto.semseg` head are intentionally dropped.
+/// Training builds additionally remap the one-to-many detection/mask towers and `proto.semseg`.
 #[cfg(feature = "pretrained")]
 fn pytorch_store(path: impl Into<std::path::PathBuf>) -> PytorchStore {
-    PytorchStore::from_file(path)
+    #[allow(unused_mut)]
+    let mut store = PytorchStore::from_file(path)
         .with_top_level_key("model")
         .with_key_remapping("model\\.([0-9]|1[0-9]|2[0-2])\\.(.+)", "body.model_$1.$2")
         .with_key_remapping(
@@ -399,7 +524,50 @@ fn pytorch_store(path: impl Into<std::path::PathBuf>) -> PytorchStore {
         .with_key_remapping(
             "model\\.23\\.proto\\.feat_fuse\\.(.+)",
             "head.proto.feat_fuse.$1",
-        )
+        );
+    #[cfg(feature = "training")]
+    {
+        for (scale, branch) in [(0, "p3"), (1, "p4"), (2, "p5")] {
+            for (layer, name) in [(0, "box_0"), (1, "box_1"), (2, "box_out")] {
+                store = store.with_key_remapping(
+                    format!(r"model\.23\.cv2\.{scale}\.{layer}\.(.+)"),
+                    format!("head.detect.o2m_{branch}.{name}.$1"),
+                );
+            }
+            for (path, name) in [
+                ("0\\.0", "cls_dw_0"),
+                ("0\\.1", "cls_pw_0"),
+                ("1\\.0", "cls_dw_1"),
+                ("1\\.1", "cls_pw_1"),
+                ("2", "cls_out"),
+            ] {
+                store = store.with_key_remapping(
+                    format!(r"model\.23\.cv3\.{scale}\.{path}\.(.+)"),
+                    format!("head.detect.o2m_{branch}.{name}.$1"),
+                );
+            }
+            for (layer, name) in [(0, "mask_0"), (1, "mask_1"), (2, "mask_out")] {
+                store = store.with_key_remapping(
+                    format!(r"model\.23\.cv4\.{scale}\.{layer}\.(.+)"),
+                    format!("head.o2m_{branch}_mask.{name}.$1"),
+                );
+            }
+        }
+        store = store
+            .with_key_remapping(
+                "model\\.23\\.proto\\.semseg\\.0\\.(.+)",
+                "head.proto.sem_0.$1",
+            )
+            .with_key_remapping(
+                "model\\.23\\.proto\\.semseg\\.1\\.(.+)",
+                "head.proto.sem_1.$1",
+            )
+            .with_key_remapping(
+                "model\\.23\\.proto\\.semseg\\.2\\.(.+)",
+                "head.proto.sem_out.$1",
+            );
+    }
+    store
 }
 
 macro_rules! seg_model {
@@ -414,6 +582,11 @@ macro_rules! seg_model {
         impl<B: Backend> $model<B> {
             pub fn forward(&self, input: Tensor<B, 4>) -> SegmentOutput<B> {
                 self.head.forward(self.body.forward(input))
+            }
+
+            #[cfg(feature = "training")]
+            pub fn forward_train(&self, input: Tensor<B, 4>) -> DualSegmentTrainOutput<B> {
+                self.head.forward_train(self.body.forward(input))
             }
 
             /// Import tensor-only state exported from an official Ultralytics checkpoint.
@@ -497,45 +670,90 @@ seg_model!(
 
 impl Yolo26SegNConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo26SegN<B> {
+        self.init_with_classes(80, device)
+    }
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        classes: usize,
+        device: &Device<B>,
+    ) -> Yolo26SegN<B> {
         Yolo26SegN {
             body: super::body::Yolo26BodyNConfig.init(device),
-            head: Yolo26SegHeadConfig::new(64, 128, 256, 64).init(device),
+            head: Yolo26SegHeadConfig::new(64, 128, 256, 64)
+                .with_num_classes(classes)
+                .init(device),
         }
     }
 }
 
 impl Yolo26SegSConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo26SegS<B> {
+        self.init_with_classes(80, device)
+    }
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        classes: usize,
+        device: &Device<B>,
+    ) -> Yolo26SegS<B> {
         Yolo26SegS {
             body: super::body::Yolo26BodySConfig.init(device),
-            head: Yolo26SegHeadConfig::new(128, 256, 512, 128).init(device),
+            head: Yolo26SegHeadConfig::new(128, 256, 512, 128)
+                .with_num_classes(classes)
+                .init(device),
         }
     }
 }
 
 impl Yolo26SegMConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo26SegM<B> {
+        self.init_with_classes(80, device)
+    }
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        classes: usize,
+        device: &Device<B>,
+    ) -> Yolo26SegM<B> {
         Yolo26SegM {
             body: super::body::Yolo26BodyMConfig.init(device),
-            head: Yolo26SegHeadConfig::new(256, 512, 512, 256).init(device),
+            head: Yolo26SegHeadConfig::new(256, 512, 512, 256)
+                .with_num_classes(classes)
+                .init(device),
         }
     }
 }
 
 impl Yolo26SegLConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo26SegL<B> {
+        self.init_with_classes(80, device)
+    }
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        classes: usize,
+        device: &Device<B>,
+    ) -> Yolo26SegL<B> {
         Yolo26SegL {
             body: super::body::Yolo26BodyLConfig.init(device),
-            head: Yolo26SegHeadConfig::new(256, 512, 512, 256).init(device),
+            head: Yolo26SegHeadConfig::new(256, 512, 512, 256)
+                .with_num_classes(classes)
+                .init(device),
         }
     }
 }
 
 impl Yolo26SegXConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo26SegX<B> {
+        self.init_with_classes(80, device)
+    }
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        classes: usize,
+        device: &Device<B>,
+    ) -> Yolo26SegX<B> {
         Yolo26SegX {
             body: super::body::Yolo26BodyXConfig.init(device),
-            head: Yolo26SegHeadConfig::new(384, 768, 768, 384).init(device),
+            head: Yolo26SegHeadConfig::new(384, 768, 768, 384)
+                .with_num_classes(classes)
+                .init(device),
         }
     }
 }

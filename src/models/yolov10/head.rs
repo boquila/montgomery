@@ -21,6 +21,12 @@ pub struct RawPredictions<B: Backend> {
     pub scores: Tensor<B, 3>,
 }
 
+#[cfg(feature = "training")]
+pub struct DualRawPredictions<B: Backend> {
+    pub one_to_many: RawPredictions<B>,
+    pub one_to_one: RawPredictions<B>,
+}
+
 /// Decoded predictions in model-input space.
 pub struct DecodedPredictions<B: Backend> {
     /// Unnormalized `XYXY` model-input pixels, `[batch, anchors, 4]`.
@@ -95,15 +101,19 @@ impl DetectionBranchConfig {
     }
 }
 
-/// Ultralytics YOLOv10 `v10Detect` head, one2one (NMS-free) inference branch.
-///
-/// The training-only one2many branch is intentionally not implemented: official inference decodes
-/// the one2one predictions and selects the top-scoring detections without non-maximum suppression.
+/// Ultralytics YOLOv10 `v10Detect` head. Default builds retain the NMS-free one-to-one inference
+/// graph; training builds additionally carry the official one-to-many towers.
 #[derive(Module, Debug)]
 pub struct Yolov10Head<B: Backend> {
     p3: DetectionBranch<B>,
     p4: DetectionBranch<B>,
     p5: DetectionBranch<B>,
+    #[cfg(feature = "training")]
+    o2m_p3: DetectionBranch<B>,
+    #[cfg(feature = "training")]
+    o2m_p4: DetectionBranch<B>,
+    #[cfg(feature = "training")]
+    o2m_p5: DetectionBranch<B>,
 }
 
 impl<B: Backend> Yolov10Head<B> {
@@ -114,6 +124,30 @@ impl<B: Backend> Yolov10Head<B> {
         RawPredictions {
             boxes: Tensor::cat(vec![boxes_p3, boxes_p4, boxes_p5], 2),
             scores: Tensor::cat(vec![scores_p3, scores_p4, scores_p5], 2),
+        }
+    }
+
+    /// Both official training branches. One-to-one towers receive detached body features so their
+    /// criterion cannot update the backbone.
+    #[cfg(feature = "training")]
+    pub fn forward_dual(&self, features: Yolov10Features<B>) -> DualRawPredictions<B> {
+        let Yolov10Features { p3, p4, p5 } = features;
+        let (o2m_boxes_p3, o2m_scores_p3) = self.o2m_p3.forward(p3.clone());
+        let (o2m_boxes_p4, o2m_scores_p4) = self.o2m_p4.forward(p4.clone());
+        let (o2m_boxes_p5, o2m_scores_p5) = self.o2m_p5.forward(p5.clone());
+        let one_to_many = RawPredictions {
+            boxes: Tensor::cat(vec![o2m_boxes_p3, o2m_boxes_p4, o2m_boxes_p5], 2),
+            scores: Tensor::cat(vec![o2m_scores_p3, o2m_scores_p4, o2m_scores_p5], 2),
+        };
+        let (o2o_boxes_p3, o2o_scores_p3) = self.p3.forward(p3.detach());
+        let (o2o_boxes_p4, o2o_scores_p4) = self.p4.forward(p4.detach());
+        let (o2o_boxes_p5, o2o_scores_p5) = self.p5.forward(p5.detach());
+        DualRawPredictions {
+            one_to_many,
+            one_to_one: RawPredictions {
+                boxes: Tensor::cat(vec![o2o_boxes_p3, o2o_boxes_p4, o2o_boxes_p5], 2),
+                scores: Tensor::cat(vec![o2o_scores_p3, o2o_scores_p4, o2o_scores_p5], 2),
+            },
         }
     }
 
@@ -209,6 +243,12 @@ impl Yolov10HeadConfig {
             p3: config(self.p3_channels).init(device),
             p4: config(self.p4_channels).init(device),
             p5: config(self.p5_channels).init(device),
+            #[cfg(feature = "training")]
+            o2m_p3: config(self.p3_channels).init(device),
+            #[cfg(feature = "training")]
+            o2m_p4: config(self.p4_channels).init(device),
+            #[cfg(feature = "training")]
+            o2m_p5: config(self.p5_channels).init(device),
         }
     }
 }

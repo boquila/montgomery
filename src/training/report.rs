@@ -106,6 +106,28 @@ impl RunDirectory {
         )
     }
 
+    pub fn write_environment(
+        &self,
+        adapter: &str,
+        dataset: &ResolvedDataset,
+    ) -> Result<(), std::io::Error> {
+        let metadata = serde_json::json!({
+            "format": "boquilens-training-run-v1",
+            "crate_version": env!("CARGO_PKG_VERSION"),
+            "backend": "burn-wgpu",
+            "adapter": adapter,
+            "dataset_fingerprint": dataset.fingerprint,
+            "references": {
+                "ultralytics": { "version": "8.4.117", "commit": "461196cf0", "license": "AGPL-3.0" },
+                "yolox": { "version": "0.1.1rc0", "license": "Apache-2.0" }
+            }
+        });
+        fs::write(
+            self.root.join("environment.json"),
+            serde_json::to_vec_pretty(&metadata).map_err(std::io::Error::other)?,
+        )
+    }
+
     pub fn write_parameter_groups(
         &self,
         groups: &ParameterGroupManifest,

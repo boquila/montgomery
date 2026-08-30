@@ -120,6 +120,13 @@ or integrated adapters for the x scales, autotune cache portability across drive
 
 ## M2 — one trainable detector
 
+Status (2026-08-30): implementation is feature-gated and active. Raw YOLOX/TAL/dual-head forwards,
+native criteria, deterministic loaders, accumulation, selective decay, EMA/full-state checkpoints,
+resume, and the train/val/export command surface are present. EMA detector validation now reports
+source-space box AP with family-correct postprocessing. The milestone remains open until pretrained
+fine-tuning and detector export complete the public-predictor loop, and the official one-step,
+tiny-overfit, and COCO8 gates are recorded.
+
 Finish the YOLOX vertical first because its license is permissive and the inference implementation
 already exists.
 

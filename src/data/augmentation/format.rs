@@ -1,6 +1,6 @@
 use super::{
     mask::{self, IndexedMask},
-    sample::{AugSample, AugmentationError, ColorOrder},
+    sample::{AugSample, AugmentationError, ColorOrder, GeometryMetadata},
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -25,6 +25,8 @@ pub struct FormattedDetectionSample {
     pub classes: Vec<u32>,
     pub boxes_xywh_normalized: Vec<[f32; 4]>,
     pub masks: Option<MaskTargets>,
+    /// Reversible source-to-canvas transform retained for validation and mask projection.
+    pub geometry: GeometryMetadata,
 }
 
 pub fn apply(
@@ -35,6 +37,7 @@ pub fn apply(
     retain_bgr: bool,
 ) -> Result<FormattedDetectionSample, AugmentationError> {
     sample.validate()?;
+    let geometry = sample.geometry.clone();
     let w = sample.image.width();
     let h = sample.image.height();
     sample.instances.denormalize(w as f32, h as f32);
@@ -92,6 +95,7 @@ pub fn apply(
         classes: sample.classes,
         boxes_xywh_normalized: boxes,
         masks,
+        geometry,
     })
 }
 

@@ -2184,7 +2184,7 @@ fn image_to_tensor<B: Backend>(image: DynamicImage, device: &Device<B>) -> Tenso
 /// strongest (anchor, class) pairs among them, and finally apply the confidence threshold. No
 /// non-maximum suppression is applied because the one2one head is trained to emit one prediction
 /// per object.
-fn end2end_topk_detections<B: Backend>(
+pub(crate) fn end2end_topk_detections<B: Backend>(
     boxes: Tensor<B, 3>,
     scores: Tensor<B, 3>,
     max_detections: usize,

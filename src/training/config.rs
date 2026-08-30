@@ -198,6 +198,11 @@ impl TrainingConfig {
                 "gradient_clip must be finite and positive",
             ));
         }
+        if !self.weight_decay.is_finite() || self.weight_decay < 0.0 {
+            return Err(ConfigError::new(
+                "weight_decay must be finite and non-negative",
+            ));
+        }
         self.augmentation
             .resolve(self.model.task, true)
             .map_err(|error| ConfigError::new(error.to_string()))?;

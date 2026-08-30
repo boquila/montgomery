@@ -72,6 +72,23 @@ pub fn tensor_loss<B: Backend>(
     targets: &[Vec<TalGroundTruth>],
     config: DetectionLossConfig,
 ) -> Result<LossOutput<B>, &'static str> {
+    Ok(tensor_loss_with_matches(raw_boxes, raw_scores, levels, targets, config)?.0)
+}
+
+/// Detection criterion plus the positive anchor/target mapping consumed by prototype-mask loss.
+pub fn tensor_loss_with_matches<B: Backend>(
+    raw_boxes: Tensor<B, 3>,
+    raw_scores: Tensor<B, 3>,
+    levels: &[FeatureLevelLayout],
+    targets: &[Vec<TalGroundTruth>],
+    config: DetectionLossConfig,
+) -> Result<
+    (
+        LossOutput<B>,
+        Vec<crate::training::loss::segmentation::MaskMatch>,
+    ),
+    &'static str,
+> {
     let [batch, box_channels, anchor_count] = raw_boxes.dims();
     let [score_batch, classes, score_anchors] = raw_scores.dims();
     if score_batch != batch
@@ -148,8 +165,9 @@ pub fn tensor_loss<B: Backend>(
     let mut dense_distribution = vec![0_f32; batch * anchor_count * 4 * config.reg_max];
     let mut foreground = 0;
     let mut target_count = 0;
-    for image in 0..batch {
-        target_count += targets[image].len();
+    let mut mask_matches = Vec::new();
+    for (image, image_targets) in targets.iter().enumerate().take(batch) {
+        target_count += image_targets.len();
         let predictions = (0..anchor_count)
             .map(|anchor| {
                 let box_offset = (image * anchor_count + anchor) * 4;
@@ -162,8 +180,8 @@ pub fn tensor_loss<B: Backend>(
                 })
             })
             .collect::<Result<Vec<_>, &'static str>>()?;
-        for matched in assign(&targets[image], &predictions, &anchors, config.top_k)? {
-            let truth = &targets[image][matched.gt_index];
+        for matched in assign(image_targets, &predictions, &anchors, config.top_k)? {
+            let truth = &image_targets[matched.gt_index];
             if truth.class_id >= classes {
                 return Err("target class is outside prediction channels");
             }
@@ -177,6 +195,17 @@ pub fn tensor_loss<B: Backend>(
             dense_scores[flat * classes + truth.class_id] = matched.target_score;
             dense_weights[flat] = matched.target_score;
             foreground += 1;
+            mask_matches.push(crate::training::loss::segmentation::MaskMatch {
+                batch_index: image,
+                anchor_index: matched.anchor_index,
+                target_index: matched.gt_index,
+                normalized_box: crate::training::geometry::BoxXyxy::new([
+                    truth.bbox.xmin / config.image_size[1] as f32,
+                    truth.bbox.ymin / config.image_size[0] as f32,
+                    truth.bbox.xmax / config.image_size[1] as f32,
+                    truth.bbox.ymax / config.image_size[0] as f32,
+                ])?,
+            });
             let anchor = anchors[matched.anchor_index];
             let distances = [
                 anchor.grid_xy[0] - truth.bbox.xmin / anchor.stride,
@@ -266,13 +295,16 @@ pub fn tensor_loss<B: Backend>(
         scalar_value(regression_loss),
     );
     let value = scalar_value(total.clone());
-    Ok(LossOutput {
-        total,
-        components,
-        targets: target_count,
-        foreground,
-        finite: value.is_finite(),
-    })
+    Ok((
+        LossOutput {
+            total,
+            components,
+            targets: target_count,
+            foreground,
+            finite: value.is_finite(),
+        },
+        mask_matches,
+    ))
 }
 
 fn ciou_tensor<B: Backend>(predicted: Tensor<B, 3>, target: Tensor<B, 3>) -> Tensor<B, 3> {

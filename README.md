@@ -11,10 +11,10 @@ or ONNX Runtime.
 Every model runs **object detection** on COCO-80 classes at 640 px input; the YOLO11-seg,
 YOLOv8-seg, and YOLO26-seg variants add **instance segmentation**, and the YOLO26-cls, YOLO11-cls,
 and YOLOv8-cls variants run
-**image classification** on ImageNet-1k at 224 px. The only runtime mode is **Predict** (via the
-CLI and
-the Rust API); training and validation are out of scope. Experimental models additionally support a
-one-time `pack-weights` conversion into boquilens' native Burnpack format.
+**image classification** on ImageNet-1k at 224 px. Default builds expose **Predict**. The
+non-default `training` feature adds experimental native WGPU `train`, `val`, and training-checkpoint
+`export` commands. Experimental models additionally support a one-time `pack-weights` conversion
+into boquilens' native Burnpack format.
 
 | Model    | Status       | Task                        | Modes   | Variants                     | Weights                          |
 | -------- | ------------ | --------------------------- | ------- | ---------------------------- | -------------------------------- |
@@ -36,10 +36,23 @@ Ultralytics-family weights are AGPL-3.0, and the native artifacts derived from t
 license (see [NOTICE](NOTICE)). Every detect model runs at 640 px input; note that YOLOX-Tiny's
 official evaluation resolution is 416 px, so its published mAP (32.8) does not transfer one-to-one.
 
-The non-default `training` Cargo feature exposes experimental native training building blocks,
-including deterministic detect/segment/classify augmentation; it does not add a public training
-CLI yet. See [AUGMENTATION_COMPATIBILITY.md](AUGMENTATION_COMPATIBILITY.md) for the pinned oracle,
-supported policies, and parity methodology.
+The native trainer accepts Ultralytics-style dataset YAML and uses deterministic augmentation,
+padded targets, differentiable family-specific criteria, accumulation, selective decay, and
+full-fp32 model/optimizer/EMA checkpoints with epoch-boundary resume. Detector/segment training
+currently covers YOLOX, YOLOv3-Tiny-U, YOLOv10, YOLO11, and YOLO26; YOLOv8 classification is also
+wired. It consumes YOLO labels (polygons for segmentation), while classification uses class
+folders. Classification validation/export and detector box validation (AP50 and AP50--95) are
+wired into the CLI. YOLOv8 detect/segment, YOLO12 detect, segmentation metrics, detector/segment
+artifact export, and pretrained fine-tuning remain release gates, so training stays experimental.
+
+```console
+cargo run --locked --features training -- train --help
+cargo run --locked --features training -- val --help
+cargo run --locked --features training -- export --help
+```
+
+See [AUGMENTATION_COMPATIBILITY.md](AUGMENTATION_COMPATIBILITY.md) for augmentation parity and
+[TRAINING_IMPLEMENTATION_PLAN.md](TRAINING_IMPLEMENTATION_PLAN.md) for the remaining release gates.
 
 ## ONNX export
 

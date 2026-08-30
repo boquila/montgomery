@@ -2,8 +2,8 @@
 //!
 //! [`body`] implements the complete backbone/neck for every scale and produces the P3/P4/P5
 //! tensors consumed by the Ultralytics Detect head. YOLO26 is DFL-free (`reg_max = 1`) and
-//! end-to-end (`end2end = True`), so only the NMS-free one2one inference branch is implemented;
-//! the training-only one2many branch is not loaded from official checkpoints. For the m/l/x
+//! end-to-end (`end2end = True`); default builds contain the NMS-free one-to-one branch, while the
+//! `training` feature restores and loads the one-to-many branch. For the m/l/x
 //! scales `parse_model` forces the C3k chain onto the early backbone stages, so those variants
 //! declare a structurally different body graph.
 

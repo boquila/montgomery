@@ -52,3 +52,24 @@ fn wgpu_autodiff_capability() {
     assert!(output.as_slice::<f32>().unwrap()[0].is_finite());
     assert!(!optimizer.to_record().is_empty());
 }
+
+#[test]
+fn validation_backend_does_not_mutate_batch_norm_state() {
+    type TrainBackend = Autodiff<burn_flex::Flex>;
+    let device = Default::default();
+    let model = Spike::<TrainBackend>::init(&device);
+    let input = Tensor::random([2, 3, 16, 16], Distribution::Default, &device);
+    let _ = model.forward(input).into_data();
+    let valid = model.valid();
+    let before_mean = valid.bn.running_mean.value().into_data();
+    let before_var = valid.bn.running_var.value().into_data();
+    let _ = valid
+        .forward(Tensor::random(
+            [2, 3, 16, 16],
+            Distribution::Default,
+            &device,
+        ))
+        .into_data();
+    assert_eq!(before_mean, valid.bn.running_mean.value().into_data());
+    assert_eq!(before_var, valid.bn.running_var.value().into_data());
+}

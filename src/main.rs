@@ -4,6 +4,10 @@ use std::path::PathBuf;
 use boquilens::export::{
     CheckpointState, ExternalDataPolicy, OnnxExportOptions, OnnxPrecision, OnnxProfile, export_onnx,
 };
+#[cfg(feature = "training")]
+use boquilens::training::runtime::{
+    TrainingRequest, export as export_training, train as train_native, validate as validate_native,
+};
 use boquilens::{
     ModelId, PredictOptions, Predictor, annotate, annotate_segmentation, pack_weights,
 };
@@ -43,6 +47,62 @@ enum Command {
     /// Export the exact loaded Burn model weights to a validated portable ONNX artifact.
     #[cfg(feature = "onnx")]
     ExportOnnx(ExportOnnxArgs),
+    /// Train a model with the native Burn/WGPU trainer.
+    #[cfg(feature = "training")]
+    Train(TrainArgs),
+    /// Validate and inspect a resumable native training checkpoint.
+    #[cfg(feature = "training")]
+    Val(ValArgs),
+    /// Export a native training checkpoint to the existing inference Burnpack format.
+    #[cfg(feature = "training")]
+    Export(ExportTrainingArgs),
+}
+
+#[cfg(feature = "training")]
+#[derive(Debug, ClapArgs)]
+struct TrainArgs {
+    #[arg(long)]
+    model: ModelId,
+    #[arg(long)]
+    data: PathBuf,
+    #[arg(long, default_value_t = 100)]
+    epochs: usize,
+    #[arg(long, default_value_t = 8)]
+    batch: usize,
+    #[arg(long, default_value_t = 1)]
+    accumulation: usize,
+    #[arg(long)]
+    imgsz: Option<usize>,
+    #[arg(long, default_value_t = 0)]
+    seed: u64,
+    #[arg(long, default_value = "runs")]
+    project: PathBuf,
+    #[arg(long, default_value = "train")]
+    name: String,
+    /// Run data -> forward -> loss -> backward without mutating model or optimizer state.
+    #[arg(long)]
+    dry_run: bool,
+    /// Resume a full native checkpoint. Model, task, classes, and dataset metadata are immutable.
+    #[arg(long)]
+    resume: Option<PathBuf>,
+}
+
+#[cfg(feature = "training")]
+#[derive(Debug, ClapArgs)]
+struct ValArgs {
+    #[arg(long)]
+    checkpoint: PathBuf,
+    #[arg(long)]
+    json: bool,
+}
+
+#[cfg(feature = "training")]
+#[derive(Debug, ClapArgs)]
+struct ExportTrainingArgs {
+    #[arg(long)]
+    checkpoint: PathBuf,
+    #[arg(long)]
+    output: PathBuf,
 }
 
 #[cfg(feature = "onnx")]
@@ -187,6 +247,55 @@ fn main() -> boquilens::Result<()> {
         }
         #[cfg(feature = "onnx")]
         Command::ExportOnnx(args) => export_onnx_command(args),
+        #[cfg(feature = "training")]
+        Command::Train(args) => {
+            let run = train_native(TrainingRequest {
+                model: args.model,
+                data: args.data,
+                epochs: args.epochs,
+                batch_size: args.batch,
+                accumulation: args.accumulation,
+                image_size: args.imgsz,
+                seed: args.seed,
+                run_root: args.project,
+                name: args.name,
+                dry_run: args.dry_run,
+                resume: args.resume,
+            })?;
+            eprintln!("Training run: {}", run.display());
+            Ok(())
+        }
+        #[cfg(feature = "training")]
+        Command::Val(args) => {
+            let summary = validate_native(args.checkpoint)?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&summary)?);
+            } else if let Some(metrics) = &summary.box_metrics {
+                println!(
+                    "{} {} images: box mAP50-95 {:.2}%, mAP50 {:.2}%",
+                    summary.model,
+                    summary.images,
+                    metrics.map_50_95 * 100.0,
+                    metrics.map_50 * 100.0,
+                );
+            } else {
+                println!(
+                    "{} {} images: loss {:.6}, top-1 {:.2}%, top-5 {:.2}%",
+                    summary.model,
+                    summary.images,
+                    summary.mean_loss.unwrap_or_default(),
+                    summary.top1_accuracy.unwrap_or_default() * 100.0,
+                    summary.top5_accuracy.unwrap_or_default() * 100.0,
+                );
+            }
+            Ok(())
+        }
+        #[cfg(feature = "training")]
+        Command::Export(args) => {
+            let output = export_training(args.checkpoint, args.output)?;
+            eprintln!("Exported inference artifact to {}", output.display());
+            Ok(())
+        }
     }
 }
 

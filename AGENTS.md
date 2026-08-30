@@ -291,3 +291,24 @@ Artifacts derived from them inherit AGPL-3.0. Keep provenance and license statem
 
 The next product work is a native weight distribution channel, `max_detections`, batching, YOLOX
 training/loss parity, and YOLOX latency rows in the README performance table.
+
+## Native training invariants
+
+- Training is non-default and WGPU-only (`--features training`); default inference graphs and
+  prediction outputs must remain unchanged.
+- Losses consume raw logits. YOLOX alone uses objectness; modern heads use TAL. YOLOv10/YOLO26
+  training builds carry one-to-many plus detached-feature one-to-one branches, and YOLO26 remains
+  DFL-free. YOLO26-seg also detaches one-to-one prototypes and semantic logits.
+- Assignment may synchronize detached values to the host, but totals remain connected to the model
+  graph and empty batches remain finite.
+- Resumable checkpoints are full precision and include model, optimizer, EMA, scheduler/loss
+  schedule, progress, model specification, ordered class names, and payload hashes. Inference
+  Burnpacks are lossy exports and are never resume inputs.
+- After training changes also run:
+
+```console
+cargo test --locked --features training training
+cargo clippy --locked --features training --all-targets -- -D warnings
+```
+
+Reference fixtures and generated datasets/checkpoints/reports belong under `target/`.

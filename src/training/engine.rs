@@ -18,7 +18,33 @@ use crate::training::{
 pub trait TrainableTask<B: AutodiffBackend>: AutodiffModule<B> {
     type Batch;
 
-    fn forward_loss(&self, batch: &Self::Batch) -> Result<LossOutput<B>, String>;
+    fn forward_loss(
+        &self,
+        batch: &Self::Batch,
+        context: LossContext,
+    ) -> Result<LossOutput<B>, String>;
+}
+
+/// Epoch-dependent criterion switches. Keeping this value outside model modules makes restart
+/// semantics explicit and lets the engine persist the exact loss recipe in [`TrainingState`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LossContext {
+    pub yolox_l1: bool,
+    pub one_to_many: f32,
+    pub one_to_one: f32,
+}
+
+impl LossContext {
+    fn from_state(state: &TrainingState) -> Self {
+        let (one_to_many, one_to_one) = state.dual_loss.as_ref().map_or((1.0, 1.0), |schedule| {
+            (schedule.one_to_many, schedule.one_to_one)
+        });
+        Self {
+            yolox_l1: state.yolox_l1,
+            one_to_many,
+            one_to_one,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -62,7 +88,16 @@ impl Trainer {
             total_steps,
         )
         .map_err(|error| EngineError(error.into()))?;
-        let state = TrainingState::new(config.seed);
+        let mut state = TrainingState::new(config.seed);
+        if matches!(
+            crate::training::dispatch::recipe_for(config.model.architecture).loss,
+            crate::training::dispatch::LossFamily::Yolo26DualDirect
+                | crate::training::dispatch::LossFamily::Yolo26DualSegment
+        ) {
+            state.dual_loss = Some(crate::training::state::DualLossSchedule::yolo26(
+                config.epochs,
+            ));
+        }
         let run = RunDirectory::create(&config, name).map_err(EngineError::io)?;
         Ok(Self {
             config,
@@ -115,7 +150,9 @@ impl Trainer {
             let group_end = (group_start + self.config.accumulation).min(batches.len());
             let group_len = group_end - group_start;
             for (offset, batch) in batches[group_start..group_end].iter().enumerate() {
-                let output = model.forward_loss(batch).map_err(EngineError)?;
+                let output = model
+                    .forward_loss(batch, LossContext::from_state(&self.state))
+                    .map_err(EngineError)?;
                 let total_value = scalar_value(output.total.clone());
                 if !output.finite || !total_value.is_finite() {
                     return Err(EngineError(format!(
@@ -151,6 +188,11 @@ impl Trainer {
             }
             let lr = self.scheduler.step();
             model = optimizer.step(lr, model, accumulator.grads());
+            model = crate::training::optimizer::apply_selective_weight_decay(
+                model,
+                lr,
+                self.config.weight_decay,
+            );
             self.state.optimizer_step += 1;
             self.state.accumulation_position = 0;
             after_step(&model, self.state.optimizer_step).map_err(EngineError)?;
@@ -173,6 +215,14 @@ impl Trainer {
         }
         self.state
             .resolve_augmentation_phase(self.config.epochs, self.config.augmentation.close_mosaic);
+        if matches!(
+            crate::training::dispatch::recipe_for(self.config.model.architecture).loss,
+            crate::training::dispatch::LossFamily::YoloxSimOta
+        ) {
+            self.state.no_augmentation =
+                self.state.augmentation_phase == crate::data::augmentation::PipelinePhase::Closed;
+            self.state.yolox_l1 = self.state.no_augmentation;
+        }
         Ok((
             model,
             optimizer,

@@ -84,13 +84,18 @@ pub fn apply(mut sample: AugSample, p: LetterBoxParams) -> Result<AugSample, Aug
                 .copy_from_slice(resized.pixel(x, y));
         }
     }
+    let previous_ratio = sample.geometry.ratio;
+    let previous_pad = sample.geometry.pad;
     sample.instances.denormalize(old_w as f32, old_h as f32);
     sample.instances.scale(ratio[0], ratio[1]);
     sample.instances.pad(left as f32, top as f32)?;
     sample.image = output;
     sample.geometry.current_shape = [sample.image.height(), sample.image.width()];
-    sample.geometry.ratio = ratio;
-    sample.geometry.pad = [left as f32, top as f32];
+    sample.geometry.ratio = [previous_ratio[0] * ratio[0], previous_ratio[1] * ratio[1]];
+    sample.geometry.pad = [
+        previous_pad[0] * ratio[0] + left as f32,
+        previous_pad[1] * ratio[1] + top as f32,
+    ];
     sample.geometry.reversible = true;
     sample.validate()?;
     Ok(sample)
@@ -123,5 +128,30 @@ mod tests {
         let o = apply(s, LetterBoxParams::validation(32)).unwrap();
         assert_eq!([o.image.height(), o.image.width()], [32, 32]);
         assert_eq!(o.instances.boxes()[0].0, [6., 11., 26., 21.]);
+    }
+
+    #[test]
+    fn composes_loader_resize_with_letterbox_geometry() {
+        let s = AugSample {
+            image: ByteImage::filled(20, 10, 3, ColorOrder::Bgr, 0),
+            classes: vec![],
+            instances: Instances::new(vec![], BoxFormat::Xyxy, false, None).unwrap(),
+            source: SourceMetadata {
+                primary_id: "x".into(),
+                primary_index: 0,
+                mixed_indexes: vec![],
+            },
+            geometry: GeometryMetadata {
+                original_shape: [20, 40],
+                current_shape: [10, 20],
+                ratio: [0.5, 0.5],
+                pad: [0.0, 0.0],
+                reversible: true,
+            },
+        };
+        let o = apply(s, LetterBoxParams::validation(32)).unwrap();
+        assert_eq!(o.geometry.ratio, [0.5, 0.5]);
+        assert_eq!(o.geometry.pad, [6.0, 11.0]);
+        assert_eq!(o.geometry.current_shape, [32, 32]);
     }
 }

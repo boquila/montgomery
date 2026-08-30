@@ -29,7 +29,8 @@ use {
 /// checkpoint key layout.
 #[cfg(feature = "pretrained")]
 fn pytorch_store(path: impl Into<PathBuf>) -> PytorchStore {
-    PytorchStore::from_file(path)
+    #[allow(unused_mut)]
+    let mut store = PytorchStore::from_file(path)
         .with_top_level_key("model")
         // Body layers retain their Ultralytics graph indices. The head is model.23, so this
         // rule must not match it.
@@ -131,14 +132,35 @@ fn pytorch_store(path: impl Into<PathBuf>) -> PytorchStore {
         .with_key_remapping(
             "model\\.23\\.one2one_cv3\\.2\\.2\\.(.+)",
             "head.p5.cls_out.$1",
-        )
+        );
+    #[cfg(feature = "training")]
+    for (scale, branch) in [(0, "p3"), (1, "p4"), (2, "p5")] {
+        for (layer, name) in [(0, "box_0"), (1, "box_1"), (2, "box_out")] {
+            store = store.with_key_remapping(
+                format!(r"model\.23\.cv2\.{scale}\.{layer}\.(.+)"),
+                format!("head.o2m_{branch}.{name}.$1"),
+            );
+        }
+        for (path, name) in [
+            ("0\\.0", "cls_dw_0"),
+            ("0\\.1", "cls_pw_0"),
+            ("1\\.0", "cls_dw_1"),
+            ("1\\.1", "cls_pw_1"),
+            ("2", "cls_out"),
+        ] {
+            store = store.with_key_remapping(
+                format!(r"model\.23\.cv3\.{scale}\.{path}\.(.+)"),
+                format!("head.o2m_{branch}.{name}.$1"),
+            );
+        }
+    }
+    store
 }
 
 /// Native Burn YOLO26n model.
 ///
-/// Only the inference path is implemented: the body feeds the end-to-end one2one detection head
-/// whose predictions are decoded to source-space candidates. The training-only one2many branch of
-/// the official checkpoint is not loaded.
+/// The inference path decodes the end-to-end one-to-one head to source-space candidates. Training
+/// builds expose both official raw branches with detached body inputs for one-to-one.
 #[derive(Module, Debug)]
 pub struct Yolo26N<B: Backend> {
     body: Yolo26BodySmall<B>,
@@ -152,6 +174,11 @@ impl<B: Backend> Yolo26N<B> {
 
     pub fn forward_train(&self, input: Tensor<B, 4>) -> RawPredictions<B> {
         self.head.forward_raw(self.body.forward(input))
+    }
+
+    #[cfg(feature = "training")]
+    pub fn forward_train_dual(&self, input: Tensor<B, 4>) -> super::head::DualRawPredictions<B> {
+        self.head.forward_dual(self.body.forward(input))
     }
 
     /// Import tensor-only state exported from an official Ultralytics YOLO26n checkpoint.
@@ -225,6 +252,11 @@ impl<B: Backend> Yolo26S<B> {
 
     pub fn forward_train(&self, input: Tensor<B, 4>) -> RawPredictions<B> {
         self.head.forward_raw(self.body.forward(input))
+    }
+
+    #[cfg(feature = "training")]
+    pub fn forward_train_dual(&self, input: Tensor<B, 4>) -> super::head::DualRawPredictions<B> {
+        self.head.forward_dual(self.body.forward(input))
     }
 
     /// Import tensor-only state exported from an official Ultralytics YOLO26s checkpoint.
@@ -301,6 +333,11 @@ impl<B: Backend> Yolo26M<B> {
         self.head.forward_raw(self.body.forward(input))
     }
 
+    #[cfg(feature = "training")]
+    pub fn forward_train_dual(&self, input: Tensor<B, 4>) -> super::head::DualRawPredictions<B> {
+        self.head.forward_dual(self.body.forward(input))
+    }
+
     /// Import tensor-only state exported from an official Ultralytics YOLO26m checkpoint.
     #[cfg(feature = "pretrained")]
     pub fn load_pytorch_weights(
@@ -374,6 +411,11 @@ impl<B: Backend> Yolo26L<B> {
         self.head.forward_raw(self.body.forward(input))
     }
 
+    #[cfg(feature = "training")]
+    pub fn forward_train_dual(&self, input: Tensor<B, 4>) -> super::head::DualRawPredictions<B> {
+        self.head.forward_dual(self.body.forward(input))
+    }
+
     /// Import tensor-only state exported from an official Ultralytics YOLO26l checkpoint.
     #[cfg(feature = "pretrained")]
     pub fn load_pytorch_weights(
@@ -445,6 +487,11 @@ impl<B: Backend> Yolo26X<B> {
 
     pub fn forward_train(&self, input: Tensor<B, 4>) -> RawPredictions<B> {
         self.head.forward_raw(self.body.forward(input))
+    }
+
+    #[cfg(feature = "training")]
+    pub fn forward_train_dual(&self, input: Tensor<B, 4>) -> super::head::DualRawPredictions<B> {
+        self.head.forward_dual(self.body.forward(input))
     }
 
     /// Import tensor-only state exported from an official Ultralytics YOLO26x checkpoint.

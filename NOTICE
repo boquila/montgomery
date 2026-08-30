@@ -57,6 +57,11 @@ metadata and JSON sidecar: Ultralytics-family artifacts are AGPL-3.0 by default 
 licensed terms applicable to the supplied model), while official YOLOX artifacts retain
 Apache-2.0 provenance. ONNX export does not relicense user datasets or checkpoints.
 
+The development-only training fixture exporters run the same pinned Ultralytics source and the
+official YOLOX 0.1.1rc0 source to record loss/gradient/optimizer parity evidence. Generated fixtures
+are not distributed with boquilens; Ultralytics-derived fixtures inherit AGPL-3.0 and official
+YOLOX-derived fixtures retain Apache-2.0 provenance.
+
 The classification RandAugment policy structure and RandomErasing/RandomResizedCrop behavior are
 adapted from torchvision, distributed under the BSD 3-Clause License. The applicable license text
 is included in LICENSE-TORCHVISION. PyTorch and torchvision do not endorse boquilens.
