@@ -308,12 +308,13 @@ fn combine_dual<B: burn::tensor::backend::Backend>(
     for (name, value) in one_to_one.components {
         components.insert(format!("one_to_one_{name}"), value);
     }
+    let total_value =
+        one_to_many.total_value * weights[0] + one_to_one.total_value * weights[1];
     let total = one_to_many.total * weights[0] as f64 + one_to_one.total * weights[1] as f64;
-    let finite = one_to_many.finite
-        && one_to_one.finite
-        && crate::training::loss::common::scalar_value(total.clone()).is_finite();
+    let finite = one_to_many.finite && one_to_one.finite && total_value.is_finite();
     crate::training::loss::common::LossOutput {
         total,
+        total_value,
         components,
         targets: one_to_many.targets.max(one_to_one.targets),
         foreground: one_to_many.foreground + one_to_one.foreground,
@@ -399,6 +400,7 @@ macro_rules! yolo11_segment_task {
                 ).map_err(str::to_string)?;
                 let mask_value = crate::training::loss::common::scalar_value(mask.clone());
                 detection.total = detection.total + mask * 7.5;
+                detection.total_value += mask_value * 7.5;
                 detection.components.insert("mask_loss".into(), mask_value);
                 detection.finite &= mask_value.is_finite();
                 Ok(detection)
@@ -479,10 +481,12 @@ macro_rules! yolo26_segment_task {
                 let many_semantic_value = crate::training::loss::common::scalar_value(many_semantic.clone());
                 let one_semantic_value = crate::training::loss::common::scalar_value(one_semantic.clone());
                 many.total = many.total + many_mask * 7.5 + many_semantic;
+                many.total_value += many_mask_value * 7.5 + many_semantic_value;
                 many.components.insert("mask_loss".into(), many_mask_value);
                 many.components.insert("semantic_loss".into(), many_semantic_value);
                 many.finite &= many_mask_value.is_finite() && many_semantic_value.is_finite();
                 one.total = one.total + one_mask * 7.5 + one_semantic;
+                one.total_value += one_mask_value * 7.5 + one_semantic_value;
                 one.components.insert("mask_loss".into(), one_mask_value);
                 one.components.insert("semantic_loss".into(), one_semantic_value);
                 one.finite &= one_mask_value.is_finite() && one_semantic_value.is_finite();

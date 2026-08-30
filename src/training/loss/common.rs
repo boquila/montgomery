@@ -8,6 +8,8 @@ use burn::tensor::{Tensor, activation::log_sigmoid, backend::Backend};
 /// `total` tensor always remains connected to the original model output.
 pub struct LossOutput<B: Backend> {
     pub total: Tensor<B, 1>,
+    /// Host diagnostic captured by the criterion's single scalar synchronization.
+    pub total_value: f32,
     pub components: BTreeMap<String, f32>,
     pub targets: usize,
     pub foreground: usize,

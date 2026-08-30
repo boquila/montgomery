@@ -312,6 +312,7 @@ pub fn tensor_loss_with_matches<B: Backend>(
     Ok((
         LossOutput {
             total,
+            total_value: value,
             components,
             targets: target_count,
             foreground,

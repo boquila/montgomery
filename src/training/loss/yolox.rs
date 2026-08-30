@@ -259,6 +259,7 @@ pub fn tensor_loss<B: Backend>(
     let value = scalar_value(total.clone());
     Ok(LossOutput {
         total,
+        total_value: value,
         components,
         targets: gt_count,
         foreground: foreground_count,

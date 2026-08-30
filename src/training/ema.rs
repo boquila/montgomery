@@ -1,10 +1,10 @@
 use serde::{Deserialize, Serialize};
 
 use burn::{
-    module::{Module, ModuleMapper, ModuleVisitor, Param, ParamId},
-    tensor::{Tensor, TensorData, backend::Backend},
+    module::{Module, ModuleMapper, ModuleVisitor, Param},
+    optim::GradientsParams,
+    tensor::{Tensor, backend::Backend},
 };
-use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EmaState {
@@ -49,62 +49,44 @@ impl EmaState {
 
 /// Update every floating model parameter and running buffer with one warm-decay EMA step.
 ///
-/// Burn's mapper API is dimension-generic, so the current model is first visited into host tensor
-/// data keyed by stable parameter IDs and then blended while mapping the EMA clone. This explicit
-/// synchronization is slower than a fused device kernel but is deterministic and covers BN
-/// running state as well as trainable parameters.
+/// Tensors are paired by stable parameter ID through Burn's dimension-erased parameter container,
+/// then blended on the backend device. This covers trainable parameters and BN running state
+/// without synchronizing every tensor to the host.
 pub fn update_model<B, M>(ema: M, current: &M, state: &mut EmaState) -> Result<M, &'static str>
 where
     B: Backend,
     M: Module<B>,
 {
     struct Collector {
-        values: BTreeMap<ParamId, TensorData>,
+        values: GradientsParams,
     }
     impl<B: Backend> ModuleVisitor<B> for Collector {
         fn visit_float<const D: usize>(&mut self, param: &Param<Tensor<B, D>>) {
-            self.values.insert(param.id, param.val().into_data());
+            self.values.register(param.id, param.val());
         }
     }
     let mut collector = Collector {
-        values: BTreeMap::new(),
+        values: GradientsParams::new(),
     };
     current.visit(&mut collector);
     let decay = state.next_decay() as f32;
     struct EmaMapper {
-        current: BTreeMap<ParamId, TensorData>,
+        current: GradientsParams,
         decay: f32,
         error: Option<&'static str>,
     }
     impl<B: Backend> ModuleMapper<B> for EmaMapper {
         fn map_float<const D: usize>(&mut self, param: Param<Tensor<B, D>>) -> Param<Tensor<B, D>> {
             let (id, tensor, mapper) = param.consume();
-            let Some(current) = self.current.remove(&id) else {
+            let Some(current) = self.current.remove::<B, D>(id) else {
                 self.error = Some("EMA model parameter IDs differ from current model");
                 return Param::from_mapped_value(id, tensor, mapper);
             };
-            let Ok(current_values) = current.as_slice::<f32>() else {
-                self.error = Some("EMA current parameter is not f32");
-                return Param::from_mapped_value(id, tensor, mapper);
-            };
-            let ema_data = tensor.clone().into_data();
-            let Ok(ema_values) = ema_data.as_slice::<f32>() else {
-                self.error = Some("EMA parameter is not f32");
-                return Param::from_mapped_value(id, tensor, mapper);
-            };
-            if current_values.len() != ema_values.len()
-                || current_values.iter().any(|value| !value.is_finite())
-            {
-                self.error = Some("EMA parameter shape differs or current value is non-finite");
+            if current.dims() != tensor.dims() {
+                self.error = Some("EMA and current parameter shapes differ");
                 return Param::from_mapped_value(id, tensor, mapper);
             }
-            let values = ema_values
-                .iter()
-                .zip(current_values)
-                .map(|(ema, current)| ema * self.decay + current * (1.0 - self.decay))
-                .collect::<Vec<_>>();
-            let device = tensor.device();
-            let tensor = Tensor::from_data(TensorData::new(values, ema_data.shape), &device);
+            let tensor = tensor * self.decay + current * (1.0 - self.decay);
             Param::from_mapped_value(id, tensor, mapper)
         }
     }

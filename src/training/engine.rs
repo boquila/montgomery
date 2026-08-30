@@ -8,7 +8,7 @@ use burn::{
 
 use crate::training::{
     TrainingConfig,
-    loss::common::{LossOutput, scalar_value},
+    loss::common::LossOutput,
     report::{RunDirectory, StepEvent},
     scheduler::LrScheduler,
     state::TrainingState,
@@ -153,7 +153,7 @@ impl Trainer {
                 let output = model
                     .forward_loss(batch, LossContext::from_state(&self.state))
                     .map_err(EngineError)?;
-                let total_value = scalar_value(output.total.clone());
+                let total_value = output.total_value;
                 if !output.finite || !total_value.is_finite() {
                     return Err(EngineError(format!(
                         "non-finite loss at epoch {} batch {}",

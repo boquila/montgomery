@@ -67,6 +67,7 @@ pub fn tensor_loss<B: Backend>(
     components.insert("classification_loss".into(), value);
     Ok(LossOutput {
         total,
+        total_value: value,
         components,
         targets: batch,
         foreground: batch,

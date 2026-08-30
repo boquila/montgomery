@@ -155,10 +155,19 @@ cargo run --locked --release --features training -- export --checkpoint runs/det
 Training, validation, resume, and export workflows are implemented and smoke-tested. Convergence
 and reference-quality parity are not yet established.
 
-This is a 10-epoch WGPU smoke run of YOLO26n-cls on a 10-class, 12-image ImageNet subset (batch 2).
-It verifies that optimization updates the model; it is not a quality benchmark.
+The comparison below uses YOLO26n-cls, the same pretrained checkpoint, 10 epochs, batch 2, 224 px,
+FP32, AdamW, and the same 12-image ImageNet-10 subset on an RTX 5080. Ultralytics was 3.9x faster
+end to end. The dataset is intentionally tiny, so this verifies the training path and exposes
+overhead; it is not a quality benchmark. Each implementation retains its native cosine-scheduler
+stepping and augmentation RNG, so the loss curves are not expected to be numerically identical.
+Ultralytics' time includes its automatic final validation; boquilens validation ran separately.
 
-![Native YOLO26n-cls training loss over 10 epochs](assets/training-loss.png)
+![boquilens and Ultralytics YOLO26n-cls training comparison](assets/training-comparison.png)
+
+The last checkpoints reached 8.3% vs 16.7% top-1 accuracy and 41.7% vs 58.3% top-5 on the 12-image
+validation split. One image changes accuracy by 8.3 points, so these values are not a quality
+conclusion. boquilens also wrote 298 MB of full resumable checkpoints versus 132 MB from
+Ultralytics; checkpoint I/O accounts for part of the timing gap.
 
 The supported augmentation contract is documented in
 [AUGMENTATION_COMPATIBILITY.md](AUGMENTATION_COMPATIBILITY.md).
