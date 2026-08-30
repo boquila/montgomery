@@ -169,11 +169,10 @@ belong under `target/` and must not be committed.
 
 - Public detections are continuous, unnormalized source-image `XYXY` box edges in pixels. They are
   not `XYWH` and not normalized; `xmax == width` and `ymax == height` are valid.
-- YOLOX uses its existing top-left/raw-pixel transform. The Ultralytics-family models use
-  Ultralytics-style stride-aligned rectangular letterboxing and RGB values normalized to `[0, 1]`.
-- YOLOX batch norm uses PyTorch defaults (eps 1e-5, momentum 0.1), not the Ultralytics convention
-  (eps 1e-3, momentum 0.03). Small running-variance channels make the epsilon difference visible at
-  inference time — the golden tests against the official YOLOX sources catch it.
+- YOLOX uses top-left letterboxing followed by RGB `/255` and ImageNet mean/std normalization. The
+  Ultralytics-family models use stride-aligned rectangular letterboxing and RGB values in `[0, 1]`.
+- YOLOX batch norm uses eps 1e-3 and momentum 0.03. The release checkpoints are state dicts, so
+  these non-serialized settings must match the official experiment constructor.
 - YOLOX uses the same native `.bpk` runtime contract as every other family. The official `.pth` is
   a conversion/parity input only, never the normal runtime format.
 - YOLOv10 (all scales) is NMS-free: its one2one head output is top-300 selected and

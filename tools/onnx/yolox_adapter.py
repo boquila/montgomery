@@ -71,6 +71,10 @@ def build(manifest: dict, workdir: Path) -> tuple[torch.nn.Module, list[str]]:
             act="silu",
         ),
     ).eval().float()
+    for module in model.modules():
+        if isinstance(module, torch.nn.BatchNorm2d):
+            module.eps = 1e-3
+            module.momentum = 0.03
     state = load_file(str((workdir / manifest["weights_file"]).resolve(strict=True)), device="cpu")
     expected = model.state_dict()
     missing = sorted(key for key in expected.keys() - state.keys() if not key.endswith("num_batches_tracked"))

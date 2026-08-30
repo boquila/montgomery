@@ -15,7 +15,7 @@ from pathlib import Path
 
 import torch
 
-from export_yolox_fixtures import SCALE_CONFIGS, build_shim, summarize
+from export_yolox_fixtures import SCALE_CONFIGS, build_shim, configure_batch_norm, summarize
 
 
 def main() -> None:
@@ -42,6 +42,7 @@ def main() -> None:
         YOLOXHead(80, scale["width"], in_channels=[256, 512, 1024],
                   depthwise=scale["depthwise"], act="silu"),
     ).train().float()
+    configure_batch_norm(model)
     checkpoint = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
     model.load_state_dict(checkpoint.get("model", checkpoint), strict=True)
     batch = torch.load(args.batch, map_location="cpu", weights_only=False)

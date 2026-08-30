@@ -173,7 +173,7 @@ impl<B: AutodiffBackend> TrainableTask<B> for Yolox<B> {
             })
             .collect::<Vec<_>>();
         yolox::tensor_loss(
-            self.forward_train(batch.images.clone() * 255.0),
+            self.forward_train(crate::data::normalize_yolox(batch.images.clone())),
             &targets,
             context.yolox_l1,
         )

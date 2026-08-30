@@ -23,17 +23,18 @@ from pathlib import Path
 import cv2
 import numpy as np
 import torch
+import torchvision
 from PIL import Image
 
 # Official per-scale hyperparameters, mirroring exps/default/*.py at tag 0.1.1rc0 (the release the
 # official checkpoints were trained with). Only nano uses depthwise convolutions.
 SCALE_CONFIGS = {
-    "yolox-nano": {"depth": 0.33, "width": 0.25, "depthwise": True},
-    "yolox-tiny": {"depth": 0.33, "width": 0.375, "depthwise": False},
-    "yolox-s": {"depth": 0.33, "width": 0.50, "depthwise": False},
-    "yolox-m": {"depth": 0.67, "width": 0.75, "depthwise": False},
-    "yolox-l": {"depth": 1.00, "width": 1.00, "depthwise": False},
-    "yolox-x": {"depth": 1.33, "width": 1.25, "depthwise": False},
+    "yolox-nano": {"depth": 0.33, "width": 0.25, "depthwise": True, "input": 416},
+    "yolox-tiny": {"depth": 0.33, "width": 0.375, "depthwise": False, "input": 416},
+    "yolox-s": {"depth": 0.33, "width": 0.50, "depthwise": False, "input": 640},
+    "yolox-m": {"depth": 0.67, "width": 0.75, "depthwise": False, "input": 640},
+    "yolox-l": {"depth": 1.00, "width": 1.00, "depthwise": False, "input": 640},
+    "yolox-x": {"depth": 1.33, "width": 1.25, "depthwise": False, "input": 640},
 }
 
 # Copied verbatim (except for this docstring) from the YOLOX checkout's yolox/utils/boxes.py so
@@ -113,6 +114,14 @@ def summarize(tensor: torch.Tensor) -> dict[str, object]:
     }
 
 
+def configure_batch_norm(model: torch.nn.Module) -> None:
+    """Apply the BN settings used by the official YOLOX experiment constructor."""
+    for module in model.modules():
+        if isinstance(module, torch.nn.BatchNorm2d):
+            module.eps = 1e-3
+            module.momentum = 0.03
+
+
 def build_shim(yolox_repo: Path, shim_dir: Path) -> None:
     """Assemble the importable package from the official checkout plus tiny shims."""
     models_src = yolox_repo / "yolox" / "models"
@@ -186,6 +195,7 @@ def main() -> None:
         YOLOXHead(80, scale["width"], in_channels=[256, 512, 1024],
                   depthwise=scale["depthwise"], act="silu"),
     )
+    configure_batch_norm(model)
 
     checkpoint_state = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
     state = checkpoint_state["model"] if "model" in checkpoint_state else checkpoint_state
@@ -196,7 +206,7 @@ def main() -> None:
     if source_bgr is None:
         raise FileNotFoundError(args.image)
     source_rgb = source_bgr[..., ::-1]
-    prepared_rgb = yolox_letterbox(source_bgr)[..., ::-1].copy()
+    prepared_rgb = yolox_letterbox(source_bgr, scale["input"])[..., ::-1].copy()
 
     source_path = args.output_dir / f"{args.model}-source-reference.png"
     input_path = args.output_dir / f"{args.model}-preprocessed-reference.png"
@@ -223,12 +233,35 @@ def main() -> None:
         backbone.dark5.register_forward_hook(capture("backbone_dark5")),
         model.backbone.register_forward_hook(capture("pafpn")),
     ]
-    input_tensor = torch.from_numpy(prepared_rgb).permute(2, 0, 1).unsqueeze(0).float()
+    input_tensor = torch.from_numpy(prepared_rgb).permute(2, 0, 1).unsqueeze(0).float() / 255.0
+    mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
+    std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
+    input_tensor = (input_tensor - mean) / std
     with torch.inference_mode():
         decoded = model(input_tensor)
     for hook in hooks:
         hook.remove()
     captured["head_decoded"] = decoded
+
+    rows = decoded[0]
+    centers = rows[:, :2]
+    half_size = rows[:, 2:4] * 0.5
+    boxes = torch.cat((centers - half_size, centers + half_size), dim=1)
+    class_confidence, class_id = rows[:, 5:].max(dim=1)
+    confidence = rows[:, 4] * class_confidence
+    keep = confidence >= 0.01
+    boxes = boxes[keep]
+    confidence = confidence[keep]
+    class_id = class_id[keep]
+    selected = torchvision.ops.batched_nms(boxes, confidence, class_id, 0.65)
+    detections = [
+        {
+            "class_id": int(class_id[index]),
+            "confidence": float(confidence[index]),
+            "box_xyxy": [float(value) for value in boxes[index]],
+        }
+        for index in selected
+    ]
 
     tensors = {
         "backbone_dark3": captured["backbone_dark3"],
@@ -245,12 +278,15 @@ def main() -> None:
         "checkpoint_sha256": file_sha256(args.checkpoint),
         "input_sha256": file_sha256(input_path),
         "tensors": {name: summarize(tensor) for name, tensor in tensors.items()},
+        "detections": detections,
     }
     fixture_path = args.output_dir / f"{args.model}-golden-v1.json"
     fixture_path.write_text(json.dumps(fixture, indent=2) + "\n", encoding="utf-8")
     print(f"wrote {fixture_path}")
     for name, tensor in tensors.items():
         print(f"{name}: {tuple(tensor.shape)}")
+    print(f"detections: {len(detections)}")
+    print(f"classes: {sorted({item['class_id'] for item in detections})}")
 
 
 if __name__ == "__main__":

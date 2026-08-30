@@ -260,19 +260,20 @@ mod tests {
         }
     }
 
-    /// The fixture's preprocessed reference is consumed raw: YOLOX models intentionally run on the
-    /// original [0, 255] pixel range without normalization.
+    /// Load the letterboxed fixture and apply the official YOLOX RGB normalization.
     fn load_reference_input(id: &str, device: &Device<Flex>) -> Tensor<Flex, 4> {
         let image = image::open(format!("target/{id}-preprocessed-reference.png"))
             .unwrap()
             .into_rgb8();
         let shape = [image.height() as usize, image.width() as usize, 3];
-        Tensor::<Flex, 3>::from_data(
+        let input = Tensor::<Flex, 3>::from_data(
             TensorData::new(image.into_raw(), shape).convert::<f32>(),
             device,
         )
         .permute([2, 0, 1])
         .unsqueeze::<4>()
+            / 255.0;
+        crate::data::normalize_yolox(input)
     }
 
     fn official_checkpoint_path(id: &str) -> PathBuf {

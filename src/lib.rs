@@ -586,13 +586,6 @@ impl ModelId {
             _ => DetectionPreprocess::Ultralytics,
         }
     }
-
-    const fn detection_input_scale(self) -> f64 {
-        match self.detection_preprocess() {
-            DetectionPreprocess::Yolox => 1.0,
-            DetectionPreprocess::Ultralytics => 1.0 / 255.0,
-        }
-    }
 }
 
 fn catalog_class_names(model_id: ModelId) -> Vec<String> {
@@ -1442,8 +1435,12 @@ impl<B: Backend> Predictor<B> {
                 LetterboxedImage::ultralytics(image, self.input_size, 32)
             }
         };
-        let input = image_to_tensor(prepared.image().clone(), &self.device).unsqueeze::<4>()
-            * self.model_id.detection_input_scale();
+        let input =
+            image_to_tensor(prepared.image().clone(), &self.device).unsqueeze::<4>() / 255.0;
+        let input = match self.model_id.detection_preprocess() {
+            DetectionPreprocess::Yolox => data::normalize_yolox(input),
+            DetectionPreprocess::Ultralytics => input,
+        };
         let boxes_by_class = match &self.model {
             RuntimeModel::Yolox(model) => {
                 run_classic_detections(model, input, self.options.iou, self.options.confidence)
@@ -1698,8 +1695,8 @@ impl<B: Backend> Predictor<B> {
             prepared.image().width() as usize,
             prepared.image().height() as usize,
         );
-        let input = image_to_tensor(prepared.image().clone(), &self.device).unsqueeze::<4>()
-            * self.model_id.detection_input_scale();
+        let input =
+            image_to_tensor(prepared.image().clone(), &self.device).unsqueeze::<4>() / 255.0;
         let output = match &self.model {
             RuntimeModel::Yolo11SegN(model) => {
                 run_classic_segmentations(model, input, self.options.iou, self.options.confidence)
@@ -2595,7 +2592,9 @@ mod tests {
 
                 let image = image::open("assets/dog_bike_man.jpg").unwrap();
                 let prepared = LetterboxedImage::yolox(&image, 416);
-                let input = image_to_tensor(prepared.image().clone(), &device).unsqueeze::<4>();
+                let input = data::normalize_yolox(
+                    image_to_tensor(prepared.image().clone(), &device).unsqueeze::<4>() / 255.0,
+                );
                 let flatten = |batches: Vec<Vec<Vec<BoundingBox>>>| {
                     batches
                         .into_iter()
@@ -2611,6 +2610,22 @@ mod tests {
                 let expected =
                     flatten(run_classic_detections(&official, input.clone(), 0.45, 0.25));
                 let actual = flatten(run_classic_detections(&artifact, input, 0.45, 0.25));
+
+                let classes = actual
+                    .iter()
+                    .map(|(class_id, _)| COCO_CLASSES[*class_id])
+                    .collect::<std::collections::HashSet<_>>();
+                assert!(
+                    actual.len() <= 10,
+                    "unexpectedly dense YOLOX output: {}",
+                    actual.len()
+                );
+                for expected in ["person", "bicycle", "dog"] {
+                    assert!(
+                        classes.contains(expected),
+                        "YOLOX missed {expected}: {classes:?}"
+                    );
+                }
 
                 // The common f16 artifact policy can move candidates across the confidence and
                 // NMS cutoffs. Require bidirectional agreement for the stable subset instead.
