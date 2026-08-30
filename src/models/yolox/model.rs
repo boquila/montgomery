@@ -260,20 +260,18 @@ mod tests {
         }
     }
 
-    /// Load the letterboxed fixture and apply the official YOLOX RGB normalization.
+    /// Load the raw RGB letterboxed fixture used by the released YOLOX checkpoints.
     fn load_reference_input(id: &str, device: &Device<Flex>) -> Tensor<Flex, 4> {
         let image = image::open(format!("target/{id}-preprocessed-reference.png"))
             .unwrap()
             .into_rgb8();
         let shape = [image.height() as usize, image.width() as usize, 3];
-        let input = Tensor::<Flex, 3>::from_data(
+        Tensor::<Flex, 3>::from_data(
             TensorData::new(image.into_raw(), shape).convert::<f32>(),
             device,
         )
         .permute([2, 0, 1])
         .unsqueeze::<4>()
-            / 255.0;
-        crate::data::normalize_yolox(input)
     }
 
     fn official_checkpoint_path(id: &str) -> PathBuf {

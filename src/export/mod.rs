@@ -246,7 +246,7 @@ fn export_staged(
     };
     let preprocessing = match spec.family {
         ExportFamily::Yolox => {
-            "top-left fit resize; pad bottom/right with 114; RGB divided by 255 then normalized with ImageNet mean/std"
+            "top-left fit resize; pad bottom/right with 114; RGB float pixels in [0,255]"
         }
         _ if spec.task == ExportTask::Classify => {
             "anti-aliased shortest-edge resize; centered 224 crop; RGB divided by 255"
@@ -299,7 +299,7 @@ fn export_staged(
             layout: "NCHW".into(),
             color: "RGB".into(),
             range: if spec.family == ExportFamily::Yolox {
-                [-2.117_904, 2.64]
+                [0.0, 255.0]
             } else {
                 [0.0, 1.0]
             },

@@ -169,8 +169,8 @@ belong under `target/` and must not be committed.
 
 - Public detections are continuous, unnormalized source-image `XYXY` box edges in pixels. They are
   not `XYWH` and not normalized; `xmax == width` and `ymax == height` are valid.
-- YOLOX uses top-left letterboxing followed by RGB `/255` and ImageNet mean/std normalization. The
-  Ultralytics-family models use stride-aligned rectangular letterboxing and RGB values in `[0, 1]`.
+- YOLOX release checkpoints use top-left letterboxing and raw RGB pixels. The Ultralytics-family
+  models use stride-aligned rectangular letterboxing and RGB values in `[0, 1]`.
 - YOLOX batch norm uses eps 1e-3 and momentum 0.03. The release checkpoints are state dicts, so
   these non-serialized settings must match the official experiment constructor.
 - YOLOX uses the same native `.bpk` runtime contract as every other family. The official `.pth` is

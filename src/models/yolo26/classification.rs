@@ -889,7 +889,7 @@ mod tests {
                 let fixture: GoldenFixture = serde_json::from_slice(
                     &std::fs::read(format!("target/{}-golden-v1.json", $id)).unwrap_or_else(|_| {
                         panic!(
-                            "generate fixtures with tools/export_yolo26_cls_fixtures.py --model {}",
+                            "generate fixtures with tools/export_classification_fixtures.py --model {}",
                             $id
                         )
                     }),
@@ -980,7 +980,7 @@ mod tests {
 
     /// Compare the classification runtime end to end against the official Ultralytics prediction
     /// on the reference image (top-5 classes and probabilities). Run the generator first:
-    /// `python tools/export_yolo26_cls_fixtures.py target/<id>.pt assets/dog_bike_man.jpg target --model <id>`
+    /// `python tools/export_classification_fixtures.py target/<id>.pt assets/dog_bike_man.jpg target --model <id>`
     #[cfg(feature = "pretrained")]
     macro_rules! cls_e2e_test {
         ($fn_name:ident, $config:ty, $id:literal) => {
@@ -992,7 +992,7 @@ mod tests {
                     std::path::PathBuf::from(format!("target/{}-e2e-expected.json", $id));
                 assert!(
                     expected_path.exists(),
-                    "generate the official expectation with tools/export_yolo26_cls_fixtures.py first"
+                    "generate the official expectation with tools/export_classification_fixtures.py first"
                 );
                 #[derive(Deserialize)]
                 struct Expected {

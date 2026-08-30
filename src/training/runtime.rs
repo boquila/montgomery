@@ -1560,7 +1560,7 @@ impl DetectionForward for Yolox<Wgpu> {
         images: Tensor<Wgpu, 4>,
         validation: &crate::training::config::ValidationConfig,
     ) -> Vec<Vec<Vec<crate::postprocess::BoundingBox>>> {
-        let output = self.forward(crate::data::normalize_yolox(images));
+        let output = self.forward(images * 255.0);
         let [batch, anchors, outputs] = output.dims();
         let boxes = output.clone().slice([0..batch, 0..anchors, 0..4]);
         let objectness = output.clone().slice([0..batch, 0..anchors, 4..5]);

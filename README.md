@@ -40,7 +40,8 @@ Python is needed only for the Ultralytics conversion step.
 cargo run --locked --release -- predict --model yolo26n --weights target/yolo26n-coco-ultralytics-v8.4-boquilens-v1.bpk --source assets/dog_bike_man.jpg
 ```
 
-The command prints detections and writes an annotated PNG beside the input image. Useful options:
+Detection and segmentation commands print results and write an annotated PNG. Classification
+commands print the top five classes. Useful options:
 
 ```console
 --json                 Print machine-readable output
@@ -52,15 +53,17 @@ The command prints detections and writes an annotated PNG beside the input image
 
 ## Supported models
 
-| Family | Model names | Tasks | Status |
-| --- | --- | --- | --- |
-| YOLOX | `yolox-nano`, `yolox-tiny`, `yolox-s`, `yolox-m`, `yolox-l`, `yolox-x` | Detect | Stable |
-| YOLOv3 | `yolov3-tinyu` | Detect | Experimental |
-| YOLOv8 | `yolov8n`, `yolov8s`, `yolov8m`, `yolov8l`, `yolov8x`; optionally add `-seg` or `-cls` | Detect, segment, classify | Experimental |
-| YOLOv10 | `yolov10n`, `yolov10s`, `yolov10m`, `yolov10b`, `yolov10l`, `yolov10x` | Detect | Experimental |
-| YOLO11 | `yolo11n`, `yolo11s`, `yolo11m`, `yolo11l`, `yolo11x`; optionally add `-seg` or `-cls` | Detect, segment, classify | Experimental |
-| YOLO12 | `yolo12n`, `yolo12s`, `yolo12m`, `yolo12l`, `yolo12x` | Detect | Experimental |
-| YOLO26 | `yolo26n`, `yolo26s`, `yolo26m`, `yolo26l`, `yolo26x`; optionally add `-seg` or `-cls` | Detect, segment, classify | Experimental |
+| Model | Variants | Tasks |
+| --- | --- | --- |
+| YOLOX | `nano, tiny, s, m, l, x` | Detect |
+| YOLOv3 | `tinyu` | Detect |
+| YOLOv8 | `n, s, m, l, x` | Detect, segment, classify |
+| YOLOv10 | `n, s, m, b, l, x` | Detect |
+| YOLO11 | `n, s, m, l, x` | Detect, segment, classify |
+| YOLO12 | `n, s, m, l, x` | Detect |
+| YOLO26 | `n, s, m, l, x` | Detect, segment, classify |
+
+YOLOX is stable. All other model families are experimental.
 
 Detect and segment models use COCO-80 classes. Classification models use ImageNet-1k and return
 the top five classes. YOLOX Nano/Tiny use 416 px inputs, classifiers use 224 px, and the remaining
@@ -78,6 +81,8 @@ cargo run --locked --release -- predict --model yolo11n-seg --weights target/yol
 # Classification
 cargo run --locked --release -- predict --model yolo26s-cls --weights target/yolo26s-cls-imagenet1k-ultralytics-v8.4-boquilens-v1.bpk --source image.jpg --json
 ```
+
+![Instance segmentation produced by YOLO11n-seg](assets/dog_bike_man-segmentation.png)
 
 ## Rust API
 
@@ -148,6 +153,9 @@ cargo run --locked --release --features training -- train --model yolo26n --data
 cargo run --locked --release --features training -- val --checkpoint runs/detect/train-.../checkpoints/last --json
 cargo run --locked --release --features training -- export --checkpoint runs/detect/train-.../checkpoints/last --output target/custom-yolo26n.bpk
 ```
+
+Training, validation, resume, and export workflows are implemented and smoke-tested. Convergence
+and reference-quality parity are not yet established.
 
 The supported augmentation contract is documented in
 [AUGMENTATION_COMPATIBILITY.md](AUGMENTATION_COMPATIBILITY.md).

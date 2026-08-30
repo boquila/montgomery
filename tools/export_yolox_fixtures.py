@@ -233,10 +233,7 @@ def main() -> None:
         backbone.dark5.register_forward_hook(capture("backbone_dark5")),
         model.backbone.register_forward_hook(capture("pafpn")),
     ]
-    input_tensor = torch.from_numpy(prepared_rgb).permute(2, 0, 1).unsqueeze(0).float() / 255.0
-    mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
-    std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
-    input_tensor = (input_tensor - mean) / std
+    input_tensor = torch.from_numpy(prepared_rgb).permute(2, 0, 1).unsqueeze(0).float()
     with torch.inference_mode():
         decoded = model(input_tensor)
     for hook in hooks:
@@ -249,11 +246,11 @@ def main() -> None:
     boxes = torch.cat((centers - half_size, centers + half_size), dim=1)
     class_confidence, class_id = rows[:, 5:].max(dim=1)
     confidence = rows[:, 4] * class_confidence
-    keep = confidence >= 0.01
+    keep = confidence >= 0.25
     boxes = boxes[keep]
     confidence = confidence[keep]
     class_id = class_id[keep]
-    selected = torchvision.ops.batched_nms(boxes, confidence, class_id, 0.65)
+    selected = torchvision.ops.batched_nms(boxes, confidence, class_id, 0.45)
     detections = [
         {
             "class_id": int(class_id[index]),

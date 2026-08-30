@@ -406,7 +406,7 @@ mod parity_tests {
                 let fixture: GoldenFixture = serde_json::from_slice(
                     &std::fs::read(format!("target/{}-golden-v1.json", $id)).unwrap_or_else(|_| {
                         panic!(
-                            "generate fixtures with tools/export_yolo26_cls_fixtures.py --model {}",
+                            "generate fixtures with tools/export_classification_fixtures.py --model {}",
                             $id
                         )
                     }),
@@ -554,7 +554,7 @@ mod parity_tests {
                     std::path::PathBuf::from(format!("target/{}-e2e-expected.json", $id));
                 assert!(
                     expected_path.exists(),
-                    "generate the official expectation with tools/export_yolo26_cls_fixtures.py first"
+                    "generate the official expectation with tools/export_classification_fixtures.py first"
                 );
                 #[derive(Deserialize)]
                 struct Expected {

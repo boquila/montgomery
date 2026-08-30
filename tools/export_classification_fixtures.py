@@ -1,10 +1,7 @@
-"""Export reproducible YOLO26-cls preprocessing and tensor parity fixtures.
+"""Export reproducible Ultralytics classification preprocessing and tensor parity fixtures.
 
-Covers every classify scale (n/s/m/l/x): pass ``--model yolo26n-cls`` with the matching official
-checkpoint. Also records the official Ultralytics top-5 prediction for the reference image as the
-end-to-end expectation. The generated files belong in ``target/`` and are intentionally not
-committed: they are derived from an external Ultralytics checkpoint. The Rust ignored tests
-consume them to distinguish image preprocessing drift from model-graph drift.
+Covers every YOLO11 and YOLO26 classification scale (n/s/m/l/x). It also records the official
+Ultralytics top-five prediction. Generated files belong in ``target/`` and are not committed.
 """
 
 from __future__ import annotations
@@ -48,19 +45,16 @@ def main() -> None:
     parser.add_argument("checkpoint", type=Path)
     parser.add_argument("image", type=Path)
     parser.add_argument("output_dir", type=Path)
-    parser.add_argument("--model", default="yolo26n-cls", help="classify scale being exported")
+    parser.add_argument("--model", default="yolo26n-cls", help="classification model to export")
     args = parser.parse_args()
     if not args.model.endswith("-cls"):
-        raise ValueError(f"{args.model} is not a YOLO26 classify scale")
+        raise ValueError(f"{args.model} is not a classification model")
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Ultralytics' classification inference transform: shortest-edge resize to 224 (anti-aliased
-    # bilinear), centered 224x224 crop, ToTensor, identity normalization. PIL is the exact
-    # torchvision backend for a .pt model's pickled transforms.
+    # Match the PIL/torchvision transform used by Ultralytics classification checkpoints.
     transforms = classify_transforms(224)
     input_tensor = transforms(Image.open(args.image).convert("RGB"))
-    # The composed transform ends in ToTensor ([0, 1] CHW float); store the identical pixels as
-    # the uint8 RGB image the Rust tests read back.
+    # Store the transformed pixels as the uint8 RGB image consumed by the Rust tests.
     input_image = Image.fromarray(
         (input_tensor.permute(1, 2, 0) * 255.0).round().clamp(0, 255).to(torch.uint8).numpy()
     )

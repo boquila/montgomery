@@ -1435,11 +1435,10 @@ impl<B: Backend> Predictor<B> {
                 LetterboxedImage::ultralytics(image, self.input_size, 32)
             }
         };
-        let input =
-            image_to_tensor(prepared.image().clone(), &self.device).unsqueeze::<4>() / 255.0;
+        let input = image_to_tensor(prepared.image().clone(), &self.device).unsqueeze::<4>();
         let input = match self.model_id.detection_preprocess() {
-            DetectionPreprocess::Yolox => data::normalize_yolox(input),
-            DetectionPreprocess::Ultralytics => input,
+            DetectionPreprocess::Yolox => input,
+            DetectionPreprocess::Ultralytics => input / 255.0,
         };
         let boxes_by_class = match &self.model {
             RuntimeModel::Yolox(model) => {
@@ -1822,11 +1821,10 @@ impl<B: Backend> Predictor<B> {
     /// Run image classification on an already-decoded image.
     ///
     /// Returns the top-5 classes by probability (Ultralytics' `probs.top5` convention), in
-    /// descending order. Requires a classification model (`yolo26n/s/m/l/x-cls` or
-    /// `yolo11n/s/m/l/x-cls`); detect models should use [`Predictor::predict`]. The input mirrors Ultralytics' classify
-    /// inference transform exactly: bilinear resize of the shortest edge to 224 px (anti-aliased),
-    /// a centered 224x224 crop, and RGB values scaled to `[0, 1]` (the normalization constants are
-    /// identity).
+    /// descending order. Requires a YOLOv8, YOLO11, or YOLO26 `-cls` model; detect models should
+    /// use [`Predictor::predict`]. The input mirrors Ultralytics' classify inference transform:
+    /// bilinear resize of the shortest edge to 224 px (anti-aliased), a centered 224x224 crop, and
+    /// RGB values scaled to `[0, 1]`.
     pub fn predict_classification(&self, image: &DynamicImage) -> Result<Vec<Classification>> {
         self.prepare_classification(image)?;
         let input = image_to_tensor(classify_transform(image, self.input_size), &self.device)
@@ -2592,9 +2590,7 @@ mod tests {
 
                 let image = image::open("assets/dog_bike_man.jpg").unwrap();
                 let prepared = LetterboxedImage::yolox(&image, 416);
-                let input = data::normalize_yolox(
-                    image_to_tensor(prepared.image().clone(), &device).unsqueeze::<4>() / 255.0,
-                );
+                let input = image_to_tensor(prepared.image().clone(), &device).unsqueeze::<4>();
                 let flatten = |batches: Vec<Vec<Vec<BoundingBox>>>| {
                     batches
                         .into_iter()

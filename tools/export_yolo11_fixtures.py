@@ -1,10 +1,9 @@
 """Export reproducible YOLO11 preprocessing and tensor parity fixtures.
 
-Covers every detect scale (n/s/m/l/x) and the segmentation variants (``yolo11n-seg`` /
-``yolo11s-seg``): pass ``--model yolo11s`` with the matching checkpoint. The generated files
-belong in ``target/`` and are intentionally not committed: they are derived from an external
-Ultralytics checkpoint. The Rust ignored tests consume them to distinguish image preprocessing
-drift from model-graph drift.
+Covers every detect and segmentation scale (n/s/m/l/x): pass ``--model yolo11s`` or
+``--model yolo11s-seg`` with the matching checkpoint. Generated files belong in ``target/`` and
+are not committed. The Rust ignored tests use them to separate preprocessing drift from graph
+drift.
 """
 
 from __future__ import annotations

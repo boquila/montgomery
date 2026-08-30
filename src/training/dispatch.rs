@@ -173,7 +173,7 @@ impl<B: AutodiffBackend> TrainableTask<B> for Yolox<B> {
             })
             .collect::<Vec<_>>();
         yolox::tensor_loss(
-            self.forward_train(crate::data::normalize_yolox(batch.images.clone())),
+            self.forward_train(batch.images.clone() * 255.0),
             &targets,
             context.yolox_l1,
         )
@@ -363,7 +363,7 @@ macro_rules! dual_detect_task {
     )+ };
 }
 
-// YOLOv10 uses the historical equal-weight dual DFL loss with one-to-one top-k 1.
+// YOLOv10 uses equal-weight dual DFL loss with one-to-one top-k 1.
 dual_detect_task!(dfl, 1; Yolov10N<B>, Yolov10S<B>, Yolov10M<B>, Yolov10B<B>, Yolov10L<B>, Yolov10X<B>);
 // YOLO26 is DFL-free and follows the persisted epoch-decaying E2E weighting schedule.
 dual_detect_task!(direct, 7; Yolo26N<B>, Yolo26S<B>, Yolo26M<B>, Yolo26L<B>, Yolo26X<B>);

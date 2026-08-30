@@ -109,9 +109,7 @@ fn encode_l1(gt: &GroundTruth, prediction: &AnchorPrediction) -> [f32; 4] {
 
 /// Differentiable YOLOX criterion with deterministic detached SimOTA assignment.
 ///
-/// This first production implementation intentionally performs assignment on the host. Only the
-/// detached prediction copy crosses the device boundary; all loss terms below are evaluated from
-/// the original tensors and therefore backpropagate through the complete graph.
+/// Assignment uses detached host values; loss terms stay on the original differentiable graph.
 pub fn tensor_loss<B: Backend>(
     output: RawPredictions<B>,
     targets: &[Vec<GroundTruth>],

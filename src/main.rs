@@ -31,7 +31,7 @@ enum DeviceSelection {
 #[command(
     name = "boquilens",
     version,
-    about = "Object detection in Rust with Burn"
+    about = "YOLO inference and training in Rust with Burn"
 )]
 struct Args {
     #[command(subcommand)]
@@ -40,7 +40,7 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Run object detection on an image.
+    /// Run detection, instance segmentation, or classification on an image.
     Predict(PredictArgs),
     /// Pack an imported upstream checkpoint into a versioned native Burnpack artifact.
     PackWeights(PackWeightsArgs),
@@ -153,7 +153,7 @@ struct ExportOnnxArgs {
     /// Official YOLOX 0.1.1rc0 checkout (YOLOX only).
     #[arg(long)]
     yolox_repo: Option<PathBuf>,
-    /// Reserved state preference for future multi-state training checkpoints (EMA only today).
+    /// Training checkpoint state to export. Only EMA is currently available.
     #[arg(long, value_enum, default_value = "ema")]
     checkpoint_state: CheckpointState,
     #[arg(long)]

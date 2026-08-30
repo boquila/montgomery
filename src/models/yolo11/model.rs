@@ -1520,6 +1520,11 @@ mod tests {
     }
 
     seg_checkpoint_test!(
+        yolo11n_seg_imports_official_checkpoint_and_runs_forward,
+        Yolo11SegNConfig,
+        "yolo11n-seg"
+    );
+    seg_checkpoint_test!(
         yolo11s_seg_imports_official_checkpoint_and_runs_forward,
         Yolo11SegSConfig,
         "yolo11s-seg"
