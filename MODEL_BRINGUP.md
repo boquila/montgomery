@@ -99,8 +99,7 @@ existing templates. Hard rules:
 - `src/lib.rs`:
   - `ModelId` variant + `as_str` + `FromStr` aliases + unknown-model error text;
   - `RuntimeModel` variant;
-  - `from_checkpoint` arm
-    (`.bpk` → burnpack, else PyTorch state, inside a 64 MB-stack worker thread);
+  - `.bpk`-only `from_checkpoint` arm inside a 64 MB-stack worker thread;
   - the model preprocessing profile and appropriate shared runtime dispatch trait;
   - `pack_weights` arm;
   - the model-name, input-size, and packer-extension tests.

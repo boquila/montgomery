@@ -698,22 +698,18 @@ fn load_model_checkpoint<B: Backend>(
         ($config:ty, $variant:path) => {
             move |device: &Device<B>| -> Result<RuntimeModel<B>> {
                 let mut model = <$config>::default().init_with_classes::<B>(num_classes, device);
-                if checkpoint.extension().and_then(|value| value.to_str()) == Some("bpk") {
-                    let mut store = burn_store::BurnpackStore::from_file(&checkpoint)
-                        .with_from_adapter(burn_store::HalfPrecisionAdapter::new())
-                        .allow_partial(cfg!(feature = "training"))
-                        .zero_copy(true);
-                    let result = model.load_from(&mut store)?;
-                    if result.missing.iter().any(|(path, _)| {
-                        !path.contains(".o2m_") && !path.starts_with("head.proto.sem_")
-                    }) {
-                        return Err(format!(
-                            "inference artifact is missing non-training tensors:\n{result}"
-                        )
-                        .into());
-                    }
-                } else {
-                    model.load_pytorch_weights(&checkpoint)?;
+                let mut store = burn_store::BurnpackStore::from_file(&checkpoint)
+                    .with_from_adapter(burn_store::HalfPrecisionAdapter::new())
+                    .allow_partial(cfg!(feature = "training"))
+                    .zero_copy(true);
+                let result = model.load_from(&mut store)?;
+                if result.missing.iter().any(|(path, _)| {
+                    !path.contains(".o2m_") && !path.starts_with("head.proto.sem_")
+                }) {
+                    return Err(format!(
+                        "inference artifact is missing non-training tensors:\n{result}"
+                    )
+                    .into());
                 }
                 Ok($variant(Box::new(model)))
             }
@@ -728,11 +724,7 @@ fn load_model_checkpoint<B: Backend>(
         | ModelId::YoloxX => Box::new(move |device: &Device<B>| {
             let constructor = yolox_constructor::<B>(model_id);
             let mut model = constructor(num_classes, device);
-            if checkpoint.extension().and_then(|value| value.to_str()) == Some("bpk") {
-                model.load_burnpack_weights(checkpoint)?;
-            } else {
-                model.load_pytorch_weights(checkpoint)?;
-            }
+            model.load_burnpack_weights(checkpoint)?;
             Ok(RuntimeModel::Yolox(Box::new(model)))
         }),
         ModelId::Yolov3TinyU => Box::new(load_variant!(Yolov3TinyConfig, RuntimeModel::Yolov3Tiny)),
@@ -1352,12 +1344,7 @@ fn run_end_to_end<B: Backend>(
 }
 
 impl<B: Backend> Predictor<B> {
-    /// Load a model from a native Burnpack or supported upstream tensor checkpoint on the
-    /// backend's default device.
-    ///
-    /// Production inference uses native `.bpk` artifacts. Direct upstream import remains available
-    /// for conversion and parity work: YOLOX accepts its official `.pth`, while Ultralytics-family
-    /// models require the tensor-only state produced by `tools/export_ultralytics_state.py`.
+    /// Load a model from a native Burnpack artifact on the backend's default device.
     #[cfg(feature = "pretrained")]
     pub fn from_checkpoint(
         model_id: ModelId,
@@ -1367,7 +1354,7 @@ impl<B: Backend> Predictor<B> {
         Self::from_checkpoint_on_device(model_id, checkpoint, Device::<B>::default(), options)
     }
 
-    /// Load a model from a supported PyTorch state checkpoint on an explicit device.
+    /// Load a native Burnpack artifact on an explicit device.
     #[cfg(feature = "pretrained")]
     pub fn from_checkpoint_on_device(
         model_id: ModelId,
@@ -1377,9 +1364,13 @@ impl<B: Backend> Predictor<B> {
     ) -> Result<Self> {
         let options = options.validate()?;
         let checkpoint = checkpoint.into();
-        if checkpoint.extension().and_then(|value| value.to_str()) == Some("bpk")
-            && trained_artifact_metadata(&checkpoint, model_id).is_ok()
-        {
+        if checkpoint.extension().and_then(|value| value.to_str()) != Some("bpk") {
+            return Err(
+                "Predictor requires a native .bpk artifact; convert upstream checkpoints with pack_weights or the pack-weights CLI"
+                    .into(),
+            );
+        }
+        if trained_artifact_metadata(&checkpoint, model_id).is_ok() {
             return Self::from_trained_artifact_on_device(model_id, checkpoint, device, options);
         }
         let class_names = catalog_class_names(model_id);
@@ -2568,57 +2559,97 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "pretrained")]
+    #[test]
+    fn predictor_rejects_upstream_checkpoint_formats() {
+        let error = Predictor::<Flex>::from_checkpoint(
+            ModelId::YoloxNano,
+            "upstream.pth",
+            PredictOptions::default(),
+        )
+        .err()
+        .expect("upstream checkpoint should be rejected");
+        assert!(error.to_string().contains("native .bpk artifact"));
+    }
+
     /// Check that the production YOLOX artifact preserves the direct official-checkpoint result.
     /// Requires the external checkpoint and generated artifact under `target/`.
     #[cfg(feature = "pretrained")]
     #[test]
     #[ignore]
     fn yolox_nano_burnpack_matches_official_checkpoint_end_to_end() {
-        let options = PredictOptions::default();
-        let official = Predictor::<Flex>::from_checkpoint(
-            ModelId::YoloxNano,
-            "target/checkpoints/yolox_nano.pth",
-            options,
-        )
-        .unwrap();
-        let artifact = Predictor::<Flex>::from_checkpoint(
-            ModelId::YoloxNano,
-            "target/yolox-nano-coco-official-v0.1.1rc0-boquilens-v1.bpk",
-            options,
-        )
-        .unwrap();
-        let image = image::open("assets/dog_bike_man.jpg").unwrap();
-        let expected = official.predict(&image);
-        let actual = artifact.predict(&image);
+        let worker = std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let device = Device::<Flex>::default();
+                let mut official = Yolox::<Flex>::yolox_nano(COCO_CLASSES.len(), &device);
+                official
+                    .load_pytorch_weights("target/checkpoints/yolox_nano.pth")
+                    .unwrap();
+                let mut artifact = Yolox::<Flex>::yolox_nano(COCO_CLASSES.len(), &device);
+                artifact
+                    .load_burnpack_weights(
+                        "target/yolox-nano-coco-official-v0.1.1rc0-boquilens-v1.bpk",
+                    )
+                    .unwrap();
 
-        // The common f16 artifact policy can move candidates across the 0.25 confidence cutoff.
-        // Require bidirectional agreement for the stable, high-confidence subset instead.
-        for (name, references, candidates) in [
-            ("official", &expected, &actual),
-            ("artifact", &actual, &expected),
-        ] {
-            for reference in references.iter().filter(|item| item.confidence >= 0.65) {
-                let matched = candidates.iter().any(|candidate| {
-                    candidate.class_id == reference.class_id
-                        && (candidate.confidence - reference.confidence).abs() <= 0.03
-                        && test_box_iou(
-                            (
-                                reference.xmin,
-                                reference.ymin,
-                                reference.xmax,
-                                reference.ymax,
-                            ),
-                            (
-                                candidate.xmin,
-                                candidate.ymin,
-                                candidate.xmax,
-                                candidate.ymax,
-                            ),
-                        ) >= 0.90
-                });
-                assert!(matched, "no {name} match for {reference:?}");
-            }
-        }
+                let image = image::open("assets/dog_bike_man.jpg").unwrap();
+                let prepared = LetterboxedImage::yolox(&image, 416);
+                let input = image_to_tensor(prepared.image().clone(), &device).unsqueeze::<4>();
+                let flatten = |batches: Vec<Vec<Vec<BoundingBox>>>| {
+                    batches
+                        .into_iter()
+                        .next()
+                        .unwrap()
+                        .into_iter()
+                        .enumerate()
+                        .flat_map(|(class_id, boxes)| {
+                            boxes.into_iter().map(move |bbox| (class_id, bbox))
+                        })
+                        .collect::<Vec<_>>()
+                };
+                let expected =
+                    flatten(run_classic_detections(&official, input.clone(), 0.45, 0.25));
+                let actual = flatten(run_classic_detections(&artifact, input, 0.45, 0.25));
+
+                // The common f16 artifact policy can move candidates across the confidence and
+                // NMS cutoffs. Require bidirectional agreement for the stable subset instead.
+                for (name, references, candidates) in [
+                    ("official", &expected[..], &actual[..]),
+                    ("artifact", &actual[..], &expected[..]),
+                ] {
+                    for (class_id, reference) in references
+                        .iter()
+                        .filter(|(_, item)| item.confidence >= 0.65)
+                    {
+                        let matched = candidates.iter().any(|(candidate_class, candidate)| {
+                            candidate_class == class_id
+                                && (candidate.confidence - reference.confidence).abs() <= 0.03
+                                && test_box_iou(
+                                    (
+                                        reference.xmin,
+                                        reference.ymin,
+                                        reference.xmax,
+                                        reference.ymax,
+                                    ),
+                                    (
+                                        candidate.xmin,
+                                        candidate.ymin,
+                                        candidate.xmax,
+                                        candidate.ymax,
+                                    ),
+                                ) >= 0.90
+                        });
+                        assert!(
+                            matched,
+                            "no {name} match for class {class_id}, confidence {}",
+                            reference.confidence
+                        );
+                    }
+                }
+            })
+            .unwrap();
+        worker.join().unwrap();
     }
 
     #[test]

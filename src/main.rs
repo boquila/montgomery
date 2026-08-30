@@ -123,7 +123,7 @@ struct ExportOnnxArgs {
     /// Model architecture represented by the checkpoint.
     #[arg(long)]
     model: ModelId,
-    /// Local trusted checkpoint: native .bpk, tensor-only .pt, or official YOLOX .pth.
+    /// Local boquilens .bpk artifact.
     #[arg(long)]
     weights: PathBuf,
     /// Final ONNX path. A missing .onnx suffix is added explicitly.
