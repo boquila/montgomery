@@ -376,7 +376,7 @@ impl FromStr for ModelId {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Detection {
     pub class_id: usize,
-    pub class_name: &'static str,
+    pub class_name: String,
     pub confidence: f32,
     /// Left edge in source-image pixels.
     pub xmin: f32,
@@ -416,7 +416,7 @@ pub struct InstanceMask {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SegmentationDetection {
     pub class_id: usize,
-    pub class_name: &'static str,
+    pub class_name: String,
     pub confidence: f32,
     /// Left edge in source-image pixels.
     pub xmin: f32,
@@ -437,7 +437,7 @@ pub struct SegmentationDetection {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Classification {
     pub class_id: usize,
-    pub class_name: &'static str,
+    pub class_name: String,
     pub confidence: f32,
 }
 
@@ -541,6 +541,66 @@ pub struct Predictor<B: Backend> {
     model: RuntimeModel<B>,
     device: Device<B>,
     options: PredictOptions,
+    class_names: Vec<String>,
+}
+
+fn catalog_class_names(model_id: ModelId) -> Vec<String> {
+    if model_id.as_str().ends_with("-cls") {
+        IMAGENET_CLASSES
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect()
+    } else {
+        COCO_CLASSES.iter().map(|name| (*name).to_owned()).collect()
+    }
+}
+
+#[cfg(feature = "pretrained")]
+fn trained_artifact_class_names(path: &Path, model_id: ModelId) -> Result<Vec<String>> {
+    #[derive(Deserialize)]
+    struct MetadataEnvelope {
+        metadata: std::collections::BTreeMap<String, String>,
+    }
+    use std::io::Read as _;
+
+    let mut file = std::fs::File::open(path)?;
+    let mut header = [0_u8; 10];
+    file.read_exact(&mut header)?;
+    if &header[0..4] != b"NRUB" {
+        return Err("trained artifact is not a Burnpack file".into());
+    }
+    let metadata_size = u32::from_le_bytes(header[6..10].try_into().unwrap()) as usize;
+    if metadata_size > 100 * 1024 * 1024 {
+        return Err("trained artifact metadata exceeds the Burnpack safety limit".into());
+    }
+    let mut metadata_bytes = vec![0_u8; metadata_size];
+    file.read_exact(&mut metadata_bytes)?;
+    let envelope: MetadataEnvelope = ciborium::de::from_reader(metadata_bytes.as_slice())?;
+    let metadata = &envelope.metadata;
+    let embedded_model = metadata
+        .get("boquilens.model")
+        .ok_or("trained artifact is missing boquilens.model metadata")?;
+    if embedded_model != model_id.as_str() {
+        return Err(format!(
+            "trained artifact model metadata is {embedded_model:?}, requested {model_id}"
+        )
+        .into());
+    }
+    let encoded = metadata
+        .get("boquilens.class-names-json")
+        .ok_or("trained artifact is missing ordered class-name metadata")?;
+    let names: Vec<String> = serde_json::from_str(encoded)?;
+    if names.is_empty()
+        || names.iter().any(|name| name.trim().is_empty())
+        || names
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+            != names.len()
+    {
+        return Err("trained artifact class names must be non-empty and unique".into());
+    }
+    Ok(names)
 }
 
 pub type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
@@ -559,13 +619,28 @@ fn load_ultralytics_checkpoint<B: Backend>(
     model_id: ModelId,
     checkpoint: PathBuf,
     device: Device<B>,
+    num_classes: usize,
 ) -> Result<RuntimeModel<B>> {
+    use burn_store::ModuleSnapshot as _;
+
     macro_rules! load_variant {
         ($config:ty, $variant:path) => {
             move |device: &Device<B>| -> Result<RuntimeModel<B>> {
-                let mut model = <$config>::default().init::<B>(device);
+                let mut model = <$config>::default().init_with_classes::<B>(num_classes, device);
                 if checkpoint.extension().and_then(|value| value.to_str()) == Some("bpk") {
-                    model.load_burnpack_weights(&checkpoint)?;
+                    let mut store = burn_store::BurnpackStore::from_file(&checkpoint)
+                        .with_from_adapter(burn_store::HalfPrecisionAdapter::new())
+                        .allow_partial(cfg!(feature = "training"))
+                        .zero_copy(true);
+                    let result = model.load_from(&mut store)?;
+                    if result.missing.iter().any(|(path, _)| {
+                        !path.contains(".o2m_") && !path.starts_with("head.proto.sem_")
+                    }) {
+                        return Err(format!(
+                            "inference artifact is missing non-training tensors:\n{result}"
+                        )
+                        .into());
+                    }
                 } else {
                     model.load_pytorch_weights(&checkpoint)?;
                 }
@@ -768,7 +843,7 @@ fn run_classic_detections<B: Backend>(
 
 /// Uniform classic instance-segmentation entry point shared by the YOLO11-seg scale variants, so
 /// the runtime can dispatch to any of them without naming the concrete scale type.
-trait ClassicSegmenter<B: Backend> {
+pub(crate) trait ClassicSegmenter<B: Backend> {
     fn segment(&self, input: Tensor<B, 4>) -> crate::models::yolo11::SegmentOutput<B>;
 }
 
@@ -795,7 +870,7 @@ impl<B: Backend, M: ClassicSegmenter<B>> ClassicSegmenter<B> for Box<M> {
 
 /// Uniform end-to-end instance-segmentation entry point shared by the YOLO26-seg scale variants,
 /// so the runtime can dispatch to any of them without naming the concrete scale type.
-trait EndToEndSegmenter<B: Backend> {
+pub(crate) trait EndToEndSegmenter<B: Backend> {
     fn segment(&self, input: Tensor<B, 4>)
     -> crate::models::yolo26::segmentation::SegmentOutput<B>;
 }
@@ -833,7 +908,7 @@ impl<B: Backend, M: EndToEndSegmenter<B>> EndToEndSegmenter<B> for Box<M> {
 /// (anchor, class) pairs among them, and finally the confidence filter is applied — no
 /// non-maximum suppression. The surviving anchors' raw mask coefficients ride along in
 /// [`SegmentationOutputCpu`] for the shared mask assembly.
-fn run_end_to_end_segmentations<B: Backend>(
+pub(crate) fn run_end_to_end_segmentations<B: Backend>(
     model: &impl EndToEndSegmenter<B>,
     input: Tensor<B, 4>,
     max_detections: usize,
@@ -928,24 +1003,24 @@ fn run_end_to_end_segmentations<B: Backend>(
 
 /// One NMS-surviving segmentation candidate: a box plus the anchor index its 32 mask
 /// coefficients live at.
-struct SegmentationCandidate {
-    bbox: BoundingBox,
-    class_id: usize,
-    anchor: usize,
+pub(crate) struct SegmentationCandidate {
+    pub(crate) bbox: BoundingBox,
+    pub(crate) class_id: usize,
+    pub(crate) anchor: usize,
 }
 
 /// CPU-side result of the segmentation decode: NMS survivors plus everything the mask assembly
 /// needs (prototypes and per-anchor coefficients), already synced from the backend.
-struct SegmentationOutputCpu {
-    candidates: Vec<SegmentationCandidate>,
+pub(crate) struct SegmentationOutputCpu {
+    pub(crate) candidates: Vec<SegmentationCandidate>,
     /// Prototype masks, row-major `[channels, proto_height, proto_width]`.
-    prototypes: Vec<f32>,
-    proto_channels: usize,
-    proto_width: usize,
-    proto_height: usize,
+    pub(crate) prototypes: Vec<f32>,
+    pub(crate) proto_channels: usize,
+    pub(crate) proto_width: usize,
+    pub(crate) proto_height: usize,
     /// Raw mask coefficients, row-major `[channels, anchors]`.
-    coefficients: Vec<f32>,
-    anchors: usize,
+    pub(crate) coefficients: Vec<f32>,
+    pub(crate) anchors: usize,
 }
 
 /// Decode and suppress classic (NMS-based) segmentation predictions for any scale variant.
@@ -954,7 +1029,7 @@ struct SegmentationOutputCpu {
 /// rows are filtered by the best class score, suppressed with class-aware NMS (per-class greedy
 /// suppression on center-size boxes converted to XYXY), and the mask coefficients of every
 /// surviving anchor are carried along for the mask assembly.
-fn run_classic_segmentations<B: Backend>(
+pub(crate) fn run_classic_segmentations<B: Backend>(
     model: &impl ClassicSegmenter<B>,
     input: Tensor<B, 4>,
     iou_threshold: f32,
@@ -1067,7 +1142,7 @@ fn classic_candidates_to_boxes(output: SegmentationOutputCpu) -> Vec<Vec<Vec<Bou
 /// Mirrors Ultralytics' `process_mask(..., upsample=True)` exactly: the mask is the raw linear
 /// combination `coefficients @ prototypes` (no sigmoid), bilinearly upsampled to the letterboxed
 /// canvas at `align_corners = False` semantics, binarized at `> 0`, and cropped to the box.
-fn canvas_instance_mask(
+pub(crate) fn canvas_instance_mask(
     output: &SegmentationOutputCpu,
     anchor: usize,
     canvas_width: usize,
@@ -1314,18 +1389,77 @@ impl<B: Backend> Predictor<B> {
                     model,
                     device,
                     options,
+                    class_names: catalog_class_names(model_id),
                 })
             }
             _ => {
-                let model = load_ultralytics_checkpoint(model_id, checkpoint, device.clone())?;
+                let class_names = catalog_class_names(model_id);
+                let model = load_ultralytics_checkpoint(
+                    model_id,
+                    checkpoint,
+                    device.clone(),
+                    class_names.len(),
+                )?;
                 Ok(Self {
                     model_id,
                     model,
                     device,
                     options,
+                    class_names,
                 })
             }
         }
+    }
+
+    /// Load a native artifact exported from a training checkpoint, using its embedded ordered
+    /// class table to construct the graph and label predictions.
+    #[cfg(feature = "pretrained")]
+    pub fn from_trained_artifact(
+        model_id: ModelId,
+        checkpoint: impl Into<PathBuf>,
+        options: PredictOptions,
+    ) -> Result<Self> {
+        Self::from_trained_artifact_on_device(model_id, checkpoint, Device::<B>::default(), options)
+    }
+
+    /// Explicit-device variant of [`Predictor::from_trained_artifact`].
+    #[cfg(feature = "pretrained")]
+    pub fn from_trained_artifact_on_device(
+        model_id: ModelId,
+        checkpoint: impl Into<PathBuf>,
+        device: Device<B>,
+        options: PredictOptions,
+    ) -> Result<Self> {
+        use burn_store::ModuleSnapshot as _;
+
+        let options = options.validate()?;
+        let checkpoint = checkpoint.into();
+        let class_names = trained_artifact_class_names(&checkpoint, model_id)?;
+        let num_classes = class_names.len();
+        let model = match model_id {
+            ModelId::YoloxNano
+            | ModelId::YoloxTiny
+            | ModelId::YoloxS
+            | ModelId::YoloxM
+            | ModelId::YoloxL
+            | ModelId::YoloxX => {
+                let constructor = yolox_constructor::<B>(model_id);
+                let mut model = constructor(num_classes, &device);
+                let mut store = burn_store::BurnpackStore::from_file(&checkpoint)
+                    .with_from_adapter(burn_store::HalfPrecisionAdapter::new())
+                    .zero_copy(true);
+                model.load_from(&mut store)?;
+                RuntimeModel::Yolox(Box::new(model))
+            }
+            _ => load_ultralytics_checkpoint(model_id, checkpoint, device.clone(), num_classes)?,
+        };
+        Ok(Self {
+            model_id,
+            model,
+            device,
+            options,
+            class_names,
+        })
     }
 
     /// Load pretrained COCO weights, downloading them to the model cache on first use.
@@ -1410,12 +1544,18 @@ impl<B: Backend> Predictor<B> {
             model,
             device,
             options,
+            class_names: catalog_class_names(model_id),
         })
     }
 
     /// The stable catalog identifier for the loaded model.
     pub const fn model_id(&self) -> ModelId {
         self.model_id
+    }
+
+    /// Ordered class table used by this predictor.
+    pub fn class_names(&self) -> &[String] {
+        &self.class_names
     }
 
     /// Run object detection on an already-decoded image.
@@ -1725,7 +1865,7 @@ impl<B: Backend> Predictor<B> {
                     prepared.to_source_box([bbox.xmin, bbox.ymin, bbox.xmax, bbox.ymax]);
                 detections.push(Detection {
                     class_id,
-                    class_name: COCO_CLASSES[class_id],
+                    class_name: self.class_names[class_id].clone(),
                     confidence: bbox.confidence,
                     xmin,
                     ymin,
@@ -1858,7 +1998,7 @@ impl<B: Backend> Predictor<B> {
             ]);
             detections.push(SegmentationDetection {
                 class_id: candidate.class_id,
-                class_name: COCO_CLASSES[candidate.class_id],
+                class_name: self.class_names[candidate.class_id].clone(),
                 confidence: candidate.bbox.confidence,
                 xmin,
                 ymin,
@@ -1925,7 +2065,7 @@ impl<B: Backend> Predictor<B> {
             .into_iter()
             .map(|class_id| Classification {
                 class_id,
-                class_name: IMAGENET_CLASSES[class_id],
+                class_name: self.class_names[class_id].clone(),
                 confidence: probs[class_id],
             })
             .collect())
@@ -2648,7 +2788,7 @@ mod tests {
         let input = DynamicImage::new_rgb8(10, 10);
         let detection = Detection {
             class_id: 0,
-            class_name: "person",
+            class_name: "person".into(),
             confidence: 0.9,
             xmin: 2.0,
             ymin: 3.0,

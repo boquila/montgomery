@@ -397,6 +397,7 @@ dependencies = [
  "burn-flex",
  "burn-store",
  "burn-wgpu",
+ "ciborium",
  "clap",
  "dirs",
  "fast_image_resize",

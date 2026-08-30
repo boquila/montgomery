@@ -73,6 +73,10 @@ impl<B: Backend> Yolov8N<B> {
         self.head.forward(self.body.forward(input))
     }
 
+    pub fn forward_train(&self, input: Tensor<B, 4>) -> super::head::RawPredictions<B> {
+        self.head.forward_raw(self.body.forward(input))
+    }
+
     /// Import tensor-only state exported from an official Ultralytics YOLOv8n checkpoint.
     #[cfg(feature = "pretrained")]
     pub fn load_pytorch_weights(
@@ -113,9 +117,19 @@ pub struct Yolov8NConfig;
 
 impl Yolov8NConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8N<B> {
+        self.init_with_classes(80, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolov8N<B> {
         Yolov8N {
             body: Yolov8BodyNConfig.init(device),
-            head: Yolov8HeadConfig::new(64, 128, 256).init(device),
+            head: Yolov8HeadConfig::new(64, 128, 256)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }
@@ -130,6 +144,10 @@ pub struct Yolov8S<B: Backend> {
 impl<B: Backend> Yolov8S<B> {
     pub fn forward(&self, input: Tensor<B, 4>) -> DecodedPredictions<B> {
         self.head.forward(self.body.forward(input))
+    }
+
+    pub fn forward_train(&self, input: Tensor<B, 4>) -> super::head::RawPredictions<B> {
+        self.head.forward_raw(self.body.forward(input))
     }
 
     /// Import tensor-only state exported from an official Ultralytics YOLOv8s checkpoint.
@@ -172,9 +190,19 @@ pub struct Yolov8SConfig;
 
 impl Yolov8SConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8S<B> {
+        self.init_with_classes(80, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolov8S<B> {
         Yolov8S {
             body: Yolov8BodySConfig.init(device),
-            head: Yolov8HeadConfig::new(128, 256, 512).init(device),
+            head: Yolov8HeadConfig::new(128, 256, 512)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }
@@ -189,6 +217,10 @@ pub struct Yolov8M<B: Backend> {
 impl<B: Backend> Yolov8M<B> {
     pub fn forward(&self, input: Tensor<B, 4>) -> DecodedPredictions<B> {
         self.head.forward(self.body.forward(input))
+    }
+
+    pub fn forward_train(&self, input: Tensor<B, 4>) -> super::head::RawPredictions<B> {
+        self.head.forward_raw(self.body.forward(input))
     }
 
     /// Import tensor-only state exported from an official Ultralytics YOLOv8m checkpoint.
@@ -231,9 +263,19 @@ pub struct Yolov8MConfig;
 
 impl Yolov8MConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8M<B> {
+        self.init_with_classes(80, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolov8M<B> {
         Yolov8M {
             body: Yolov8BodyMConfig.init(device),
-            head: Yolov8HeadConfig::new(192, 384, 576).init(device),
+            head: Yolov8HeadConfig::new(192, 384, 576)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }
@@ -248,6 +290,10 @@ pub struct Yolov8L<B: Backend> {
 impl<B: Backend> Yolov8L<B> {
     pub fn forward(&self, input: Tensor<B, 4>) -> DecodedPredictions<B> {
         self.head.forward(self.body.forward(input))
+    }
+
+    pub fn forward_train(&self, input: Tensor<B, 4>) -> super::head::RawPredictions<B> {
+        self.head.forward_raw(self.body.forward(input))
     }
 
     /// Import tensor-only state exported from an official Ultralytics YOLOv8l checkpoint.
@@ -290,9 +336,19 @@ pub struct Yolov8LConfig;
 
 impl Yolov8LConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8L<B> {
+        self.init_with_classes(80, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolov8L<B> {
         Yolov8L {
             body: Yolov8BodyLConfig.init(device),
-            head: Yolov8HeadConfig::new(256, 512, 512).init(device),
+            head: Yolov8HeadConfig::new(256, 512, 512)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }
@@ -307,6 +363,10 @@ pub struct Yolov8X<B: Backend> {
 impl<B: Backend> Yolov8X<B> {
     pub fn forward(&self, input: Tensor<B, 4>) -> DecodedPredictions<B> {
         self.head.forward(self.body.forward(input))
+    }
+
+    pub fn forward_train(&self, input: Tensor<B, 4>) -> super::head::RawPredictions<B> {
+        self.head.forward_raw(self.body.forward(input))
     }
 
     /// Import tensor-only state exported from an official Ultralytics YOLOv8x checkpoint.
@@ -349,9 +409,19 @@ pub struct Yolov8XConfig;
 
 impl Yolov8XConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8X<B> {
+        self.init_with_classes(80, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolov8X<B> {
         Yolov8X {
             body: Yolov8BodyXConfig.init(device),
-            head: Yolov8HeadConfig::new(320, 640, 640).init(device),
+            head: Yolov8HeadConfig::new(320, 640, 640)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }
@@ -447,6 +517,10 @@ impl<B: Backend> Yolov8SegN<B> {
         self.head.forward(self.body.forward(input))
     }
 
+    pub fn forward_train(&self, input: Tensor<B, 4>) -> super::segmentation::SegmentTrainOutput<B> {
+        self.head.forward_train(self.body.forward(input))
+    }
+
     /// Import tensor-only state exported from an official Ultralytics YOLOv8n-seg checkpoint.
     #[cfg(feature = "pretrained")]
     pub fn load_pytorch_weights(
@@ -487,9 +561,19 @@ pub struct Yolov8SegNConfig;
 
 impl Yolov8SegNConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8SegN<B> {
+        self.init_with_classes(80, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolov8SegN<B> {
         Yolov8SegN {
             body: Yolov8BodyNConfig.init(device),
-            head: Yolov8SegHeadConfig::new(64, 128, 256, 64).init(device),
+            head: Yolov8SegHeadConfig::new(64, 128, 256, 64)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }
@@ -504,6 +588,10 @@ pub struct Yolov8SegS<B: Backend> {
 impl<B: Backend> Yolov8SegS<B> {
     pub fn forward(&self, input: Tensor<B, 4>) -> crate::models::yolo11::SegmentOutput<B> {
         self.head.forward(self.body.forward(input))
+    }
+
+    pub fn forward_train(&self, input: Tensor<B, 4>) -> super::segmentation::SegmentTrainOutput<B> {
+        self.head.forward_train(self.body.forward(input))
     }
 
     /// Import tensor-only state exported from an official Ultralytics YOLOv8s-seg checkpoint.
@@ -546,9 +634,19 @@ pub struct Yolov8SegSConfig;
 
 impl Yolov8SegSConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8SegS<B> {
+        self.init_with_classes(80, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolov8SegS<B> {
         Yolov8SegS {
             body: Yolov8BodySConfig.init(device),
-            head: Yolov8SegHeadConfig::new(128, 256, 512, 128).init(device),
+            head: Yolov8SegHeadConfig::new(128, 256, 512, 128)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }
@@ -563,6 +661,10 @@ pub struct Yolov8SegM<B: Backend> {
 impl<B: Backend> Yolov8SegM<B> {
     pub fn forward(&self, input: Tensor<B, 4>) -> crate::models::yolo11::SegmentOutput<B> {
         self.head.forward(self.body.forward(input))
+    }
+
+    pub fn forward_train(&self, input: Tensor<B, 4>) -> super::segmentation::SegmentTrainOutput<B> {
+        self.head.forward_train(self.body.forward(input))
     }
 
     /// Import tensor-only state exported from an official Ultralytics YOLOv8m-seg checkpoint.
@@ -605,9 +707,19 @@ pub struct Yolov8SegMConfig;
 
 impl Yolov8SegMConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8SegM<B> {
+        self.init_with_classes(80, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolov8SegM<B> {
         Yolov8SegM {
             body: Yolov8BodyMConfig.init(device),
-            head: Yolov8SegHeadConfig::new(192, 384, 576, 192).init(device),
+            head: Yolov8SegHeadConfig::new(192, 384, 576, 192)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }
@@ -622,6 +734,10 @@ pub struct Yolov8SegL<B: Backend> {
 impl<B: Backend> Yolov8SegL<B> {
     pub fn forward(&self, input: Tensor<B, 4>) -> crate::models::yolo11::SegmentOutput<B> {
         self.head.forward(self.body.forward(input))
+    }
+
+    pub fn forward_train(&self, input: Tensor<B, 4>) -> super::segmentation::SegmentTrainOutput<B> {
+        self.head.forward_train(self.body.forward(input))
     }
 
     /// Import tensor-only state exported from an official Ultralytics YOLOv8l-seg checkpoint.
@@ -664,9 +780,19 @@ pub struct Yolov8SegLConfig;
 
 impl Yolov8SegLConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8SegL<B> {
+        self.init_with_classes(80, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolov8SegL<B> {
         Yolov8SegL {
             body: Yolov8BodyLConfig.init(device),
-            head: Yolov8SegHeadConfig::new(256, 512, 512, 256).init(device),
+            head: Yolov8SegHeadConfig::new(256, 512, 512, 256)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }
@@ -681,6 +807,10 @@ pub struct Yolov8SegX<B: Backend> {
 impl<B: Backend> Yolov8SegX<B> {
     pub fn forward(&self, input: Tensor<B, 4>) -> crate::models::yolo11::SegmentOutput<B> {
         self.head.forward(self.body.forward(input))
+    }
+
+    pub fn forward_train(&self, input: Tensor<B, 4>) -> super::segmentation::SegmentTrainOutput<B> {
+        self.head.forward_train(self.body.forward(input))
     }
 
     /// Import tensor-only state exported from an official Ultralytics YOLOv8x-seg checkpoint.
@@ -723,9 +853,19 @@ pub struct Yolov8SegXConfig;
 
 impl Yolov8SegXConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8SegX<B> {
+        self.init_with_classes(80, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolov8SegX<B> {
         Yolov8SegX {
             body: Yolov8BodyXConfig.init(device),
-            head: Yolov8SegHeadConfig::new(320, 640, 640, 320).init(device),
+            head: Yolov8SegHeadConfig::new(320, 640, 640, 320)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }

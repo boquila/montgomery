@@ -8,6 +8,13 @@ use super::blocks::{Conv, ConvConfig};
 use super::body::Yolov8Features;
 use super::head::{Yolov8Head, Yolov8HeadConfig};
 
+/// Raw segmentation tensors used by TAL/DFL assignment and prototype-mask loss.
+pub struct SegmentTrainOutput<B: Backend> {
+    pub detection: super::head::RawPredictions<B>,
+    pub coefficients: Tensor<B, 3>,
+    pub prototypes: Tensor<B, 4>,
+}
+
 /// Number of mask prototypes and per-detection mask coefficients (`nm`).
 pub const NUM_MASKS: usize = 32;
 
@@ -110,6 +117,29 @@ pub struct Yolov8SegHead<B: Backend> {
 }
 
 impl<B: Backend> Yolov8SegHead<B> {
+    pub fn forward_train(&self, features: Yolov8Features<B>) -> SegmentTrainOutput<B> {
+        let Yolov8Features { p3, p4, p5 } = features;
+        let detection = self.detect.forward_raw(Yolov8Features {
+            p3: p3.clone(),
+            p4: p4.clone(),
+            p5: p5.clone(),
+        });
+        let prototypes = self.proto.forward(p3.clone());
+        let coefficients = Tensor::cat(
+            vec![
+                self.p3_mask.forward(p3),
+                self.p4_mask.forward(p4),
+                self.p5_mask.forward(p5),
+            ],
+            2,
+        );
+        SegmentTrainOutput {
+            detection,
+            coefficients,
+            prototypes,
+        }
+    }
+
     pub fn forward(&self, features: Yolov8Features<B>) -> crate::models::yolo11::SegmentOutput<B> {
         let Yolov8Features { p3, p4, p5 } = features;
         let decoded = self.detect.forward(Yolov8Features {
@@ -165,6 +195,11 @@ impl Yolov8SegHeadConfig {
             mask_input_channels: [p3_channels, p4_channels, p5_channels],
             mask_channels: (p3_channels / 4).max(NUM_MASKS),
         }
+    }
+
+    pub fn with_num_classes(mut self, num_classes: usize) -> Self {
+        self.detect = self.detect.with_num_classes(num_classes);
+        self
     }
 
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8SegHead<B> {

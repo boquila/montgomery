@@ -7,6 +7,7 @@ use burn::{
     tensor::Tensor,
     tensor::backend::Backend,
 };
+use burn_store::{ModuleSnapshot, PathFilter};
 use serde::Serialize;
 
 use crate::{
@@ -20,6 +21,7 @@ use crate::{
             Yolo11ClsLConfig, Yolo11ClsMConfig, Yolo11ClsNConfig, Yolo11ClsSConfig,
             Yolo11ClsXConfig,
         },
+        yolo12::{Yolo12LConfig, Yolo12MConfig, Yolo12NConfig, Yolo12SConfig, Yolo12XConfig},
         yolo26::{
             Yolo26ClsLConfig, Yolo26ClsMConfig, Yolo26ClsNConfig, Yolo26ClsSConfig,
             Yolo26ClsXConfig, Yolo26LConfig, Yolo26MConfig, Yolo26NConfig, Yolo26SConfig,
@@ -28,7 +30,9 @@ use crate::{
         yolov3_tiny::Yolov3TinyConfig,
         yolov8::{
             Yolov8ClsLConfig, Yolov8ClsMConfig, Yolov8ClsNConfig, Yolov8ClsSConfig,
-            Yolov8ClsXConfig,
+            Yolov8ClsXConfig, Yolov8LConfig, Yolov8MConfig, Yolov8NConfig, Yolov8SConfig,
+            Yolov8SegLConfig, Yolov8SegMConfig, Yolov8SegNConfig, Yolov8SegSConfig,
+            Yolov8SegXConfig, Yolov8XConfig,
         },
         yolov10::{
             Yolov10BConfig, Yolov10LConfig, Yolov10MConfig, Yolov10NConfig, Yolov10SConfig,
@@ -56,6 +60,99 @@ use crate::{
 
 type TrainBackend = Autodiff<Wgpu>;
 
+#[derive(Debug, Clone, Copy)]
+enum ReplacedProjection {
+    Classifier,
+    Detector,
+    Yolox,
+    Yolov3,
+    Yolo26Segment,
+}
+
+impl ReplacedProjection {
+    fn official_classes(self) -> usize {
+        match self {
+            Self::Classifier => crate::models::yolo26::classification::NUM_CLASSES,
+            _ => 80,
+        }
+    }
+
+    fn filter(self) -> fn(&str, &str) -> bool {
+        match self {
+            Self::Classifier => keep_without_classifier,
+            Self::Detector => keep_without_detector_classes,
+            Self::Yolox => keep_without_yolox_classes,
+            Self::Yolov3 => keep_without_yolov3_classes,
+            Self::Yolo26Segment => keep_without_yolo26_segment_classes,
+        }
+    }
+
+    fn is_replaced(self, path: &str) -> bool {
+        !(self.filter())(path, "")
+    }
+}
+
+fn keep_without_classifier(path: &str, _container: &str) -> bool {
+    !path.starts_with("head.linear.")
+}
+
+fn keep_without_detector_classes(path: &str, _container: &str) -> bool {
+    !path.contains(".cls_out.")
+}
+
+fn keep_without_yolox_classes(path: &str, _container: &str) -> bool {
+    !path.starts_with("head.cls_preds.")
+}
+
+fn keep_without_yolov3_classes(path: &str, _container: &str) -> bool {
+    !(path.starts_with("head.p4.cls_2.") || path.starts_with("head.p5.cls_2."))
+}
+
+fn keep_without_yolo26_segment_classes(path: &str, container: &str) -> bool {
+    keep_without_detector_classes(path, container) && !path.starts_with("head.proto.sem_out.")
+}
+
+fn transfer_pretrained<B, M>(
+    mut target: M,
+    official: &M,
+    projection: ReplacedProjection,
+) -> Result<M, Box<dyn Error + Send + Sync>>
+where
+    B: Backend,
+    M: Module<B>,
+{
+    let snapshots = official.collect(None, None, false);
+    let result = target.apply(
+        snapshots,
+        Some(PathFilter::new().with_predicate(projection.filter())),
+        None,
+        false,
+    );
+    if !result.errors.is_empty() || !result.missing.is_empty() || !result.unused.is_empty() {
+        return Err(format!(
+            "pretrained transfer differed outside the documented class projections:\n{result}"
+        )
+        .into());
+    }
+    if result.skipped.is_empty()
+        || result
+            .skipped
+            .iter()
+            .any(|path| !projection.is_replaced(path))
+    {
+        return Err(format!(
+            "pretrained transfer did not isolate the documented class projections:\n{result}"
+        )
+        .into());
+    }
+    eprintln!(
+        "Initialized {} tensors from pretrained weights; freshly initialized {} class-projection tensors",
+        result.applied.len(),
+        result.skipped.len()
+    );
+    Ok(target)
+}
+
 #[derive(Debug, Clone)]
 pub struct TrainingRequest {
     pub model: ModelId,
@@ -69,9 +166,16 @@ pub struct TrainingRequest {
     pub name: String,
     pub dry_run: bool,
     pub resume: Option<PathBuf>,
+    pub weights: Option<PathBuf>,
+    pub val_confidence: Option<f32>,
+    pub val_iou: Option<f32>,
+    pub max_detections: Option<usize>,
 }
 
 pub fn train(request: TrainingRequest) -> Result<PathBuf, Box<dyn Error + Send + Sync>> {
+    if request.resume.is_some() && request.weights.is_some() {
+        return Err("--resume and --weights are mutually exclusive".into());
+    }
     let resume_manifest = request
         .resume
         .as_ref()
@@ -126,6 +230,15 @@ pub fn train(request: TrainingRequest) -> Result<PathBuf, Box<dyn Error + Send +
             config.initial_lr = 1e-3;
         }
         config.augmentation.imgsz = config.model.input_size[0];
+        if let Some(value) = request.val_confidence {
+            config.validation.confidence = value;
+        }
+        if let Some(value) = request.val_iou {
+            config.validation.iou = value;
+        }
+        if let Some(value) = request.max_detections {
+            config.validation.max_detections = value;
+        }
     }
     config.validate()?;
     let (device, adapter) = crate::default_wgpu_device();
@@ -185,9 +298,29 @@ pub fn train(request: TrainingRequest) -> Result<PathBuf, Box<dyn Error + Send +
     };
     let classes = config.model.num_classes;
 
+    macro_rules! pretrained {
+        ($target:expr, $official:expr, $projection:expr) => {{
+            let mut target = $target;
+            if let Some(weights) = request.weights.as_ref() {
+                if classes == $projection.official_classes() {
+                    target.load_pytorch_weights(weights)?;
+                } else {
+                    let mut official = $official;
+                    official.load_pytorch_weights(weights)?;
+                    target = transfer_pretrained(target, &official, $projection)?;
+                }
+            }
+            target
+        }};
+    }
+
     macro_rules! run {
         ($config:expr) => {{
-            let model = $config.init_with_classes(classes, &device);
+            let model = pretrained!(
+                $config.init_with_classes(classes, &device),
+                $config.init(&device),
+                ReplacedProjection::Classifier
+            );
             run_task(
                 model,
                 trainer,
@@ -209,9 +342,10 @@ pub fn train(request: TrainingRequest) -> Result<PathBuf, Box<dyn Error + Send +
         }};
     }
     macro_rules! run_detect {
-        ($model:expr) => {{
+        ($model:expr, $official:expr, $projection:expr) => {{
+            let model = pretrained!($model, $official, $projection);
             run_task(
-                $model,
+                model,
                 trainer,
                 detection_batches.expect("detection dispatch has batches"),
                 |epoch| {
@@ -231,9 +365,10 @@ pub fn train(request: TrainingRequest) -> Result<PathBuf, Box<dyn Error + Send +
         }};
     }
     macro_rules! run_segment {
-        ($model:expr) => {{
+        ($model:expr, $official:expr, $projection:expr) => {{
+            let model = pretrained!($model, $official, $projection);
             run_task(
-                $model,
+                model,
                 trainer,
                 segmentation_batches.expect("segmentation dispatch has batches"),
                 |epoch| {
@@ -268,72 +403,256 @@ pub fn train(request: TrainingRequest) -> Result<PathBuf, Box<dyn Error + Send +
         ModelId::Yolov8MCls => run!(Yolov8ClsMConfig),
         ModelId::Yolov8LCls => run!(Yolov8ClsLConfig),
         ModelId::Yolov8XCls => run!(Yolov8ClsXConfig),
-        ModelId::YoloxNano => run_detect!(Yolox::yolox_nano(classes, &device)),
-        ModelId::YoloxTiny => run_detect!(Yolox::yolox_tiny(classes, &device)),
-        ModelId::YoloxS => run_detect!(Yolox::yolox_s(classes, &device)),
-        ModelId::YoloxM => run_detect!(Yolox::yolox_m(classes, &device)),
-        ModelId::YoloxL => run_detect!(Yolox::yolox_l(classes, &device)),
-        ModelId::YoloxX => run_detect!(Yolox::yolox_x(classes, &device)),
-        ModelId::Yolov3TinyU => {
-            run_detect!(Yolov3TinyConfig.init_with_classes(classes, &device))
-        }
-        ModelId::Yolov10N => run_detect!(Yolov10NConfig.init_with_classes(classes, &device)),
-        ModelId::Yolov10S => run_detect!(Yolov10SConfig.init_with_classes(classes, &device)),
-        ModelId::Yolov10M => run_detect!(Yolov10MConfig.init_with_classes(classes, &device)),
-        ModelId::Yolov10B => run_detect!(Yolov10BConfig.init_with_classes(classes, &device)),
-        ModelId::Yolov10L => run_detect!(Yolov10LConfig.init_with_classes(classes, &device)),
-        ModelId::Yolov10X => run_detect!(Yolov10XConfig.init_with_classes(classes, &device)),
+        ModelId::YoloxNano => run_detect!(
+            Yolox::yolox_nano(classes, &device),
+            Yolox::yolox_nano(80, &device),
+            ReplacedProjection::Yolox
+        ),
+        ModelId::YoloxTiny => run_detect!(
+            Yolox::yolox_tiny(classes, &device),
+            Yolox::yolox_tiny(80, &device),
+            ReplacedProjection::Yolox
+        ),
+        ModelId::YoloxS => run_detect!(
+            Yolox::yolox_s(classes, &device),
+            Yolox::yolox_s(80, &device),
+            ReplacedProjection::Yolox
+        ),
+        ModelId::YoloxM => run_detect!(
+            Yolox::yolox_m(classes, &device),
+            Yolox::yolox_m(80, &device),
+            ReplacedProjection::Yolox
+        ),
+        ModelId::YoloxL => run_detect!(
+            Yolox::yolox_l(classes, &device),
+            Yolox::yolox_l(80, &device),
+            ReplacedProjection::Yolox
+        ),
+        ModelId::YoloxX => run_detect!(
+            Yolox::yolox_x(classes, &device),
+            Yolox::yolox_x(80, &device),
+            ReplacedProjection::Yolox
+        ),
+        ModelId::Yolov3TinyU => run_detect!(
+            Yolov3TinyConfig.init_with_classes(classes, &device),
+            Yolov3TinyConfig.init(&device),
+            ReplacedProjection::Yolov3
+        ),
+        ModelId::Yolov10N => run_detect!(
+            Yolov10NConfig.init_with_classes(classes, &device),
+            Yolov10NConfig.init(&device),
+            ReplacedProjection::Detector
+        ),
+        ModelId::Yolov10S => run_detect!(
+            Yolov10SConfig.init_with_classes(classes, &device),
+            Yolov10SConfig.init(&device),
+            ReplacedProjection::Detector
+        ),
+        ModelId::Yolov10M => run_detect!(
+            Yolov10MConfig.init_with_classes(classes, &device),
+            Yolov10MConfig.init(&device),
+            ReplacedProjection::Detector
+        ),
+        ModelId::Yolov10B => run_detect!(
+            Yolov10BConfig.init_with_classes(classes, &device),
+            Yolov10BConfig.init(&device),
+            ReplacedProjection::Detector
+        ),
+        ModelId::Yolov10L => run_detect!(
+            Yolov10LConfig.init_with_classes(classes, &device),
+            Yolov10LConfig.init(&device),
+            ReplacedProjection::Detector
+        ),
+        ModelId::Yolov10X => run_detect!(
+            Yolov10XConfig.init_with_classes(classes, &device),
+            Yolov10XConfig.init(&device),
+            ReplacedProjection::Detector
+        ),
         ModelId::Yolo11N => {
-            run_detect!(crate::models::yolo11::Yolo11NConfig.init_with_classes(classes, &device))
+            run_detect!(
+                crate::models::yolo11::Yolo11NConfig.init_with_classes(classes, &device),
+                crate::models::yolo11::Yolo11NConfig.init(&device),
+                ReplacedProjection::Detector
+            )
         }
         ModelId::Yolo11S => {
-            run_detect!(crate::models::yolo11::Yolo11SConfig.init_with_classes(classes, &device))
+            run_detect!(
+                crate::models::yolo11::Yolo11SConfig.init_with_classes(classes, &device),
+                crate::models::yolo11::Yolo11SConfig.init(&device),
+                ReplacedProjection::Detector
+            )
         }
         ModelId::Yolo11M => {
-            run_detect!(crate::models::yolo11::Yolo11MConfig.init_with_classes(classes, &device))
+            run_detect!(
+                crate::models::yolo11::Yolo11MConfig.init_with_classes(classes, &device),
+                crate::models::yolo11::Yolo11MConfig.init(&device),
+                ReplacedProjection::Detector
+            )
         }
         ModelId::Yolo11L => {
-            run_detect!(crate::models::yolo11::Yolo11LConfig.init_with_classes(classes, &device))
+            run_detect!(
+                crate::models::yolo11::Yolo11LConfig.init_with_classes(classes, &device),
+                crate::models::yolo11::Yolo11LConfig.init(&device),
+                ReplacedProjection::Detector
+            )
         }
         ModelId::Yolo11X => {
-            run_detect!(crate::models::yolo11::Yolo11XConfig.init_with_classes(classes, &device))
+            run_detect!(
+                crate::models::yolo11::Yolo11XConfig.init_with_classes(classes, &device),
+                crate::models::yolo11::Yolo11XConfig.init(&device),
+                ReplacedProjection::Detector
+            )
         }
-        ModelId::Yolo26N => run_detect!(Yolo26NConfig.init_with_classes(classes, &device)),
-        ModelId::Yolo26S => run_detect!(Yolo26SConfig.init_with_classes(classes, &device)),
-        ModelId::Yolo26M => run_detect!(Yolo26MConfig.init_with_classes(classes, &device)),
-        ModelId::Yolo26L => run_detect!(Yolo26LConfig.init_with_classes(classes, &device)),
-        ModelId::Yolo26X => run_detect!(Yolo26XConfig.init_with_classes(classes, &device)),
+        ModelId::Yolo26N => run_detect!(
+            Yolo26NConfig.init_with_classes(classes, &device),
+            Yolo26NConfig.init(&device),
+            ReplacedProjection::Detector
+        ),
+        ModelId::Yolo26S => run_detect!(
+            Yolo26SConfig.init_with_classes(classes, &device),
+            Yolo26SConfig.init(&device),
+            ReplacedProjection::Detector
+        ),
+        ModelId::Yolo26M => run_detect!(
+            Yolo26MConfig.init_with_classes(classes, &device),
+            Yolo26MConfig.init(&device),
+            ReplacedProjection::Detector
+        ),
+        ModelId::Yolo26L => run_detect!(
+            Yolo26LConfig.init_with_classes(classes, &device),
+            Yolo26LConfig.init(&device),
+            ReplacedProjection::Detector
+        ),
+        ModelId::Yolo26X => run_detect!(
+            Yolo26XConfig.init_with_classes(classes, &device),
+            Yolo26XConfig.init(&device),
+            ReplacedProjection::Detector
+        ),
+        ModelId::Yolov8N => run_detect!(
+            Yolov8NConfig.init_with_classes(classes, &device),
+            Yolov8NConfig.init(&device),
+            ReplacedProjection::Detector
+        ),
+        ModelId::Yolov8S => run_detect!(
+            Yolov8SConfig.init_with_classes(classes, &device),
+            Yolov8SConfig.init(&device),
+            ReplacedProjection::Detector
+        ),
+        ModelId::Yolov8M => run_detect!(
+            Yolov8MConfig.init_with_classes(classes, &device),
+            Yolov8MConfig.init(&device),
+            ReplacedProjection::Detector
+        ),
+        ModelId::Yolov8L => run_detect!(
+            Yolov8LConfig.init_with_classes(classes, &device),
+            Yolov8LConfig.init(&device),
+            ReplacedProjection::Detector
+        ),
+        ModelId::Yolov8X => run_detect!(
+            Yolov8XConfig.init_with_classes(classes, &device),
+            Yolov8XConfig.init(&device),
+            ReplacedProjection::Detector
+        ),
+        ModelId::Yolo12N => run_detect!(
+            Yolo12NConfig.init_with_classes(classes, &device),
+            Yolo12NConfig.init(&device),
+            ReplacedProjection::Detector
+        ),
+        ModelId::Yolo12S => run_detect!(
+            Yolo12SConfig.init_with_classes(classes, &device),
+            Yolo12SConfig.init(&device),
+            ReplacedProjection::Detector
+        ),
+        ModelId::Yolo12M => run_detect!(
+            Yolo12MConfig.init_with_classes(classes, &device),
+            Yolo12MConfig.init(&device),
+            ReplacedProjection::Detector
+        ),
+        ModelId::Yolo12L => run_detect!(
+            Yolo12LConfig.init_with_classes(classes, &device),
+            Yolo12LConfig.init(&device),
+            ReplacedProjection::Detector
+        ),
+        ModelId::Yolo12X => run_detect!(
+            Yolo12XConfig.init_with_classes(classes, &device),
+            Yolo12XConfig.init(&device),
+            ReplacedProjection::Detector
+        ),
         ModelId::Yolo11NSeg => run_segment!(
-            crate::models::yolo11::Yolo11SegNConfig.init_with_classes(classes, &device)
+            crate::models::yolo11::Yolo11SegNConfig.init_with_classes(classes, &device),
+            crate::models::yolo11::Yolo11SegNConfig.init(&device),
+            ReplacedProjection::Detector
         ),
         ModelId::Yolo11SSeg => run_segment!(
-            crate::models::yolo11::Yolo11SegSConfig.init_with_classes(classes, &device)
+            crate::models::yolo11::Yolo11SegSConfig.init_with_classes(classes, &device),
+            crate::models::yolo11::Yolo11SegSConfig.init(&device),
+            ReplacedProjection::Detector
         ),
         ModelId::Yolo11MSeg => run_segment!(
-            crate::models::yolo11::Yolo11SegMConfig.init_with_classes(classes, &device)
+            crate::models::yolo11::Yolo11SegMConfig.init_with_classes(classes, &device),
+            crate::models::yolo11::Yolo11SegMConfig.init(&device),
+            ReplacedProjection::Detector
         ),
         ModelId::Yolo11LSeg => run_segment!(
-            crate::models::yolo11::Yolo11SegLConfig.init_with_classes(classes, &device)
+            crate::models::yolo11::Yolo11SegLConfig.init_with_classes(classes, &device),
+            crate::models::yolo11::Yolo11SegLConfig.init(&device),
+            ReplacedProjection::Detector
         ),
         ModelId::Yolo11XSeg => run_segment!(
-            crate::models::yolo11::Yolo11SegXConfig.init_with_classes(classes, &device)
+            crate::models::yolo11::Yolo11SegXConfig.init_with_classes(classes, &device),
+            crate::models::yolo11::Yolo11SegXConfig.init(&device),
+            ReplacedProjection::Detector
+        ),
+        ModelId::Yolov8NSeg => run_segment!(
+            Yolov8SegNConfig.init_with_classes(classes, &device),
+            Yolov8SegNConfig.init(&device),
+            ReplacedProjection::Detector
+        ),
+        ModelId::Yolov8SSeg => run_segment!(
+            Yolov8SegSConfig.init_with_classes(classes, &device),
+            Yolov8SegSConfig.init(&device),
+            ReplacedProjection::Detector
+        ),
+        ModelId::Yolov8MSeg => run_segment!(
+            Yolov8SegMConfig.init_with_classes(classes, &device),
+            Yolov8SegMConfig.init(&device),
+            ReplacedProjection::Detector
+        ),
+        ModelId::Yolov8LSeg => run_segment!(
+            Yolov8SegLConfig.init_with_classes(classes, &device),
+            Yolov8SegLConfig.init(&device),
+            ReplacedProjection::Detector
+        ),
+        ModelId::Yolov8XSeg => run_segment!(
+            Yolov8SegXConfig.init_with_classes(classes, &device),
+            Yolov8SegXConfig.init(&device),
+            ReplacedProjection::Detector
         ),
         ModelId::Yolo26NSeg => run_segment!(
-            crate::models::yolo26::Yolo26SegNConfig.init_with_classes(classes, &device)
+            crate::models::yolo26::Yolo26SegNConfig.init_with_classes(classes, &device),
+            crate::models::yolo26::Yolo26SegNConfig.init(&device),
+            ReplacedProjection::Yolo26Segment
         ),
         ModelId::Yolo26SSeg => run_segment!(
-            crate::models::yolo26::Yolo26SegSConfig.init_with_classes(classes, &device)
+            crate::models::yolo26::Yolo26SegSConfig.init_with_classes(classes, &device),
+            crate::models::yolo26::Yolo26SegSConfig.init(&device),
+            ReplacedProjection::Yolo26Segment
         ),
         ModelId::Yolo26MSeg => run_segment!(
-            crate::models::yolo26::Yolo26SegMConfig.init_with_classes(classes, &device)
+            crate::models::yolo26::Yolo26SegMConfig.init_with_classes(classes, &device),
+            crate::models::yolo26::Yolo26SegMConfig.init(&device),
+            ReplacedProjection::Yolo26Segment
         ),
         ModelId::Yolo26LSeg => run_segment!(
-            crate::models::yolo26::Yolo26SegLConfig.init_with_classes(classes, &device)
+            crate::models::yolo26::Yolo26SegLConfig.init_with_classes(classes, &device),
+            crate::models::yolo26::Yolo26SegLConfig.init(&device),
+            ReplacedProjection::Yolo26Segment
         ),
         ModelId::Yolo26XSeg => run_segment!(
-            crate::models::yolo26::Yolo26SegXConfig.init_with_classes(classes, &device)
+            crate::models::yolo26::Yolo26SegXConfig.init_with_classes(classes, &device),
+            crate::models::yolo26::Yolo26SegXConfig.init(&device),
+            ReplacedProjection::Yolo26Segment
         ),
-        _ => return Err("train CLI dispatch for this task is not complete".into()),
     }?;
     Ok(run)
 }
@@ -572,6 +891,7 @@ fn build_classification_batches<B: Backend>(
             ],
             scale: [1.0, 1.0],
             pad: [0.0, 0.0],
+            crowd: Vec::new(),
         });
     }
     let mut batches = Vec::new();
@@ -593,9 +913,6 @@ fn build_detection_batches<B: Backend>(
     epoch: u64,
     training: bool,
 ) -> Result<Vec<DetectionBatch<B>>, Box<dyn Error + Send + Sync>> {
-    if dataset.format != DatasetFormat::Yolo {
-        return Err("the streaming detector loader currently requires YOLO labels; convert COCO JSON through the native COCO reader before training".into());
-    }
     let pipeline = AugmentationPipeline::for_epoch(
         config
             .augmentation
@@ -603,9 +920,19 @@ fn build_detection_batches<B: Backend>(
         epoch as usize,
         config.epochs,
     )?;
-    let mut samples = Vec::with_capacity(images.len());
-    for (index, path) in images.iter().enumerate() {
-        let sample = crate::training::data::loader::load_yolo_sample(dataset, path)?;
+    let source_samples = load_vision_samples(dataset, images, training)?;
+    let crowd_flags = source_samples
+        .iter()
+        .map(|sample| {
+            sample
+                .targets
+                .iter()
+                .map(|target| target.crowd)
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    let mut samples = Vec::with_capacity(source_samples.len());
+    for (index, sample) in source_samples.into_iter().enumerate() {
         samples.push(AugSample::from_vision(
             sample,
             index,
@@ -643,6 +970,7 @@ fn build_detection_batches<B: Backend>(
             canvas_size: [canvas_width as u32, canvas_height as u32],
             scale: geometry.ratio,
             pad: geometry.pad,
+            crowd: crowd_flags[index].clone(),
         });
         formatted.push(sample);
     }
@@ -663,17 +991,14 @@ fn build_yolox_validation_batches<B: Backend>(
     images: &[PathBuf],
     device: &burn::tensor::Device<B>,
 ) -> Result<Vec<DetectionBatch<B>>, Box<dyn Error + Send + Sync>> {
-    if dataset.format != DatasetFormat::Yolo {
-        return Err("the streaming detector loader currently requires YOLO labels".into());
-    }
     let [height, width] = config.model.input_size;
     if height != width {
         return Err("YOLOX validation currently requires a square input".into());
     }
     let mut formatted = Vec::with_capacity(images.len());
     let mut metadata = Vec::with_capacity(images.len());
-    for path in images {
-        let sample = crate::training::data::loader::load_yolo_sample(dataset, path)?;
+    for sample in load_vision_samples(dataset, images, false)? {
+        let crowd = sample.targets.iter().map(|target| target.crowd).collect();
         let prepared = crate::data::LetterboxedImage::yolox(&sample.image, width);
         let (scale, pad_x, pad_y) = prepared.letterbox_geometry();
         let rgb = prepared.image().to_rgb8();
@@ -724,6 +1049,7 @@ fn build_yolox_validation_batches<B: Backend>(
             canvas_size: [width as u32, height as u32],
             scale: [scale, scale],
             pad: [pad_x, pad_y],
+            crowd,
         });
     }
     let mut batches = Vec::new();
@@ -745,11 +1071,6 @@ fn build_segmentation_batches<B: Backend>(
     epoch: u64,
     training: bool,
 ) -> Result<Vec<SegmentationBatch<B>>, Box<dyn Error + Send + Sync>> {
-    if dataset.format != DatasetFormat::Yolo {
-        return Err(
-            "the streaming segmentation loader currently requires YOLO polygon labels".into(),
-        );
-    }
     let pipeline = AugmentationPipeline::for_epoch(
         config
             .augmentation
@@ -757,9 +1078,19 @@ fn build_segmentation_batches<B: Backend>(
         epoch as usize,
         config.epochs,
     )?;
-    let mut samples = Vec::with_capacity(images.len());
-    for (index, path) in images.iter().enumerate() {
-        let sample = crate::training::data::loader::load_yolo_sample(dataset, path)?;
+    let source_samples = load_vision_samples(dataset, images, training)?;
+    let crowd_flags = source_samples
+        .iter()
+        .map(|sample| {
+            sample
+                .targets
+                .iter()
+                .map(|target| target.crowd)
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    let mut samples = Vec::with_capacity(source_samples.len());
+    for (index, sample) in source_samples.into_iter().enumerate() {
         samples.push(AugSample::from_vision(
             sample,
             index,
@@ -797,6 +1128,7 @@ fn build_segmentation_batches<B: Backend>(
             canvas_size: [canvas_width as u32, canvas_height as u32],
             scale: geometry.ratio,
             pad: geometry.pad,
+            crowd: crowd_flags[index].clone(),
         });
         formatted.push(sample);
     }
@@ -810,6 +1142,64 @@ fn build_segmentation_batches<B: Backend>(
         )?);
     }
     Ok(batches)
+}
+
+fn load_vision_samples(
+    dataset: &crate::training::data::ResolvedDataset,
+    images: &[PathBuf],
+    training: bool,
+) -> Result<Vec<crate::training::data::VisionSample>, Box<dyn Error + Send + Sync>> {
+    match dataset.format {
+        DatasetFormat::Yolo => images
+            .iter()
+            .map(|path| {
+                crate::training::data::loader::load_yolo_sample(dataset, path)
+                    .map_err(|error| -> Box<dyn Error + Send + Sync> { Box::new(error) })
+            })
+            .collect(),
+        DatasetFormat::Coco => {
+            let annotation = if images == dataset.train_images {
+                dataset.train_annotations.as_ref()
+            } else if images == dataset.val_images {
+                dataset.val_annotations.as_ref()
+            } else if images == dataset.test_images {
+                dataset.test_annotations.as_ref()
+            } else {
+                None
+            }
+            .ok_or("COCO split has no resolved annotation file")?;
+            let images_root = images
+                .first()
+                .and_then(|path| path.parent())
+                .ok_or("COCO split contains no image root")?;
+            let loaded = crate::training::data::coco::load(annotation, images_root)?;
+            if loaded.class_names != dataset.class_names {
+                return Err("COCO category table differs from dataset names".into());
+            }
+            let mut by_path = loaded
+                .sample_paths
+                .into_iter()
+                .zip(loaded.samples)
+                .collect::<std::collections::BTreeMap<_, _>>();
+            let mut selected = Vec::with_capacity(images.len());
+            for path in images {
+                let mut sample = by_path.remove(path).ok_or_else(|| {
+                    format!(
+                        "COCO annotations have no image record for {}",
+                        path.display()
+                    )
+                })?;
+                if training {
+                    sample.targets.retain(|target| !target.crowd);
+                }
+                selected.push(sample);
+            }
+            Ok(selected)
+        }
+        DatasetFormat::ClassificationFolders => {
+            Err("classification folders cannot feed a detector loader".into())
+        }
+    }
 }
 
 pub fn inspect_checkpoint(
@@ -831,6 +1221,8 @@ pub struct ValidationSummary {
     pub top5_accuracy: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub box_metrics: Option<crate::training::metrics::detection::DetectionMetrics>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mask_metrics: Option<crate::training::metrics::segmentation::SegmentationMetrics>,
 }
 
 pub fn validate(checkpoint: PathBuf) -> Result<ValidationSummary, Box<dyn Error + Send + Sync>> {
@@ -874,7 +1266,15 @@ pub fn validate(checkpoint: PathBuf) -> Result<ValidationSummary, Box<dyn Error 
             )?
         };
         macro_rules! run_detect {
-            ($model:expr) => {{ validate_detection_model($model, bytes, batches, manifest.config.model.architecture) }};
+            ($model:expr) => {{
+                validate_detection_model(
+                    $model,
+                    bytes,
+                    batches,
+                    manifest.config.model.architecture,
+                    &manifest.config.validation,
+                )
+            }};
         }
         return match manifest.config.model.architecture {
             ModelId::YoloxNano => run_detect!(Yolox::yolox_nano(classes, &device)),
@@ -924,11 +1324,90 @@ pub fn validate(checkpoint: PathBuf) -> Result<ValidationSummary, Box<dyn Error 
             ModelId::Yolo26M => run_detect!(Yolo26MConfig.init_with_classes(classes, &device)),
             ModelId::Yolo26L => run_detect!(Yolo26LConfig.init_with_classes(classes, &device)),
             ModelId::Yolo26X => run_detect!(Yolo26XConfig.init_with_classes(classes, &device)),
+            ModelId::Yolov8N => run_detect!(Yolov8NConfig.init_with_classes(classes, &device)),
+            ModelId::Yolov8S => run_detect!(Yolov8SConfig.init_with_classes(classes, &device)),
+            ModelId::Yolov8M => run_detect!(Yolov8MConfig.init_with_classes(classes, &device)),
+            ModelId::Yolov8L => run_detect!(Yolov8LConfig.init_with_classes(classes, &device)),
+            ModelId::Yolov8X => run_detect!(Yolov8XConfig.init_with_classes(classes, &device)),
+            ModelId::Yolo12N => run_detect!(Yolo12NConfig.init_with_classes(classes, &device)),
+            ModelId::Yolo12S => run_detect!(Yolo12SConfig.init_with_classes(classes, &device)),
+            ModelId::Yolo12M => run_detect!(Yolo12MConfig.init_with_classes(classes, &device)),
+            ModelId::Yolo12L => run_detect!(Yolo12LConfig.init_with_classes(classes, &device)),
+            ModelId::Yolo12X => run_detect!(Yolo12XConfig.init_with_classes(classes, &device)),
             _ => Err("checkpoint model is not a supported detector".into()),
         };
     }
+    if manifest.config.model.task == crate::training::TaskKind::Segment {
+        let batches = build_segmentation_batches(
+            &manifest.config,
+            &dataset,
+            &dataset.val_images,
+            &device,
+            manifest.state.epoch as u64,
+            false,
+        )?;
+        macro_rules! run_segment {
+            ($model:expr) => {{
+                validate_segmentation_model(
+                    $model,
+                    bytes,
+                    batches,
+                    manifest.config.model.architecture,
+                    &manifest.config.validation,
+                )
+            }};
+        }
+        return match manifest.config.model.architecture {
+            ModelId::Yolo11NSeg => run_segment!(
+                crate::models::yolo11::Yolo11SegNConfig.init_with_classes(classes, &device)
+            ),
+            ModelId::Yolo11SSeg => run_segment!(
+                crate::models::yolo11::Yolo11SegSConfig.init_with_classes(classes, &device)
+            ),
+            ModelId::Yolo11MSeg => run_segment!(
+                crate::models::yolo11::Yolo11SegMConfig.init_with_classes(classes, &device)
+            ),
+            ModelId::Yolo11LSeg => run_segment!(
+                crate::models::yolo11::Yolo11SegLConfig.init_with_classes(classes, &device)
+            ),
+            ModelId::Yolo11XSeg => run_segment!(
+                crate::models::yolo11::Yolo11SegXConfig.init_with_classes(classes, &device)
+            ),
+            ModelId::Yolov8NSeg => {
+                run_segment!(Yolov8SegNConfig.init_with_classes(classes, &device))
+            }
+            ModelId::Yolov8SSeg => {
+                run_segment!(Yolov8SegSConfig.init_with_classes(classes, &device))
+            }
+            ModelId::Yolov8MSeg => {
+                run_segment!(Yolov8SegMConfig.init_with_classes(classes, &device))
+            }
+            ModelId::Yolov8LSeg => {
+                run_segment!(Yolov8SegLConfig.init_with_classes(classes, &device))
+            }
+            ModelId::Yolov8XSeg => {
+                run_segment!(Yolov8SegXConfig.init_with_classes(classes, &device))
+            }
+            ModelId::Yolo26NSeg => run_segment!(
+                crate::models::yolo26::Yolo26SegNConfig.init_with_classes(classes, &device)
+            ),
+            ModelId::Yolo26SSeg => run_segment!(
+                crate::models::yolo26::Yolo26SegSConfig.init_with_classes(classes, &device)
+            ),
+            ModelId::Yolo26MSeg => run_segment!(
+                crate::models::yolo26::Yolo26SegMConfig.init_with_classes(classes, &device)
+            ),
+            ModelId::Yolo26LSeg => run_segment!(
+                crate::models::yolo26::Yolo26SegLConfig.init_with_classes(classes, &device)
+            ),
+            ModelId::Yolo26XSeg => run_segment!(
+                crate::models::yolo26::Yolo26SegXConfig.init_with_classes(classes, &device)
+            ),
+            _ => Err("checkpoint model is not a supported segmenter".into()),
+        };
+    }
     if manifest.config.model.task != crate::training::TaskKind::Classify {
-        return Err("native CLI mask validation is not complete; detection and classification checkpoints are supported".into());
+        return Err("checkpoint task is not supported by native validation".into());
     }
     let batches = build_classification_batches(
         &manifest.config,
@@ -1007,6 +1486,7 @@ where
         top1_accuracy: Some(top1 as f32 / count as f32),
         top5_accuracy: Some(top5 as f32 / count as f32),
         box_metrics: None,
+        mask_metrics: None,
     })
 }
 
@@ -1042,14 +1522,11 @@ classification_forward!(
     crate::models::yolov8::Yolov8ClsX<Wgpu>,
 );
 
-const VALIDATION_CONFIDENCE: f32 = 0.001;
-const VALIDATION_IOU: f32 = 0.7;
-const VALIDATION_MAX_DETECTIONS: usize = 300;
-
 trait DetectionForward {
     fn validation_detections(
         &self,
         images: Tensor<Wgpu, 4>,
+        validation: &crate::training::config::ValidationConfig,
     ) -> Vec<Vec<Vec<crate::models::yolox::BoundingBox>>>;
 }
 
@@ -1057,13 +1534,14 @@ impl DetectionForward for Yolox<Wgpu> {
     fn validation_detections(
         &self,
         images: Tensor<Wgpu, 4>,
+        validation: &crate::training::config::ValidationConfig,
     ) -> Vec<Vec<Vec<crate::models::yolox::BoundingBox>>> {
         let output = self.forward(images * 255.0);
         let [batch, anchors, outputs] = output.dims();
         let boxes = output.clone().slice([0..batch, 0..anchors, 0..4]);
         let objectness = output.clone().slice([0..batch, 0..anchors, 4..5]);
         let scores = output.slice([0..batch, 0..anchors, 5..outputs]) * objectness;
-        crate::models::yolox::boxes::nms(boxes, scores, VALIDATION_IOU, VALIDATION_CONFIDENCE)
+        crate::models::yolox::boxes::nms(boxes, scores, validation.iou, validation.confidence)
     }
 }
 
@@ -1071,6 +1549,7 @@ impl DetectionForward for crate::models::yolov3_tiny::Yolov3Tiny<Wgpu> {
     fn validation_detections(
         &self,
         images: Tensor<Wgpu, 4>,
+        validation: &crate::training::config::ValidationConfig,
     ) -> Vec<Vec<Vec<crate::models::yolox::BoundingBox>>> {
         let output = self.forward(images);
         let [batch, anchors, _] = output.boxes.dims();
@@ -1081,8 +1560,8 @@ impl DetectionForward for crate::models::yolov3_tiny::Yolov3Tiny<Wgpu> {
         crate::models::yolox::boxes::nms(
             Tensor::cat(vec![center, size], 2),
             output.scores,
-            VALIDATION_IOU,
-            VALIDATION_CONFIDENCE,
+            validation.iou,
+            validation.confidence,
         )
     }
 }
@@ -1093,13 +1572,14 @@ macro_rules! classic_detection_forward {
             fn validation_detections(
                 &self,
                 images: Tensor<Wgpu, 4>,
+                validation: &crate::training::config::ValidationConfig,
             ) -> Vec<Vec<Vec<crate::models::yolox::BoundingBox>>> {
                 let output = self.forward(images);
                 crate::models::yolox::boxes::nms(
                     output.boxes,
                     output.scores,
-                    VALIDATION_IOU,
-                    VALIDATION_CONFIDENCE,
+                    validation.iou,
+                    validation.confidence,
                 )
             }
         }
@@ -1112,6 +1592,16 @@ classic_detection_forward!(
     crate::models::yolo11::Yolo11M<Wgpu>,
     crate::models::yolo11::Yolo11L<Wgpu>,
     crate::models::yolo11::Yolo11X<Wgpu>,
+    crate::models::yolov8::Yolov8N<Wgpu>,
+    crate::models::yolov8::Yolov8S<Wgpu>,
+    crate::models::yolov8::Yolov8M<Wgpu>,
+    crate::models::yolov8::Yolov8L<Wgpu>,
+    crate::models::yolov8::Yolov8X<Wgpu>,
+    crate::models::yolo12::Yolo12N<Wgpu>,
+    crate::models::yolo12::Yolo12S<Wgpu>,
+    crate::models::yolo12::Yolo12M<Wgpu>,
+    crate::models::yolo12::Yolo12L<Wgpu>,
+    crate::models::yolo12::Yolo12X<Wgpu>,
 );
 
 macro_rules! end_to_end_detection_forward {
@@ -1120,13 +1610,14 @@ macro_rules! end_to_end_detection_forward {
             fn validation_detections(
                 &self,
                 images: Tensor<Wgpu, 4>,
+                validation: &crate::training::config::ValidationConfig,
             ) -> Vec<Vec<Vec<crate::models::yolox::BoundingBox>>> {
                 let output = self.forward(images);
                 crate::end2end_topk_detections(
                     output.boxes,
                     output.scores,
-                    VALIDATION_MAX_DETECTIONS,
-                    VALIDATION_CONFIDENCE,
+                    validation.max_detections,
+                    validation.confidence,
                 )
             }
         }
@@ -1152,6 +1643,7 @@ fn validate_detection_model<M>(
     bytes: Vec<u8>,
     batches: Vec<DetectionBatch<Wgpu>>,
     model_id: ModelId,
+    validation: &crate::training::config::ValidationConfig,
 ) -> Result<ValidationSummary, Box<dyn Error + Send + Sync>>
 where
     M: burn::module::Module<Wgpu> + DetectionForward,
@@ -1169,7 +1661,7 @@ where
         let classes = classes_data.as_slice::<i64>()?;
         let boxes = boxes_data.as_slice::<f32>()?;
         let valid = valid_data.as_slice::<bool>()?;
-        let grouped = model.validation_detections(batch.images);
+        let grouped = model.validation_detections(batch.images, validation);
         if grouped.len() != batch.metadata.len() {
             return Err("detector output batch size differs from validation metadata".into());
         }
@@ -1182,7 +1674,7 @@ where
                 .flat_map(|(class_id, boxes)| boxes.into_iter().map(move |bbox| (class_id, bbox)))
                 .collect::<Vec<_>>();
             image_predictions.sort_unstable_by(|a, b| b.1.confidence.total_cmp(&a.1.confidence));
-            image_predictions.truncate(VALIDATION_MAX_DETECTIONS);
+            image_predictions.truncate(validation.max_detections);
             for (class_id, bbox) in image_predictions {
                 if let Some(source_bbox) =
                     source_box(metadata, [bbox.xmin, bbox.ymin, bbox.xmax, bbox.ymax])
@@ -1208,7 +1700,7 @@ where
                         image_id: metadata.image_id.clone(),
                         class_id,
                         bbox,
-                        crowd: false,
+                        crowd: metadata.crowd.get(target).copied().unwrap_or(false),
                     });
                 }
             }
@@ -1226,7 +1718,235 @@ where
             &predictions,
             &targets,
         )),
+        mask_metrics: None,
     })
+}
+
+trait SegmentationForward {
+    fn validation_segmentations(
+        &self,
+        image: Tensor<Wgpu, 4>,
+        validation: &crate::training::config::ValidationConfig,
+    ) -> crate::SegmentationOutputCpu;
+}
+
+macro_rules! classic_segmentation_forward {
+    ($($model:ty),+ $(,)?) => {$ (
+        impl SegmentationForward for $model {
+            fn validation_segmentations(
+                &self,
+                image: Tensor<Wgpu, 4>,
+                validation: &crate::training::config::ValidationConfig,
+            ) -> crate::SegmentationOutputCpu {
+                crate::run_classic_segmentations(
+                    self,
+                    image * 255.0,
+                    validation.iou,
+                    validation.confidence,
+                )
+            }
+        }
+    )+ };
+}
+
+classic_segmentation_forward!(
+    crate::models::yolo11::Yolo11SegN<Wgpu>,
+    crate::models::yolo11::Yolo11SegS<Wgpu>,
+    crate::models::yolo11::Yolo11SegM<Wgpu>,
+    crate::models::yolo11::Yolo11SegL<Wgpu>,
+    crate::models::yolo11::Yolo11SegX<Wgpu>,
+    crate::models::yolov8::Yolov8SegN<Wgpu>,
+    crate::models::yolov8::Yolov8SegS<Wgpu>,
+    crate::models::yolov8::Yolov8SegM<Wgpu>,
+    crate::models::yolov8::Yolov8SegL<Wgpu>,
+    crate::models::yolov8::Yolov8SegX<Wgpu>,
+);
+
+macro_rules! end_to_end_segmentation_forward {
+    ($($model:ty),+ $(,)?) => {$ (
+        impl SegmentationForward for $model {
+            fn validation_segmentations(
+                &self,
+                image: Tensor<Wgpu, 4>,
+                validation: &crate::training::config::ValidationConfig,
+            ) -> crate::SegmentationOutputCpu {
+                crate::run_end_to_end_segmentations(
+                    self,
+                    image * 255.0,
+                    validation.max_detections,
+                    validation.confidence,
+                )
+            }
+        }
+    )+ };
+}
+
+end_to_end_segmentation_forward!(
+    crate::models::yolo26::Yolo26SegN<Wgpu>,
+    crate::models::yolo26::Yolo26SegS<Wgpu>,
+    crate::models::yolo26::Yolo26SegM<Wgpu>,
+    crate::models::yolo26::Yolo26SegL<Wgpu>,
+    crate::models::yolo26::Yolo26SegX<Wgpu>,
+);
+
+fn validate_segmentation_model<M>(
+    model: M,
+    bytes: Vec<u8>,
+    batches: Vec<SegmentationBatch<Wgpu>>,
+    model_id: ModelId,
+    validation: &crate::training::config::ValidationConfig,
+) -> Result<ValidationSummary, Box<dyn Error + Send + Sync>>
+where
+    M: Module<Wgpu> + SegmentationForward,
+{
+    let device = batches[0].detection.images.device();
+    let model = model.load_record(decode_record::<Wgpu, _>(bytes, &device)?);
+    let mut box_predictions = Vec::new();
+    let mut box_targets = Vec::new();
+    let mut mask_predictions = Vec::new();
+    let mut mask_targets = Vec::new();
+    let mut image_count = 0;
+    for batch in batches {
+        let [batch_size, max_targets] = batch.detection.classes.dims();
+        let [_, _, image_height, image_width] = batch.detection.images.dims();
+        let [mask_batch, mask_count, mask_height, mask_width] = batch.masks.dims();
+        if mask_batch != batch_size || mask_count != max_targets {
+            return Err("segmentation target tensors disagree on batch/object shape".into());
+        }
+        let classes_data = batch.detection.classes.into_data();
+        let boxes_data = batch.detection.boxes_xyxy.into_data();
+        let valid_data = batch.detection.valid.into_data();
+        let masks_data = batch.masks.into_data();
+        let classes = classes_data.as_slice::<i64>()?;
+        let boxes = boxes_data.as_slice::<f32>()?;
+        let valid = valid_data.as_slice::<bool>()?;
+        let masks = masks_data.as_slice::<f32>()?;
+        for (image, metadata) in batch.detection.metadata.iter().enumerate() {
+            let input = batch.detection.images.clone().slice([
+                image..image + 1,
+                0..3,
+                0..image_height,
+                0..image_width,
+            ]);
+            let mut output = model.validation_segmentations(input, validation);
+            output
+                .candidates
+                .sort_unstable_by(|a, b| b.bbox.confidence.total_cmp(&a.bbox.confidence));
+            output.candidates.truncate(validation.max_detections);
+            for candidate in &output.candidates {
+                let canvas_box = [
+                    candidate.bbox.xmin,
+                    candidate.bbox.ymin,
+                    candidate.bbox.xmax,
+                    candidate.bbox.ymax,
+                ];
+                let Some(bbox) = source_box(metadata, canvas_box) else {
+                    continue;
+                };
+                let canvas_mask = crate::canvas_instance_mask(
+                    &output,
+                    candidate.anchor,
+                    image_width,
+                    image_height,
+                    canvas_box,
+                );
+                let source_mask = source_mask(metadata, &canvas_mask, image_width, image_height);
+                if !source_mask.iter().any(|value| *value) {
+                    continue;
+                }
+                box_predictions.push(crate::training::metrics::detection::MetricPrediction {
+                    image_id: metadata.image_id.clone(),
+                    class_id: candidate.class_id,
+                    confidence: candidate.bbox.confidence,
+                    bbox,
+                });
+                mask_predictions.push(
+                    crate::training::metrics::segmentation::MetricMaskPrediction {
+                        image_id: metadata.image_id.clone(),
+                        class_id: candidate.class_id,
+                        confidence: candidate.bbox.confidence,
+                        mask: source_mask,
+                    },
+                );
+            }
+            for target in 0..max_targets {
+                let flat = image * max_targets + target;
+                if !valid[flat] {
+                    continue;
+                }
+                let class_id = usize::try_from(classes[flat])?;
+                let Some(bbox) =
+                    source_box(metadata, boxes[flat * 4..flat * 4 + 4].try_into().unwrap())
+                else {
+                    continue;
+                };
+                let mask_start = flat * mask_height * mask_width;
+                let canvas_mask = masks[mask_start..mask_start + mask_height * mask_width]
+                    .iter()
+                    .map(|value| *value > 0.5)
+                    .collect::<Vec<_>>();
+                let mask = source_mask(metadata, &canvas_mask, mask_width, mask_height);
+                box_targets.push(crate::training::metrics::detection::MetricTarget {
+                    image_id: metadata.image_id.clone(),
+                    class_id,
+                    bbox,
+                    crowd: metadata.crowd.get(target).copied().unwrap_or(false),
+                });
+                mask_targets.push(crate::training::metrics::segmentation::MetricMaskTarget {
+                    image_id: metadata.image_id.clone(),
+                    class_id,
+                    mask,
+                    crowd: metadata.crowd.get(target).copied().unwrap_or(false),
+                });
+            }
+        }
+        image_count += batch_size;
+    }
+    Ok(ValidationSummary {
+        model: model_id,
+        split: "val".into(),
+        images: image_count,
+        mean_loss: None,
+        top1_accuracy: None,
+        top5_accuracy: None,
+        box_metrics: Some(crate::training::metrics::detection::evaluate(
+            &box_predictions,
+            &box_targets,
+        )),
+        mask_metrics: Some(crate::training::metrics::segmentation::evaluate(
+            &mask_predictions,
+            &mask_targets,
+        )),
+    })
+}
+
+fn source_mask(
+    metadata: &ImageMeta,
+    canvas_mask: &[bool],
+    mask_width: usize,
+    mask_height: usize,
+) -> Vec<bool> {
+    if canvas_mask.len() != mask_width * mask_height || mask_width == 0 || mask_height == 0 {
+        return Vec::new();
+    }
+    let [source_width, source_height] = metadata.source_size.map(|value| value as usize);
+    let canvas_width = metadata.canvas_size[0].max(1) as f32;
+    let canvas_height = metadata.canvas_size[1].max(1) as f32;
+    let mut output = vec![false; source_width * source_height];
+    for y in 0..source_height {
+        let canvas_y = y as f32 * metadata.scale[1] + metadata.pad[1];
+        let mask_y = (canvas_y * mask_height as f32 / canvas_height + 0.5)
+            .floor()
+            .clamp(0.0, mask_height.saturating_sub(1) as f32) as usize;
+        for x in 0..source_width {
+            let canvas_x = x as f32 * metadata.scale[0] + metadata.pad[0];
+            let mask_x = (canvas_x * mask_width as f32 / canvas_width + 0.5)
+                .floor()
+                .clamp(0.0, mask_width.saturating_sub(1) as f32) as usize;
+            output[y * source_width + x] = canvas_mask[mask_y * mask_width + mask_x];
+        }
+    }
+    output
 }
 
 fn source_box(
@@ -1249,46 +1969,205 @@ pub fn export(
     output: PathBuf,
 ) -> Result<PathBuf, Box<dyn Error + Send + Sync>> {
     let manifest = crate::training::checkpoint::load(&checkpoint)?;
-    if manifest.config.model.task != crate::training::TaskKind::Classify {
-        return Err("native training export currently supports classification checkpoints".into());
-    }
-    if manifest.config.model.num_classes != crate::models::yolo26::classification::NUM_CLASSES {
-        return Err("custom-class inference artifact metadata is not yet supported; refusing to emit an artifact that the public Predictor cannot reload safely".into());
+    if output.extension().and_then(|value| value.to_str()) != Some("bpk") {
+        return Err("native training artifacts must use the .bpk extension".into());
     }
     let (device, _) = crate::default_wgpu_device();
     let bytes = std::fs::read(checkpoint.join("ema.bin"))
         .or_else(|_| std::fs::read(checkpoint.join("model.bin")))?;
+    let classes = manifest.config.model.num_classes;
     macro_rules! save {
         ($config:expr) => {{
-            let model = $config.init::<Wgpu>(&device);
+            let model = $config.init_with_classes::<Wgpu>(classes, &device);
             let model = model.load_record(decode_record::<Wgpu, _>(bytes, &device)?);
-            model.save_burnpack_weights(&output)?;
+            save_training_artifact(&model, &manifest.config.model, &output)?;
             Ok(output)
         }};
     }
-    match manifest.config.model.architecture {
-        ModelId::Yolo11NCls => save!(Yolo11ClsNConfig),
-        ModelId::Yolo11SCls => save!(Yolo11ClsSConfig),
-        ModelId::Yolo11MCls => save!(Yolo11ClsMConfig),
-        ModelId::Yolo11LCls => save!(Yolo11ClsLConfig),
-        ModelId::Yolo11XCls => save!(Yolo11ClsXConfig),
-        ModelId::Yolo26NCls => save!(Yolo26ClsNConfig),
-        ModelId::Yolo26SCls => save!(Yolo26ClsSConfig),
-        ModelId::Yolo26MCls => save!(Yolo26ClsMConfig),
-        ModelId::Yolo26LCls => save!(Yolo26ClsLConfig),
-        ModelId::Yolo26XCls => save!(Yolo26ClsXConfig),
-        ModelId::Yolov8NCls => save!(Yolov8ClsNConfig),
-        ModelId::Yolov8SCls => save!(Yolov8ClsSConfig),
-        ModelId::Yolov8MCls => save!(Yolov8ClsMConfig),
-        ModelId::Yolov8LCls => save!(Yolov8ClsLConfig),
-        ModelId::Yolov8XCls => save!(Yolov8ClsXConfig),
-        _ => Err("checkpoint model is not a supported classifier".into()),
+    macro_rules! save_yolox {
+        ($model:expr) => {{
+            let model = $model.load_record(decode_record::<Wgpu, _>(bytes, &device)?);
+            save_training_artifact(&model, &manifest.config.model, &output)?;
+            Ok(output)
+        }};
     }
+    let exported: Result<PathBuf, Box<dyn Error + Send + Sync>> =
+        match manifest.config.model.architecture {
+            ModelId::YoloxNano => save_yolox!(Yolox::yolox_nano(classes, &device)),
+            ModelId::YoloxTiny => save_yolox!(Yolox::yolox_tiny(classes, &device)),
+            ModelId::YoloxS => save_yolox!(Yolox::yolox_s(classes, &device)),
+            ModelId::YoloxM => save_yolox!(Yolox::yolox_m(classes, &device)),
+            ModelId::YoloxL => save_yolox!(Yolox::yolox_l(classes, &device)),
+            ModelId::YoloxX => save_yolox!(Yolox::yolox_x(classes, &device)),
+            ModelId::Yolov3TinyU => save!(Yolov3TinyConfig),
+            ModelId::Yolov10N => save!(Yolov10NConfig),
+            ModelId::Yolov10S => save!(Yolov10SConfig),
+            ModelId::Yolov10M => save!(Yolov10MConfig),
+            ModelId::Yolov10B => save!(Yolov10BConfig),
+            ModelId::Yolov10L => save!(Yolov10LConfig),
+            ModelId::Yolov10X => save!(Yolov10XConfig),
+            ModelId::Yolo11N => save!(crate::models::yolo11::Yolo11NConfig),
+            ModelId::Yolo11S => save!(crate::models::yolo11::Yolo11SConfig),
+            ModelId::Yolo11M => save!(crate::models::yolo11::Yolo11MConfig),
+            ModelId::Yolo11L => save!(crate::models::yolo11::Yolo11LConfig),
+            ModelId::Yolo11X => save!(crate::models::yolo11::Yolo11XConfig),
+            ModelId::Yolo11NSeg => save!(crate::models::yolo11::Yolo11SegNConfig),
+            ModelId::Yolo11SSeg => save!(crate::models::yolo11::Yolo11SegSConfig),
+            ModelId::Yolo11MSeg => save!(crate::models::yolo11::Yolo11SegMConfig),
+            ModelId::Yolo11LSeg => save!(crate::models::yolo11::Yolo11SegLConfig),
+            ModelId::Yolo11XSeg => save!(crate::models::yolo11::Yolo11SegXConfig),
+            ModelId::Yolo11NCls => save!(Yolo11ClsNConfig),
+            ModelId::Yolo11SCls => save!(Yolo11ClsSConfig),
+            ModelId::Yolo11MCls => save!(Yolo11ClsMConfig),
+            ModelId::Yolo11LCls => save!(Yolo11ClsLConfig),
+            ModelId::Yolo11XCls => save!(Yolo11ClsXConfig),
+            ModelId::Yolov8N => save!(Yolov8NConfig),
+            ModelId::Yolov8S => save!(Yolov8SConfig),
+            ModelId::Yolov8M => save!(Yolov8MConfig),
+            ModelId::Yolov8L => save!(Yolov8LConfig),
+            ModelId::Yolov8X => save!(Yolov8XConfig),
+            ModelId::Yolov8NSeg => save!(Yolov8SegNConfig),
+            ModelId::Yolov8SSeg => save!(Yolov8SegSConfig),
+            ModelId::Yolov8MSeg => save!(Yolov8SegMConfig),
+            ModelId::Yolov8LSeg => save!(Yolov8SegLConfig),
+            ModelId::Yolov8XSeg => save!(Yolov8SegXConfig),
+            ModelId::Yolo26NCls => save!(Yolo26ClsNConfig),
+            ModelId::Yolo26SCls => save!(Yolo26ClsSConfig),
+            ModelId::Yolo26MCls => save!(Yolo26ClsMConfig),
+            ModelId::Yolo26LCls => save!(Yolo26ClsLConfig),
+            ModelId::Yolo26XCls => save!(Yolo26ClsXConfig),
+            ModelId::Yolov8NCls => save!(Yolov8ClsNConfig),
+            ModelId::Yolov8SCls => save!(Yolov8ClsSConfig),
+            ModelId::Yolov8MCls => save!(Yolov8ClsMConfig),
+            ModelId::Yolov8LCls => save!(Yolov8ClsLConfig),
+            ModelId::Yolov8XCls => save!(Yolov8ClsXConfig),
+            ModelId::Yolo12N => save!(Yolo12NConfig),
+            ModelId::Yolo12S => save!(Yolo12SConfig),
+            ModelId::Yolo12M => save!(Yolo12MConfig),
+            ModelId::Yolo12L => save!(Yolo12LConfig),
+            ModelId::Yolo12X => save!(Yolo12XConfig),
+            ModelId::Yolo26N => save!(Yolo26NConfig),
+            ModelId::Yolo26S => save!(Yolo26SConfig),
+            ModelId::Yolo26M => save!(Yolo26MConfig),
+            ModelId::Yolo26L => save!(Yolo26LConfig),
+            ModelId::Yolo26X => save!(Yolo26XConfig),
+            ModelId::Yolo26NSeg => save!(crate::models::yolo26::Yolo26SegNConfig),
+            ModelId::Yolo26SSeg => save!(crate::models::yolo26::Yolo26SegSConfig),
+            ModelId::Yolo26MSeg => save!(crate::models::yolo26::Yolo26SegMConfig),
+            ModelId::Yolo26LSeg => save!(crate::models::yolo26::Yolo26SegLConfig),
+            ModelId::Yolo26XSeg => save!(crate::models::yolo26::Yolo26SegXConfig),
+        };
+    let exported = exported?;
+    let predictor = crate::Predictor::<Wgpu>::from_trained_artifact_on_device(
+        manifest.config.model.architecture,
+        &exported,
+        device,
+        crate::PredictOptions::default(),
+    )?;
+    if predictor.class_names() != manifest.config.model.class_names {
+        return Err("public predictor reloaded a different artifact class table".into());
+    }
+    Ok(exported)
+}
+
+#[cfg(feature = "pretrained")]
+fn keep_inference_tensor(path: &str, _container: &str) -> bool {
+    !path.contains(".o2m_") && !path.starts_with("head.proto.sem_")
+}
+
+#[cfg(feature = "pretrained")]
+fn save_training_artifact<M>(
+    model: &M,
+    spec: &ModelSpec,
+    output: &std::path::Path,
+) -> Result<(), Box<dyn Error + Send + Sync>>
+where
+    M: Module<Wgpu>,
+{
+    let task = match spec.task {
+        crate::training::TaskKind::Detect => "detect",
+        crate::training::TaskKind::Segment => "segment",
+        crate::training::TaskKind::Classify => "classify",
+    };
+    let mut store = burn_store::BurnpackStore::from_file(output)
+        .metadata("boquilens.artifact-format", "boquilens-trained-v1")
+        .metadata("boquilens.model", spec.architecture.as_str())
+        .metadata("boquilens.task", task)
+        .metadata(
+            "boquilens.class-names-json",
+            serde_json::to_string(&spec.class_names)?,
+        )
+        .metadata(
+            "boquilens.input-size-json",
+            serde_json::to_string(&spec.input_size)?,
+        )
+        .metadata("boquilens.precision", "f16")
+        .with_filter(PathFilter::new().with_predicate(keep_inference_tensor))
+        .with_to_adapter(burn_store::HalfPrecisionAdapter::new());
+    model.save_into(&mut store)?;
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Module, Debug)]
+    struct TransferHead<B: Backend> {
+        linear: burn::nn::Linear<B>,
+    }
+
+    #[derive(Module, Debug)]
+    struct TransferModel<B: Backend> {
+        body: burn::nn::Linear<B>,
+        head: TransferHead<B>,
+    }
+
+    fn transfer_model<B: Backend>(classes: usize, device: &B::Device) -> TransferModel<B> {
+        TransferModel {
+            body: burn::nn::LinearConfig::new(2, 3).init(device),
+            head: TransferHead {
+                linear: burn::nn::LinearConfig::new(3, classes).init(device),
+            },
+        }
+    }
+
+    #[test]
+    fn changed_class_transfer_preserves_only_fresh_classifier_projection() {
+        let device = Default::default();
+        let official = transfer_model::<burn_flex::Flex>(5, &device);
+        let target = transfer_model::<burn_flex::Flex>(2, &device);
+        let classifier_before = target.head.linear.weight.val().into_data();
+        let transferred =
+            transfer_pretrained(target, &official, ReplacedProjection::Classifier).unwrap();
+        assert_eq!(
+            classifier_before.as_slice::<f32>().unwrap(),
+            transferred
+                .head
+                .linear
+                .weight
+                .val()
+                .into_data()
+                .as_slice::<f32>()
+                .unwrap()
+        );
+        assert_eq!(
+            official
+                .body
+                .weight
+                .val()
+                .into_data()
+                .as_slice::<f32>()
+                .unwrap(),
+            transferred
+                .body
+                .weight
+                .val()
+                .into_data()
+                .as_slice::<f32>()
+                .unwrap()
+        );
+    }
 
     #[test]
     fn validation_boxes_map_back_through_composed_geometry() {
@@ -1298,6 +2177,7 @@ mod tests {
             canvas_size: [32, 32],
             scale: [0.5, 0.5],
             pad: [6.0, 11.0],
+            crowd: Vec::new(),
         };
         let bbox = source_box(&metadata, [6.0, 11.0, 26.0, 21.0]).unwrap();
         assert_eq!(

@@ -34,4 +34,6 @@ pub struct ImageMeta {
     pub canvas_size: [u32; 2],
     pub scale: [f32; 2],
     pub pad: [f32; 2],
+    #[serde(default)]
+    pub crowd: Vec<bool>,
 }

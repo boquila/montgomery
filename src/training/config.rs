@@ -119,6 +119,23 @@ pub enum ScheduleKind {
     YoloxWarmCosine,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ValidationConfig {
+    pub confidence: f32,
+    pub iou: f32,
+    pub max_detections: usize,
+}
+
+impl Default for ValidationConfig {
+    fn default() -> Self {
+        Self {
+            confidence: 0.001,
+            iou: 0.7,
+            max_detections: 300,
+        }
+    }
+}
+
 /// Fully resolved settings persisted in native checkpoints.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrainingConfig {
@@ -141,6 +158,8 @@ pub struct TrainingConfig {
     pub gradient_clip: f64,
     pub validation_interval: usize,
     pub patience: usize,
+    #[serde(default)]
+    pub validation: ValidationConfig,
     #[serde(default)]
     pub augmentation: AugmentationConfig,
 }
@@ -168,6 +187,7 @@ impl TrainingConfig {
             gradient_clip: 10.0,
             validation_interval: 1,
             patience: 50,
+            validation: ValidationConfig::default(),
             augmentation: AugmentationConfig {
                 imgsz,
                 ..AugmentationConfig::default()
@@ -201,6 +221,16 @@ impl TrainingConfig {
         if !self.weight_decay.is_finite() || self.weight_decay < 0.0 {
             return Err(ConfigError::new(
                 "weight_decay must be finite and non-negative",
+            ));
+        }
+        if !self.validation.confidence.is_finite()
+            || !(0.0..=1.0).contains(&self.validation.confidence)
+            || !self.validation.iou.is_finite()
+            || !(0.0..=1.0).contains(&self.validation.iou)
+            || self.validation.max_detections == 0
+        {
+            return Err(ConfigError::new(
+                "validation confidence/IoU must be in [0, 1] and max_detections must be positive",
             ));
         }
         self.augmentation

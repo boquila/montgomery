@@ -10,7 +10,9 @@ use super::body::{
 // The YOLO12 `Detect` head is byte-identical to YOLO11's (classic DFL towers with the light
 // DWConv classification flavor, reg_max 16, verified from the checkpoints), so the head module
 // and its decode are shared instead of duplicated.
-use crate::models::yolo11::head::{DecodedPredictions, Yolo11Head, Yolo11HeadConfig};
+use crate::models::yolo11::head::{
+    DecodedPredictions, RawPredictions, Yolo11Head, Yolo11HeadConfig,
+};
 
 #[cfg(feature = "pretrained")]
 use {
@@ -78,6 +80,10 @@ impl<B: Backend> Yolo12N<B> {
         self.head.forward(self.body.forward(input))
     }
 
+    pub fn forward_train(&self, input: Tensor<B, 4>) -> RawPredictions<B> {
+        self.head.forward_raw(self.body.forward(input))
+    }
+
     /// Import tensor-only state exported from an official Ultralytics YOLO12n checkpoint.
     #[cfg(feature = "pretrained")]
     pub fn load_pytorch_weights(
@@ -118,9 +124,19 @@ pub struct Yolo12NConfig;
 
 impl Yolo12NConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo12N<B> {
+        self.init_with_classes(80, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolo12N<B> {
         Yolo12N {
             body: Yolo12BodyNConfig.init(device),
-            head: Yolo11HeadConfig::new(64, 128, 256).init(device),
+            head: Yolo11HeadConfig::new(64, 128, 256)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }
@@ -135,6 +151,10 @@ pub struct Yolo12S<B: Backend> {
 impl<B: Backend> Yolo12S<B> {
     pub fn forward(&self, input: Tensor<B, 4>) -> DecodedPredictions<B> {
         self.head.forward(self.body.forward(input))
+    }
+
+    pub fn forward_train(&self, input: Tensor<B, 4>) -> RawPredictions<B> {
+        self.head.forward_raw(self.body.forward(input))
     }
 
     /// Import tensor-only state exported from an official Ultralytics YOLO12s checkpoint.
@@ -177,9 +197,19 @@ pub struct Yolo12SConfig;
 
 impl Yolo12SConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo12S<B> {
+        self.init_with_classes(80, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolo12S<B> {
         Yolo12S {
             body: Yolo12BodySConfig.init(device),
-            head: Yolo11HeadConfig::new(128, 256, 512).init(device),
+            head: Yolo11HeadConfig::new(128, 256, 512)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }
@@ -195,6 +225,10 @@ pub struct Yolo12M<B: Backend> {
 impl<B: Backend> Yolo12M<B> {
     pub fn forward(&self, input: Tensor<B, 4>) -> DecodedPredictions<B> {
         self.head.forward(self.body.forward(input))
+    }
+
+    pub fn forward_train(&self, input: Tensor<B, 4>) -> RawPredictions<B> {
+        self.head.forward_raw(self.body.forward(input))
     }
 
     /// Import tensor-only state exported from an official Ultralytics YOLO12m checkpoint.
@@ -237,9 +271,19 @@ pub struct Yolo12MConfig;
 
 impl Yolo12MConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo12M<B> {
+        self.init_with_classes(80, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolo12M<B> {
         Yolo12M {
             body: Yolo12BodyMConfig.init(device),
-            head: Yolo11HeadConfig::new(256, 512, 512).init(device),
+            head: Yolo11HeadConfig::new(256, 512, 512)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }
@@ -255,6 +299,10 @@ pub struct Yolo12L<B: Backend> {
 impl<B: Backend> Yolo12L<B> {
     pub fn forward(&self, input: Tensor<B, 4>) -> DecodedPredictions<B> {
         self.head.forward(self.body.forward(input))
+    }
+
+    pub fn forward_train(&self, input: Tensor<B, 4>) -> RawPredictions<B> {
+        self.head.forward_raw(self.body.forward(input))
     }
 
     /// Import tensor-only state exported from an official Ultralytics YOLO12l checkpoint.
@@ -297,9 +345,19 @@ pub struct Yolo12LConfig;
 
 impl Yolo12LConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo12L<B> {
+        self.init_with_classes(80, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolo12L<B> {
         Yolo12L {
             body: Yolo12BodyLConfig.init(device),
-            head: Yolo11HeadConfig::new(256, 512, 512).init(device),
+            head: Yolo11HeadConfig::new(256, 512, 512)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }
@@ -314,6 +372,10 @@ pub struct Yolo12X<B: Backend> {
 impl<B: Backend> Yolo12X<B> {
     pub fn forward(&self, input: Tensor<B, 4>) -> DecodedPredictions<B> {
         self.head.forward(self.body.forward(input))
+    }
+
+    pub fn forward_train(&self, input: Tensor<B, 4>) -> RawPredictions<B> {
+        self.head.forward_raw(self.body.forward(input))
     }
 
     /// Import tensor-only state exported from an official Ultralytics YOLO12x checkpoint.
@@ -356,9 +418,19 @@ pub struct Yolo12XConfig;
 
 impl Yolo12XConfig {
     pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo12X<B> {
+        self.init_with_classes(80, device)
+    }
+
+    pub fn init_with_classes<B: Backend>(
+        &self,
+        num_classes: usize,
+        device: &Device<B>,
+    ) -> Yolo12X<B> {
         Yolo12X {
             body: Yolo12BodyXConfig.init(device),
-            head: Yolo11HeadConfig::new(384, 768, 768).init(device),
+            head: Yolo11HeadConfig::new(384, 768, 768)
+                .with_num_classes(num_classes)
+                .init(device),
         }
     }
 }

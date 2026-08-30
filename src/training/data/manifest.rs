@@ -66,6 +66,9 @@ pub struct DatasetManifest {
     test: Option<Split>,
     names: Option<Names>,
     format: Option<DatasetFormat>,
+    train_annotations: Option<PathBuf>,
+    val_annotations: Option<PathBuf>,
+    test_annotations: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,6 +80,9 @@ pub struct ResolvedDataset {
     pub train_images: Vec<PathBuf>,
     pub val_images: Vec<PathBuf>,
     pub test_images: Vec<PathBuf>,
+    pub train_annotations: Option<PathBuf>,
+    pub val_annotations: Option<PathBuf>,
+    pub test_annotations: Option<PathBuf>,
     pub fingerprint: String,
 }
 
@@ -138,6 +144,34 @@ impl DatasetManifest {
             Some(format) => format,
             None => detect_format(&root, &train_images)?,
         };
+        let resolve_annotation = |path: Option<PathBuf>| -> Result<Option<PathBuf>, DatasetError> {
+            path.map(|path| {
+                let path = if path.is_absolute() {
+                    path
+                } else {
+                    root.join(path)
+                };
+                fs::canonicalize(&path).map_err(|error| {
+                    DatasetError::new(format!(
+                        "cannot resolve annotation file {}: {error}",
+                        path.display()
+                    ))
+                })
+            })
+            .transpose()
+        };
+        let train_annotations = resolve_annotation(self.train_annotations)?;
+        let val_annotations = resolve_annotation(self.val_annotations)?;
+        let test_annotations = resolve_annotation(self.test_annotations)?;
+        if format == DatasetFormat::Coco
+            && (train_annotations.is_none()
+                || (!val_images.is_empty() && val_annotations.is_none())
+                || (!test_images.is_empty() && test_annotations.is_none()))
+        {
+            return Err(DatasetError::new(
+                "COCO manifests require train_annotations and annotations for each non-empty val/test split",
+            ));
+        }
         let class_names = match self.names {
             Some(names) => names.ordered()?,
             None if format == DatasetFormat::ClassificationFolders => {
@@ -150,7 +184,12 @@ impl DatasetManifest {
             }
         };
         validate_names(&class_names)?;
-        let fingerprint = fingerprint(&train_images, &val_images, &test_images)?;
+        let fingerprint = fingerprint(
+            &train_images,
+            &val_images,
+            &test_images,
+            [&train_annotations, &val_annotations, &test_annotations],
+        )?;
         Ok(ResolvedDataset {
             manifest,
             root,
@@ -159,6 +198,9 @@ impl DatasetManifest {
             train_images,
             val_images,
             test_images,
+            train_annotations,
+            val_annotations,
+            test_annotations,
             fingerprint,
         })
     }
@@ -303,6 +345,7 @@ fn fingerprint(
     train: &[PathBuf],
     val: &[PathBuf],
     test: &[PathBuf],
+    annotations: [&Option<PathBuf>; 3],
 ) -> Result<String, DatasetError> {
     let mut hash = Sha256::new();
     for (split, paths) in [("train", train), ("val", val), ("test", test)] {
@@ -313,6 +356,11 @@ fn fingerprint(
             hash.update(path.to_string_lossy().as_bytes());
             hash.update(metadata.len().to_le_bytes());
         }
+    }
+    for path in annotations.into_iter().flatten() {
+        let metadata = fs::metadata(path).map_err(|error| DatasetError::new(error.to_string()))?;
+        hash.update(path.to_string_lossy().as_bytes());
+        hash.update(metadata.len().to_le_bytes());
     }
     Ok(format!("{:x}", hash.finalize()))
 }

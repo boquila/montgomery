@@ -1,4 +1,8 @@
-use std::{collections::BTreeMap, fs, path::Path};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use serde::Deserialize;
 
@@ -51,6 +55,7 @@ enum CocoCounts {
 #[derive(Debug, Clone)]
 pub struct CocoDataset {
     pub samples: Vec<VisionSample>,
+    pub sample_paths: Vec<PathBuf>,
     pub class_names: Vec<String>,
     pub category_to_class: BTreeMap<u64, usize>,
     pub dropped_invalid: usize,
@@ -95,9 +100,21 @@ pub fn load(
             .push(annotation);
     }
     let mut samples = Vec::with_capacity(parsed.images.len());
+    let mut sample_paths = Vec::with_capacity(parsed.images.len());
     let mut dropped_invalid = 0;
     for image_record in parsed.images {
-        let path = images_root.as_ref().join(&image_record.file_name);
+        let mut path = images_root.as_ref().join(&image_record.file_name);
+        if !path.exists()
+            && let Some(file_name) = Path::new(&image_record.file_name).file_name()
+        {
+            path = images_root.as_ref().join(file_name);
+        }
+        let path = fs::canonicalize(&path).map_err(|error| {
+            DatasetError::new(format!(
+                "cannot resolve COCO image {}: {error}",
+                path.display()
+            ))
+        })?;
         let image = image::open(&path).map_err(|error| {
             DatasetError::new(format!(
                 "cannot decode COCO image {} (image {}): {error}",
@@ -167,6 +184,7 @@ pub fn load(
             image_id: image_record.id.to_string(),
             source_size: [image_record.width, image_record.height],
         });
+        sample_paths.push(path);
     }
     if !by_image.is_empty() {
         return Err(DatasetError::new(
@@ -175,6 +193,7 @@ pub fn load(
     }
     Ok(CocoDataset {
         samples,
+        sample_paths,
         class_names,
         category_to_class,
         dropped_invalid,

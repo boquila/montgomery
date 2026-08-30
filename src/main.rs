@@ -85,6 +85,18 @@ struct TrainArgs {
     /// Resume a full native checkpoint. Model, task, classes, and dataset metadata are immutable.
     #[arg(long)]
     resume: Option<PathBuf>,
+    /// Initialize from an official tensor-only checkpoint. Mutually exclusive with --resume.
+    #[arg(long)]
+    weights: Option<PathBuf>,
+    /// Confidence floor used for AP validation (low by default to preserve the PR curve).
+    #[arg(long)]
+    val_confidence: Option<f32>,
+    /// Class-aware NMS IoU used by classic detector/segment validation.
+    #[arg(long)]
+    val_iou: Option<f32>,
+    /// Maximum predictions retained per validation image.
+    #[arg(long)]
+    max_detections: Option<usize>,
 }
 
 #[cfg(feature = "training")]
@@ -261,6 +273,10 @@ fn main() -> boquilens::Result<()> {
                 name: args.name,
                 dry_run: args.dry_run,
                 resume: args.resume,
+                weights: args.weights,
+                val_confidence: args.val_confidence,
+                val_iou: args.val_iou,
+                max_detections: args.max_detections,
             })?;
             eprintln!("Training run: {}", run.display());
             Ok(())
@@ -270,6 +286,18 @@ fn main() -> boquilens::Result<()> {
             let summary = validate_native(args.checkpoint)?;
             if args.json {
                 println!("{}", serde_json::to_string_pretty(&summary)?);
+            } else if let (Some(box_metrics), Some(mask_metrics)) =
+                (&summary.box_metrics, &summary.mask_metrics)
+            {
+                println!(
+                    "{} {} images: box mAP50-95 {:.2}%, mAP50 {:.2}%; mask mAP50-95 {:.2}%, mAP50 {:.2}%",
+                    summary.model,
+                    summary.images,
+                    box_metrics.map_50_95 * 100.0,
+                    box_metrics.map_50 * 100.0,
+                    mask_metrics.map_50_95 * 100.0,
+                    mask_metrics.map_50 * 100.0,
+                );
             } else if let Some(metrics) = &summary.box_metrics {
                 println!(
                     "{} {} images: box mAP50-95 {:.2}%, mAP50 {:.2}%",
@@ -564,7 +592,7 @@ fn report_segmentations(
         #[derive(Serialize)]
         struct JsonSegmentationDetection {
             class_id: usize,
-            class_name: &'static str,
+            class_name: String,
             confidence: f32,
             box_xyxy_px: [f32; 4],
             mask: Option<JsonMaskSummary>,
@@ -588,7 +616,7 @@ fn report_segmentations(
                     .iter()
                     .map(|detection| JsonSegmentationDetection {
                         class_id: detection.class_id,
-                        class_name: detection.class_name,
+                        class_name: detection.class_name.clone(),
                         confidence: detection.confidence,
                         box_xyxy_px: [
                             detection.xmin,
@@ -641,7 +669,7 @@ fn report_segmentations(
             .iter()
             .map(|detection| boquilens::Detection {
                 class_id: detection.class_id,
-                class_name: detection.class_name,
+                class_name: detection.class_name.clone(),
                 confidence: detection.confidence,
                 xmin: detection.xmin,
                 ymin: detection.ymin,

@@ -13,12 +13,16 @@ use crate::{
             Yolo11ClsL, Yolo11ClsM, Yolo11ClsN, Yolo11ClsS, Yolo11ClsX, Yolo11L, Yolo11M, Yolo11N,
             Yolo11S, Yolo11SegL, Yolo11SegM, Yolo11SegN, Yolo11SegS, Yolo11SegX, Yolo11X,
         },
+        yolo12::{Yolo12L, Yolo12M, Yolo12N, Yolo12S, Yolo12X},
         yolo26::{
             Yolo26ClsL, Yolo26ClsM, Yolo26ClsN, Yolo26ClsS, Yolo26ClsX, Yolo26L, Yolo26M, Yolo26N,
             Yolo26S, Yolo26SegL, Yolo26SegM, Yolo26SegN, Yolo26SegS, Yolo26SegX, Yolo26X,
         },
         yolov3_tiny::Yolov3Tiny,
-        yolov8::{Yolov8ClsL, Yolov8ClsM, Yolov8ClsN, Yolov8ClsS, Yolov8ClsX},
+        yolov8::{
+            Yolov8ClsL, Yolov8ClsM, Yolov8ClsN, Yolov8ClsS, Yolov8ClsX, Yolov8L, Yolov8M, Yolov8N,
+            Yolov8S, Yolov8SegL, Yolov8SegM, Yolov8SegN, Yolov8SegS, Yolov8SegX, Yolov8X,
+        },
         yolov10::{Yolov10B, Yolov10L, Yolov10M, Yolov10N, Yolov10S, Yolov10X},
         yolox::Yolox,
     },
@@ -271,7 +275,23 @@ macro_rules! yolo11_detect_task {
     )+ };
 }
 
-yolo11_detect_task!(Yolo11N<B>, Yolo11S<B>, Yolo11M<B>, Yolo11L<B>, Yolo11X<B>);
+yolo11_detect_task!(
+    Yolo11N<B>,
+    Yolo11S<B>,
+    Yolo11M<B>,
+    Yolo11L<B>,
+    Yolo11X<B>,
+    Yolov8N<B>,
+    Yolov8S<B>,
+    Yolov8M<B>,
+    Yolov8L<B>,
+    Yolov8X<B>,
+    Yolo12N<B>,
+    Yolo12S<B>,
+    Yolo12M<B>,
+    Yolo12L<B>,
+    Yolo12X<B>,
+);
 
 fn combine_dual<B: burn::tensor::backend::Backend>(
     one_to_many: crate::training::loss::common::LossOutput<B>,
@@ -390,6 +410,11 @@ yolo11_segment_task!(
     Yolo11SegM<B>,
     Yolo11SegL<B>,
     Yolo11SegX<B>,
+    Yolov8SegN<B>,
+    Yolov8SegS<B>,
+    Yolov8SegM<B>,
+    Yolov8SegL<B>,
+    Yolov8SegX<B>,
 );
 
 macro_rules! yolo26_segment_task {

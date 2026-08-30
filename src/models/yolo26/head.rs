@@ -221,7 +221,6 @@ impl Yolo26HeadConfig {
     pub fn with_num_classes(mut self, num_classes: usize) -> Self {
         assert!(num_classes > 0, "class count must be positive");
         self.num_classes = num_classes;
-        self.cls_channels = self.p3_channels.max(num_classes.min(100));
         self
     }
 

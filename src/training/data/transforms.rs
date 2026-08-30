@@ -84,6 +84,7 @@ pub fn metadata(sample: &VisionSample, source_size: [u32; 2]) -> ImageMeta {
             sample.image.height() as f32 / source_size[1] as f32,
         ],
         pad: [0.0, 0.0],
+        crowd: sample.targets.iter().map(|target| target.crowd).collect(),
     }
 }
 
