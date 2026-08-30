@@ -157,7 +157,7 @@ and reference-quality parity are not yet established.
 
 The comparison below uses YOLO26n-cls, the same pretrained checkpoint, 10 epochs, batch 2, 224 px,
 FP32, AdamW, and the same 12-image ImageNet-10 subset on an RTX 5080. Five warm-cache boquilens
-runs took 9.02–11.31 s (median 11.22 s); three Ultralytics runs took 12.16–14.05 s (median 12.41 s).
+runs took 6.89–10.37 s (median 9.15 s); three Ultralytics runs took 12.16–14.05 s (median 12.41 s).
 Ultralytics includes final validation while boquilens validation ran separately, so these are not
 directly comparable throughput measurements.
 With persistent compilation caching disabled, the same native command took 29.30 s. Enabling it
@@ -166,7 +166,7 @@ dataset exposes overhead, not model quality; scheduler stepping and augmentation
 
 ![boquilens and Ultralytics YOLO26n-cls training comparison](assets/training-comparison.png)
 
-The median-time native checkpoint reached 50.0% vs 16.7% top-1 accuracy and 66.7% vs 58.3% top-5
+The native checkpoint reached 33.3% vs 16.7% top-1 accuracy and 83.3% vs 58.3% top-5
 on the 12-image validation split. One image changes accuracy by 8.3 points, so these values are not
 a quality conclusion. boquilens retains full resumable epoch checkpoints, while `last` and `best`
 reuse their immutable payloads instead of writing duplicates.

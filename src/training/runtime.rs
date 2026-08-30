@@ -843,6 +843,7 @@ fn train_inner(request: TrainingRequest) -> Result<PathBuf, Box<dyn Error + Send
     }
     config.validate()?;
     let (device, adapter) = crate::default_wgpu_device();
+    TrainBackend::seed(&device, config.seed);
     eprintln!("Training adapter: {adapter}");
     let epoch = resume_manifest
         .as_ref()

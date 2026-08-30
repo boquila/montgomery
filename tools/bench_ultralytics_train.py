@@ -1,4 +1,9 @@
-"""Benchmark the Ultralytics classification training loop used by the README comparison."""
+"""Benchmark an Ultralytics training command used by the performance comparison.
+
+The timer covers model construction, checkpoint loading, training, and epoch checkpoint writes.
+Python import time is intentionally outside the internal timer; the matrix harness also records
+process wall time, which includes imports for both framework commands.
+"""
 
 from __future__ import annotations
 
@@ -17,8 +22,12 @@ def main() -> None:
     parser.add_argument("dataset", type=Path)
     parser.add_argument("project", type=Path)
     parser.add_argument("--name", default="imagenet10-loss")
+    parser.add_argument("--task", choices=("classify", "detect", "segment"), required=True)
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--batch", type=int, default=2)
+    parser.add_argument("--imgsz", type=int, required=True)
+    parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
 
     if not torch.cuda.is_available():
@@ -33,9 +42,9 @@ def main() -> None:
         epochs=args.epochs,
         batch=args.batch,
         nbs=args.batch,
-        imgsz=224,
+        imgsz=args.imgsz,
         device=0,
-        workers=4,
+        workers=args.workers,
         optimizer="AdamW",
         lr0=0.001,
         lrf=0.05,
@@ -43,7 +52,7 @@ def main() -> None:
         weight_decay=0.0005,
         warmup_epochs=0.0,
         cos_lr=True,
-        seed=0,
+        seed=args.seed,
         deterministic=True,
         pretrained=True,
         amp=False,
@@ -70,8 +79,12 @@ def main() -> None:
                 "ultralytics": ultralytics_version,
                 "torch": torch.__version__,
                 "device": torch.cuda.get_device_name(0),
+                "task": args.task,
                 "epochs": args.epochs,
                 "batch": args.batch,
+                "imgsz": args.imgsz,
+                "workers": args.workers,
+                "seed": args.seed,
                 "seconds": elapsed,
             },
             indent=2,

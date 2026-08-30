@@ -75,6 +75,13 @@ pub fn overlap(
     if ratio == 0 || ratio > width.min(height) {
         return Err(AugmentationError::new("invalid mask ratio"));
     }
+    if instances.is_empty() {
+        return Ok(IndexedMask::U8 {
+            data: vec![0; (width / ratio) * (height / ratio)],
+            width: width / ratio,
+            height: height / ratio,
+        });
+    }
     let segments = instances
         .segments()
         .ok_or_else(|| AugmentationError::new("segmentation masks require polygons"))?;
@@ -133,6 +140,9 @@ pub fn separate(
     if ratio == 0 || ratio > width.min(height) {
         return Err(AugmentationError::new("invalid mask ratio"));
     }
+    if instances.is_empty() {
+        return Ok((Vec::new(), width / ratio, height / ratio));
+    }
     let segments = instances
         .segments()
         .ok_or_else(|| AugmentationError::new("segmentation masks require polygons"))?;
@@ -165,5 +175,20 @@ mod tests {
             overlap(&mut instances, &mut classes, 4, 4, 1).unwrap(),
             IndexedMask::U16 { .. }
         ));
+    }
+
+    #[test]
+    fn empty_background_has_valid_mask_targets() {
+        let mut instances = Instances::empty();
+        let mut classes = Vec::new();
+        assert_eq!(
+            overlap(&mut instances, &mut classes, 8, 4, 2).unwrap(),
+            IndexedMask::U8 {
+                data: vec![0; 8],
+                width: 4,
+                height: 2,
+            }
+        );
+        assert_eq!(separate(&instances, 8, 4, 2).unwrap(), (vec![], 4, 2));
     }
 }
