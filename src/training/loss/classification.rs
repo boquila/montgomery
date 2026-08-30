@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use burn::tensor::{Int, Tensor, activation, backend::Backend};
 
-use super::common::{LossOutput, cross_entropy, scalar_value};
+use super::common::{LossOutput, cross_entropy};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ClassificationMetrics {
@@ -62,16 +62,14 @@ pub fn tensor_loss<B: Backend>(
     let targets: Tensor<B, 2, Int> = classes.one_hot(num_classes);
     let targets = targets.float();
     let total = -(activation::log_softmax(logits, 1) * targets).sum() / batch as f64;
-    let value = scalar_value(total.clone());
-    let mut components = BTreeMap::new();
-    components.insert("classification_loss".into(), value);
     Ok(LossOutput {
         total,
-        total_value: value,
-        components,
+        total_value: 0.0,
+        deferred_component: Some("classification_loss"),
+        components: BTreeMap::new(),
         targets: batch,
         foreground: batch,
-        finite: value.is_finite(),
+        finite: true,
     })
 }
 

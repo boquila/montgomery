@@ -308,13 +308,13 @@ fn combine_dual<B: burn::tensor::backend::Backend>(
     for (name, value) in one_to_one.components {
         components.insert(format!("one_to_one_{name}"), value);
     }
-    let total_value =
-        one_to_many.total_value * weights[0] + one_to_one.total_value * weights[1];
+    let total_value = one_to_many.total_value * weights[0] + one_to_one.total_value * weights[1];
     let total = one_to_many.total * weights[0] as f64 + one_to_one.total * weights[1] as f64;
     let finite = one_to_many.finite && one_to_one.finite && total_value.is_finite();
     crate::training::loss::common::LossOutput {
         total,
         total_value,
+        deferred_component: None,
         components,
         targets: one_to_many.targets.max(one_to_one.targets),
         foreground: one_to_many.foreground + one_to_one.foreground,
@@ -476,10 +476,13 @@ macro_rules! yolo26_segment_task {
                     batch.semantic_class_map.clone(),
                     batch.semantic_coverage.clone(),
                 ).map_err(str::to_string)?;
-                let many_mask_value = crate::training::loss::common::scalar_value(many_mask.clone());
-                let one_mask_value = crate::training::loss::common::scalar_value(one_mask.clone());
-                let many_semantic_value = crate::training::loss::common::scalar_value(many_semantic.clone());
-                let one_semantic_value = crate::training::loss::common::scalar_value(one_semantic.clone());
+                let [many_mask_value, one_mask_value, many_semantic_value, one_semantic_value] =
+                    crate::training::loss::common::scalar_values([
+                        many_mask.clone(),
+                        one_mask.clone(),
+                        many_semantic.clone(),
+                        one_semantic.clone(),
+                    ]);
                 many.total = many.total + many_mask * 7.5 + many_semantic;
                 many.total_value += many_mask_value * 7.5 + many_semantic_value;
                 many.components.insert("mask_loss".into(), many_mask_value);

@@ -88,7 +88,7 @@ def main() -> None:
         timings = [args.native_seconds, args.compare_seconds]
         bars = timing_axis.bar(labels, timings, color=["#7c3aed", "#0284c7"], width=0.62)
         timing_axis.set_facecolor("#f8fafc")
-        timing_axis.set_title("End-to-end time", fontsize=15, fontweight="bold", pad=14)
+        timing_axis.set_title("Measured command time", fontsize=15, fontweight="bold", pad=14)
         timing_axis.set_ylabel("Seconds · lower is better", fontsize=11)
         timing_axis.spines[["top", "right"]].set_visible(False)
         timing_axis.bar_label(bars, labels=[f"{value:.2f}s" for value in timings], padding=5, fontsize=11)

@@ -3,7 +3,7 @@ use std::{error::Error, fmt};
 use burn::{
     module::AutodiffModule,
     optim::{GradientsAccumulator, GradientsParams, Optimizer},
-    tensor::backend::AutodiffBackend,
+    tensor::{Tensor, backend::AutodiffBackend},
 };
 
 use crate::training::{
@@ -14,6 +14,13 @@ use crate::training::{
     state::TrainingState,
 };
 
+const DIAGNOSTIC_CHUNK_SIZE: usize = 1024;
+type DeferredDiagnostic<B> = (usize, usize, &'static str, Tensor<B, 1>);
+
+fn diagnostic_chunk_full(events: &[StepEvent]) -> bool {
+    events.len() >= DIAGNOSTIC_CHUNK_SIZE
+}
+
 /// Family-specific model adapter used by the explicit native loop.
 pub trait TrainableTask<B: AutodiffBackend>: AutodiffModule<B> {
     type Batch;
@@ -23,6 +30,13 @@ pub trait TrainableTask<B: AutodiffBackend>: AutodiffModule<B> {
         batch: &Self::Batch,
         context: LossContext,
     ) -> Result<LossOutput<B>, String>;
+}
+
+/// Bounded, epoch-scoped batch producer. Implementations may decode and prefetch lazily, but must
+/// yield exactly `batch_count` batches in deterministic order.
+pub trait EpochBatchSource<Batch> {
+    fn batch_count(&self) -> usize;
+    fn next_batch(&mut self) -> Result<Option<Batch>, String>;
 }
 
 /// Epoch-dependent criterion switches. Keeping this value outside model modules makes restart
@@ -126,11 +140,12 @@ impl Trainer {
         })
     }
 
-    pub fn train_epoch<B, M, O, F>(
+    pub fn train_epoch<B, M, O, F, S>(
         &mut self,
         mut model: M,
         mut optimizer: O,
-        batches: &[M::Batch],
+        batches: &mut S,
+        external_weight_decay: bool,
         mut after_step: F,
     ) -> Result<(M, O, EpochSummary), EngineError>
     where
@@ -138,30 +153,50 @@ impl Trainer {
         M: TrainableTask<B>,
         O: Optimizer<M, B>,
         F: FnMut(&M, u64) -> Result<(), String>,
+        S: EpochBatchSource<M::Batch>,
     {
-        if batches.is_empty() {
+        let batch_count = batches.batch_count();
+        if batch_count == 0 {
             return Err(EngineError("cannot train an empty epoch".into()));
         }
         let mut accumulator = GradientsAccumulator::<M>::new();
         let mut loss_sum = 0.0_f64;
+        let diagnostic_capacity = batch_count.min(DIAGNOSTIC_CHUNK_SIZE);
+        let mut events = Vec::with_capacity(diagnostic_capacity);
+        let mut deferred = Vec::<DeferredDiagnostic<B>>::with_capacity(diagnostic_capacity);
         let mut optimizer_steps = 0;
         let mut group_start = 0;
-        while group_start < batches.len() {
-            let group_end = (group_start + self.config.accumulation).min(batches.len());
+        while group_start < batch_count {
+            let group_end = (group_start + self.config.accumulation).min(batch_count);
             let group_len = group_end - group_start;
-            for (offset, batch) in batches[group_start..group_end].iter().enumerate() {
+            let mut group = Vec::with_capacity(group_len);
+            for batch_index in group_start..group_end {
+                group.push(batches.next_batch().map_err(EngineError)?.ok_or_else(|| {
+                    EngineError(format!(
+                        "epoch batch source ended at batch {batch_index} of {batch_count}"
+                    ))
+                })?);
+            }
+            for (offset, batch) in group.iter().enumerate() {
                 let output = model
                     .forward_loss(batch, LossContext::from_state(&self.state))
                     .map_err(EngineError)?;
                 let total_value = output.total_value;
-                if !output.finite || !total_value.is_finite() {
+                if !output.finite
+                    || (output.deferred_component.is_none() && !total_value.is_finite())
+                {
                     return Err(EngineError(format!(
                         "non-finite loss at epoch {} batch {}",
                         self.state.epoch,
                         group_start + offset
                     )));
                 }
-                loss_sum += f64::from(total_value);
+                if output.deferred_component.is_none() {
+                    loss_sum += f64::from(total_value);
+                }
+                let deferred_total = output
+                    .deferred_component
+                    .map(|_| output.total.clone().detach());
                 let gradients = GradientsParams::from_grads(
                     (output.total / group_len as f64).backward(),
                     &model,
@@ -173,33 +208,54 @@ impl Trainer {
                 self.state.micro_step += 1;
                 self.state.next_batch = group_start + offset + 1;
                 self.state.accumulation_position = offset + 1;
-                self.run
-                    .append_event(&StepEvent {
-                        epoch: self.state.epoch,
-                        micro_step: self.state.micro_step,
-                        optimizer_step: self.state.optimizer_step,
-                        learning_rate: self.scheduler.current_lr(),
-                        total_loss: total_value,
-                        components: output.components,
-                        targets: output.targets,
-                        foreground: output.foreground,
-                    })
-                    .map_err(EngineError::io)?;
+                let event_index = events.len();
+                events.push(StepEvent {
+                    epoch: self.state.epoch,
+                    micro_step: self.state.micro_step,
+                    optimizer_step: self.state.optimizer_step,
+                    learning_rate: self.scheduler.current_lr(),
+                    total_loss: total_value,
+                    components: output.components,
+                    targets: output.targets,
+                    foreground: output.foreground,
+                });
+                if let (Some(component), Some(total)) = (output.deferred_component, deferred_total)
+                {
+                    deferred.push((event_index, group_start + offset, component, total));
+                }
             }
             let lr = self.scheduler.step();
             model = optimizer.step(lr, model, accumulator.grads());
-            model = crate::training::optimizer::apply_selective_weight_decay(
-                model,
-                lr,
-                self.config.weight_decay,
-            );
+            if external_weight_decay {
+                model = crate::training::optimizer::apply_selective_weight_decay(
+                    model,
+                    lr,
+                    self.config.weight_decay,
+                );
+            }
             self.state.optimizer_step += 1;
             self.state.accumulation_position = 0;
             after_step(&model, self.state.optimizer_step).map_err(EngineError)?;
             optimizer_steps += 1;
             group_start = group_end;
+            if diagnostic_chunk_full(&events) {
+                flush_events(
+                    &self.run,
+                    self.state.epoch,
+                    &mut deferred,
+                    &mut events,
+                    &mut loss_sum,
+                )?;
+            }
         }
-        let mean_loss = (loss_sum / batches.len() as f64) as f32;
+        flush_events(
+            &self.run,
+            self.state.epoch,
+            &mut deferred,
+            &mut events,
+            &mut loss_sum,
+        )?;
+        let mean_loss = (loss_sum / batch_count as f64) as f32;
         self.run
             .append_metrics(
                 self.state.epoch,
@@ -228,11 +284,50 @@ impl Trainer {
             optimizer,
             EpochSummary {
                 mean_loss,
-                microbatches: batches.len(),
+                microbatches: batch_count,
                 optimizer_steps,
             },
         ))
     }
+}
+
+fn flush_events<B: AutodiffBackend>(
+    run: &RunDirectory,
+    epoch: usize,
+    deferred: &mut Vec<DeferredDiagnostic<B>>,
+    events: &mut Vec<StepEvent>,
+    loss_sum: &mut f64,
+) -> Result<(), EngineError> {
+    if !deferred.is_empty() {
+        let values = Tensor::cat(
+            deferred
+                .iter()
+                .map(|(_, _, _, value)| value.clone())
+                .collect(),
+            0,
+        )
+        .into_data();
+        let values = values
+            .as_slice::<f32>()
+            .expect("loss diagnostics must use f32 storage");
+        for ((event_index, batch_index, component, _), value) in
+            deferred.drain(..).zip(values.iter().copied())
+        {
+            if !value.is_finite() {
+                return Err(EngineError(format!(
+                    "non-finite loss at epoch {epoch} batch {batch_index}"
+                )));
+            }
+            *loss_sum += f64::from(value);
+            events[event_index].total_loss = value;
+            events[event_index]
+                .components
+                .insert(component.into(), value);
+        }
+    }
+    run.append_events(events).map_err(EngineError::io)?;
+    events.clear();
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -250,3 +345,26 @@ impl fmt::Display for EngineError {
     }
 }
 impl Error for EngineError {}
+
+#[cfg(test)]
+mod tests {
+    use super::{DIAGNOSTIC_CHUNK_SIZE, diagnostic_chunk_full};
+
+    #[test]
+    fn deferred_diagnostics_have_a_bounded_chunk() {
+        let event = crate::training::report::StepEvent {
+            epoch: 0,
+            micro_step: 0,
+            optimizer_step: 0,
+            learning_rate: 0.0,
+            total_loss: 0.0,
+            components: Default::default(),
+            targets: 0,
+            foreground: 0,
+        };
+        let mut events = vec![event; DIAGNOSTIC_CHUNK_SIZE - 1];
+        assert!(!diagnostic_chunk_full(&events));
+        events.push(events[0].clone());
+        assert!(diagnostic_chunk_full(&events));
+    }
+}

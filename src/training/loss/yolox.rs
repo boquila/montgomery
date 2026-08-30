@@ -10,7 +10,7 @@ use crate::{
     },
 };
 
-use super::common::{LossOutput, bce_with_logits, bce_with_logits_tensor, scalar_value};
+use super::common::{LossOutput, bce_with_logits, bce_with_logits_tensor, scalar_values};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct YoloxLoss {
@@ -248,18 +248,28 @@ pub fn tensor_loss<B: Backend>(
         + objectness_loss.clone()
         + classification_loss.clone()
         + l1_loss.clone();
+    let [
+        iou_value,
+        objectness_value,
+        classification_value,
+        l1_value,
+        value,
+    ] = scalar_values([
+        iou_loss,
+        objectness_loss,
+        classification_loss,
+        l1_loss,
+        total.clone(),
+    ]);
     let mut components = BTreeMap::new();
-    components.insert("iou_loss".into(), scalar_value(iou_loss));
-    components.insert("objectness_loss".into(), scalar_value(objectness_loss));
-    components.insert(
-        "classification_loss".into(),
-        scalar_value(classification_loss),
-    );
-    components.insert("l1_loss".into(), scalar_value(l1_loss));
-    let value = scalar_value(total.clone());
+    components.insert("iou_loss".into(), iou_value);
+    components.insert("objectness_loss".into(), objectness_value);
+    components.insert("classification_loss".into(), classification_value);
+    components.insert("l1_loss".into(), l1_value);
     Ok(LossOutput {
         total,
         total_value: value,
+        deferred_component: None,
         components,
         targets: gt_count,
         foreground: foreground_count,

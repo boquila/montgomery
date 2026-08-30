@@ -141,9 +141,15 @@ impl RunDirectory {
     }
 
     pub fn append_event(&self, event: &StepEvent) -> Result<(), std::io::Error> {
+        self.append_events(std::slice::from_ref(event))
+    }
+
+    pub fn append_events(&self, events: &[StepEvent]) -> Result<(), std::io::Error> {
         let mut file = OpenOptions::new().append(true).open(&self.events)?;
-        serde_json::to_writer(&mut file, event).map_err(std::io::Error::other)?;
-        file.write_all(b"\n")?;
+        for event in events {
+            serde_json::to_writer(&mut file, event).map_err(std::io::Error::other)?;
+            file.write_all(b"\n")?;
+        }
         file.flush()
     }
 

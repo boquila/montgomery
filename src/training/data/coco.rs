@@ -61,10 +61,79 @@ pub struct CocoDataset {
     pub dropped_invalid: usize,
 }
 
+#[derive(Debug, Clone)]
+pub struct CocoSampleRecord {
+    pub path: PathBuf,
+    pub targets: Vec<DetectionTarget>,
+    pub image_id: String,
+    pub source_size: [u32; 2],
+}
+
+#[derive(Debug, Clone)]
+pub struct CocoIndex {
+    pub records: Vec<CocoSampleRecord>,
+    pub class_names: Vec<String>,
+    pub category_to_class: BTreeMap<u64, usize>,
+    pub dropped_invalid: usize,
+}
+
+impl CocoIndex {
+    pub fn load_sample(&self, index: usize, training: bool) -> Result<VisionSample, DatasetError> {
+        let record = self
+            .records
+            .get(index)
+            .ok_or_else(|| DatasetError::new(format!("COCO sample index {index} out of range")))?;
+        let image = image::open(&record.path).map_err(|error| {
+            DatasetError::new(format!(
+                "cannot decode COCO image {} (image {}): {error}",
+                record.path.display(),
+                record.image_id
+            ))
+        })?;
+        if [image.width(), image.height()] != record.source_size {
+            return Err(DatasetError::new(format!(
+                "COCO image {} dimensions changed after indexing",
+                record.path.display()
+            )));
+        }
+        let mut targets = record.targets.clone();
+        if training {
+            targets.retain(|target| !target.crowd);
+        }
+        Ok(VisionSample {
+            image,
+            targets,
+            image_id: record.image_id.clone(),
+            source_size: record.source_size,
+        })
+    }
+}
+
 pub fn load(
     annotation_json: impl AsRef<Path>,
     images_root: impl AsRef<Path>,
 ) -> Result<CocoDataset, DatasetError> {
+    let index = load_index(annotation_json, images_root)?;
+    let samples = (0..index.records.len())
+        .map(|sample| index.load_sample(sample, false))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(CocoDataset {
+        sample_paths: index
+            .records
+            .iter()
+            .map(|record| record.path.clone())
+            .collect(),
+        samples,
+        class_names: index.class_names,
+        category_to_class: index.category_to_class,
+        dropped_invalid: index.dropped_invalid,
+    })
+}
+
+pub fn load_index(
+    annotation_json: impl AsRef<Path>,
+    images_root: impl AsRef<Path>,
+) -> Result<CocoIndex, DatasetError> {
     let annotation_json = annotation_json.as_ref();
     let bytes = fs::read(annotation_json).map_err(|error| {
         DatasetError::new(format!(
@@ -99,8 +168,7 @@ pub fn load(
             .or_default()
             .push(annotation);
     }
-    let mut samples = Vec::with_capacity(parsed.images.len());
-    let mut sample_paths = Vec::with_capacity(parsed.images.len());
+    let mut records = Vec::with_capacity(parsed.images.len());
     let mut dropped_invalid = 0;
     for image_record in parsed.images {
         let mut path = images_root.as_ref().join(&image_record.file_name);
@@ -115,20 +183,6 @@ pub fn load(
                 path.display()
             ))
         })?;
-        let image = image::open(&path).map_err(|error| {
-            DatasetError::new(format!(
-                "cannot decode COCO image {} (image {}): {error}",
-                path.display(),
-                image_record.id
-            ))
-        })?;
-        if image.width() != image_record.width || image.height() != image_record.height {
-            return Err(DatasetError::new(format!(
-                "COCO image {} dimensions disagree with record {}",
-                path.display(),
-                image_record.id
-            )));
-        }
         let mut targets = Vec::new();
         for annotation in by_image.remove(&image_record.id).unwrap_or_default() {
             let Some(&class_id) = category_to_class.get(&annotation.category_id) else {
@@ -178,22 +232,20 @@ pub fn load(
                 source_annotation_id: Some(annotation.id),
             });
         }
-        samples.push(VisionSample {
-            image,
+        records.push(CocoSampleRecord {
+            path,
             targets,
             image_id: image_record.id.to_string(),
             source_size: [image_record.width, image_record.height],
         });
-        sample_paths.push(path);
     }
     if !by_image.is_empty() {
         return Err(DatasetError::new(
             "COCO annotations reference missing image records",
         ));
     }
-    Ok(CocoDataset {
-        samples,
-        sample_paths,
+    Ok(CocoIndex {
+        records,
         class_names,
         category_to_class,
         dropped_invalid,

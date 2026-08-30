@@ -7,7 +7,7 @@ use crate::training::{
     geometry::{FeatureLevelLayout, make_anchors},
 };
 
-use super::common::{LossOutput, bce_with_logits_tensor, log_softmax, scalar_value};
+use super::common::{LossOutput, bce_with_logits_tensor, log_softmax, scalar_value, scalar_values};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DetectionLossConfig {
@@ -296,9 +296,11 @@ pub fn tensor_loss_with_matches<B: Backend>(
     let total = box_loss.clone() * config.box_gain as f64
         + class_loss.clone() * config.class_gain as f64
         + regression_loss.clone() * config.regression_gain as f64;
+    let [box_value, class_value, regression_value, value] =
+        scalar_values([box_loss, class_loss, regression_loss, total.clone()]);
     let mut components = BTreeMap::new();
-    components.insert("box_loss".into(), scalar_value(box_loss));
-    components.insert("classification_loss".into(), scalar_value(class_loss));
+    components.insert("box_loss".into(), box_value);
+    components.insert("classification_loss".into(), class_value);
     components.insert(
         if config.reg_max > 1 {
             "dfl_loss"
@@ -306,13 +308,13 @@ pub fn tensor_loss_with_matches<B: Backend>(
             "l1_loss"
         }
         .into(),
-        scalar_value(regression_loss),
+        regression_value,
     );
-    let value = scalar_value(total.clone());
     Ok((
         LossOutput {
             total,
             total_value: value,
+            deferred_component: None,
             components,
             targets: target_count,
             foreground,

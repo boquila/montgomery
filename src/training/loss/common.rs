@@ -10,6 +10,8 @@ pub struct LossOutput<B: Backend> {
     pub total: Tensor<B, 1>,
     /// Host diagnostic captured by the criterion's single scalar synchronization.
     pub total_value: f32,
+    /// A component that can be read with the other deferred totals once the epoch is complete.
+    pub deferred_component: Option<&'static str>,
     pub components: BTreeMap<String, f32>,
     pub targets: usize,
     pub foreground: usize,
@@ -22,6 +24,20 @@ pub fn scalar_value<B: Backend>(value: Tensor<B, 1>) -> f32 {
         .into_data()
         .as_slice::<f32>()
         .expect("loss scalar must use f32 storage")[0]
+}
+
+/// Read several detached scalar diagnostics with a single backend synchronization.
+pub fn scalar_values<B: Backend, const N: usize>(values: [Tensor<B, 1>; N]) -> [f32; N] {
+    let values = Tensor::cat(
+        values.into_iter().map(Tensor::detach).collect::<Vec<_>>(),
+        0,
+    )
+    .into_data();
+    let values = values
+        .as_slice::<f32>()
+        .expect("loss scalars must use f32 storage");
+    assert_eq!(values.len(), N, "loss diagnostic count must be preserved");
+    std::array::from_fn(|index| values[index])
 }
 
 pub fn connected_zero<B: Backend, const D: usize>(tensor: Tensor<B, D>) -> Tensor<B, 1> {

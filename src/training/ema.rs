@@ -86,7 +86,7 @@ where
                 self.error = Some("EMA and current parameter shapes differ");
                 return Param::from_mapped_value(id, tensor, mapper);
             }
-            let tensor = tensor * self.decay + current * (1.0 - self.decay);
+            let tensor = tensor.detach() * self.decay + current.detach() * (1.0 - self.decay);
             Param::from_mapped_value(id, tensor, mapper)
         }
     }

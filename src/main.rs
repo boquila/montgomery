@@ -71,6 +71,12 @@ struct TrainArgs {
     batch: usize,
     #[arg(long, default_value_t = 1)]
     accumulation: usize,
+    /// CPU preprocessing workers.
+    #[arg(long, default_value_t = 4)]
+    workers: usize,
+    /// Number of prepared CPU batches retained ahead of the active batch.
+    #[arg(long, default_value_t = 2)]
+    prefetch: usize,
     #[arg(long)]
     imgsz: Option<usize>,
     #[arg(long, default_value_t = 0)]
@@ -275,6 +281,8 @@ fn main() -> boquilens::Result<()> {
                 epochs: args.epochs,
                 batch_size: args.batch,
                 accumulation: args.accumulation,
+                workers: args.workers,
+                prefetch: args.prefetch,
                 image_size: args.imgsz,
                 seed: args.seed,
                 run_root: args.project,

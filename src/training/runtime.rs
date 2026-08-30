@@ -1,9 +1,14 @@
-use std::{error::Error, path::PathBuf};
+use std::{
+    collections::{HashMap, VecDeque},
+    error::Error,
+    path::PathBuf,
+    sync::Arc,
+};
 
 use burn::{
     backend::{Autodiff, Wgpu},
     module::Module,
-    optim::{AdamWConfig, Optimizer, SgdConfig, momentum::MomentumConfig},
+    optim::{Optimizer, SgdConfig, momentum::MomentumConfig},
     tensor::Tensor,
     tensor::backend::Backend,
 };
@@ -43,7 +48,8 @@ use crate::{
     training::{
         ModelSpec, Trainer,
         checkpoint::{
-            CheckpointManifest, decode_record, encode_record, replace_atomic, save_atomic,
+            CheckpointManifest, decode_record, encode_record, replace_atomic_from_saved,
+            save_atomic,
         },
         config::{OptimizerKind, ScheduleKind, TrainingConfig},
         data::{
@@ -54,11 +60,592 @@ use crate::{
             },
             sample::ImageMeta,
         },
-        engine::TrainableTask,
+        engine::{EpochBatchSource, TrainableTask},
     },
 };
 
 type TrainBackend = Autodiff<Wgpu>;
+
+fn prefetch_sample_capacity(batch_size: usize, prefetch: usize) -> usize {
+    batch_size.saturating_mul(prefetch).max(1)
+}
+
+struct ClassificationBatchSource<'a, B: Backend> {
+    config: &'a TrainingConfig,
+    dataset: &'a crate::training::data::ResolvedDataset,
+    images: &'a [PathBuf],
+    device: &'a B::Device,
+    pipeline: ClassificationPipeline,
+    order: Vec<usize>,
+    epoch: u64,
+    next_sample: usize,
+    pending: VecDeque<(FormattedClassificationBatch, Vec<ImageMeta>)>,
+}
+
+impl<'a, B: Backend> ClassificationBatchSource<'a, B> {
+    fn new(
+        config: &'a TrainingConfig,
+        dataset: &'a crate::training::data::ResolvedDataset,
+        images: &'a [PathBuf],
+        device: &'a B::Device,
+        epoch: u64,
+        training: bool,
+    ) -> Result<Self, Box<dyn Error + Send + Sync>> {
+        Ok(Self {
+            config,
+            dataset,
+            images,
+            device,
+            pipeline: ClassificationPipeline::new(
+                config
+                    .augmentation
+                    .resolve(crate::training::TaskKind::Classify, training)?,
+            )?,
+            order: crate::training::data::loader::epoch_permutation(
+                images.len(),
+                config.seed,
+                epoch,
+            ),
+            epoch,
+            next_sample: 0,
+            pending: VecDeque::with_capacity(config.prefetch),
+        })
+    }
+
+    fn refill(&mut self) -> Result<(), Box<dyn Error + Send + Sync>> {
+        if self.next_sample >= self.order.len() {
+            return Ok(());
+        }
+        let sample_count = prefetch_sample_capacity(self.config.batch_size, self.config.prefetch);
+        let end = (self.next_sample + sample_count).min(self.order.len());
+        let indexed = (self.next_sample..end)
+            .map(|logical_position| (logical_position, self.order[logical_position]))
+            .collect::<Vec<_>>();
+        let workers = self.config.workers.max(1).min(indexed.len());
+        let worker_chunk = indexed.len().div_ceil(workers);
+        let config = self.config;
+        let dataset = self.dataset;
+        let images = self.images;
+        let epoch = self.epoch;
+        let mut prepared =
+            std::thread::scope(|scope| -> Result<Vec<_>, Box<dyn Error + Send + Sync>> {
+                let handles = indexed
+                    .chunks(worker_chunk.max(1))
+                    .map(|chunk| {
+                        let pipeline = self.pipeline.clone();
+                        scope.spawn(move || {
+                            chunk
+                                .iter()
+                                .map(|&(logical_position, index)| {
+                                    prepare_classification_sample(
+                                        config,
+                                        dataset,
+                                        images,
+                                        &pipeline,
+                                        epoch,
+                                        logical_position,
+                                        index,
+                                    )
+                                })
+                                .collect::<Result<Vec<_>, _>>()
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                let mut output = Vec::with_capacity(indexed.len());
+                for handle in handles {
+                    output.extend(handle.join().map_err(|_| {
+                        Box::<dyn Error + Send + Sync>::from("classification data worker panicked")
+                    })??);
+                }
+                Ok(output)
+            })?;
+        prepared.sort_unstable_by_key(|sample| sample.0);
+        let mut prepared = prepared.into_iter();
+        loop {
+            let chunk = prepared
+                .by_ref()
+                .take(self.config.batch_size)
+                .collect::<Vec<_>>();
+            if chunk.is_empty() {
+                break;
+            }
+            let (formatted, metadata): (Vec<_>, Vec<_>) = chunk
+                .into_iter()
+                .map(|(_, sample, metadata)| (sample, metadata))
+                .unzip();
+            self.pending
+                .push_back((FormattedClassificationBatch::collate(&formatted)?, metadata));
+        }
+        self.next_sample = end;
+        Ok(())
+    }
+}
+
+impl<B: Backend> EpochBatchSource<ClassificationBatch<B>> for ClassificationBatchSource<'_, B> {
+    fn batch_count(&self) -> usize {
+        self.images.len().div_ceil(self.config.batch_size)
+    }
+
+    fn next_batch(&mut self) -> Result<Option<ClassificationBatch<B>>, String> {
+        if self.pending.is_empty() {
+            self.refill().map_err(|error| error.to_string())?;
+        }
+        self.pending
+            .pop_front()
+            .map(|(batch, metadata)| batch.into_device(metadata, self.device))
+            .transpose()
+    }
+}
+
+#[derive(Clone)]
+enum VisionSampleLoader<'a> {
+    Yolo {
+        dataset: &'a crate::training::data::ResolvedDataset,
+        images: &'a [PathBuf],
+    },
+    Coco {
+        index: Arc<crate::training::data::coco::CocoIndex>,
+    },
+}
+
+impl<'a> VisionSampleLoader<'a> {
+    fn new(
+        dataset: &'a crate::training::data::ResolvedDataset,
+        images: &'a [PathBuf],
+        training: bool,
+    ) -> Result<Self, Box<dyn Error + Send + Sync>> {
+        match dataset.format {
+            DatasetFormat::Yolo => Ok(Self::Yolo { dataset, images }),
+            DatasetFormat::Coco => {
+                let annotation = if images == dataset.train_images {
+                    dataset.train_annotations.as_ref()
+                } else if images == dataset.val_images {
+                    dataset.val_annotations.as_ref()
+                } else if images == dataset.test_images {
+                    dataset.test_annotations.as_ref()
+                } else {
+                    None
+                }
+                .ok_or("COCO split has no resolved annotation file")?;
+                let images_root = images
+                    .first()
+                    .and_then(|path| path.parent())
+                    .ok_or("COCO split contains no image root")?;
+                let mut index = crate::training::data::coco::load_index(annotation, images_root)?;
+                if index.class_names != dataset.class_names {
+                    return Err("COCO category table differs from dataset names".into());
+                }
+                let mut by_path = index
+                    .records
+                    .drain(..)
+                    .map(|record| (record.path.clone(), record))
+                    .collect::<std::collections::BTreeMap<_, _>>();
+                index.records = images
+                    .iter()
+                    .map(|path| {
+                        by_path.remove(path).ok_or_else(|| {
+                            format!(
+                                "COCO annotations have no image record for {}",
+                                path.display()
+                            )
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                if training {
+                    for record in &mut index.records {
+                        record.targets.retain(|target| !target.crowd);
+                    }
+                }
+                Ok(Self::Coco {
+                    index: Arc::new(index),
+                })
+            }
+            DatasetFormat::ClassificationFolders => {
+                Err("classification folders cannot feed a detector loader".into())
+            }
+        }
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            Self::Yolo { images, .. } => images.len(),
+            Self::Coco { index } => index.records.len(),
+        }
+    }
+
+    fn load(
+        &self,
+        index: usize,
+    ) -> Result<crate::training::data::VisionSample, Box<dyn Error + Send + Sync>> {
+        match self {
+            Self::Yolo { dataset, images } => Ok(crate::training::data::loader::load_yolo_sample(
+                dataset,
+                &images[index],
+            )?),
+            Self::Coco { index: dataset } => Ok(dataset.load_sample(index, false)?),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct CachedAugSample {
+    sample: AugSample,
+    crowd: Vec<bool>,
+}
+
+struct BoundedLru<T> {
+    entries: HashMap<usize, T>,
+    order: VecDeque<usize>,
+    capacity: usize,
+    peak: usize,
+}
+
+impl<T: Clone> BoundedLru<T> {
+    fn new(capacity: usize) -> Self {
+        Self {
+            entries: HashMap::new(),
+            order: VecDeque::new(),
+            capacity: capacity.max(1),
+            peak: 0,
+        }
+    }
+
+    fn get(&mut self, index: usize) -> Option<T> {
+        let entry = self.entries.get(&index).cloned()?;
+        self.touch(index);
+        Some(entry)
+    }
+
+    fn insert(&mut self, index: usize, entry: T) {
+        if self.entries.len() == self.capacity
+            && !self.entries.contains_key(&index)
+            && let Some(evicted) = self.order.pop_front()
+        {
+            self.entries.remove(&evicted);
+        }
+        self.entries.insert(index, entry);
+        self.touch(index);
+        self.peak = self.peak.max(self.entries.len());
+    }
+
+    fn touch(&mut self, index: usize) {
+        if let Some(position) = self.order.iter().position(|cached| *cached == index) {
+            self.order.remove(position);
+        }
+        self.order.push_back(index);
+    }
+}
+
+struct LazyPartnerPool<'a> {
+    loader: VisionSampleLoader<'a>,
+    cache: BoundedLru<CachedAugSample>,
+    imgsz: usize,
+}
+
+impl<'a> LazyPartnerPool<'a> {
+    fn new(loader: VisionSampleLoader<'a>, capacity: usize, imgsz: usize) -> Self {
+        Self {
+            loader,
+            cache: BoundedLru::new(capacity),
+            imgsz,
+        }
+    }
+
+    fn load(
+        &mut self,
+        index: usize,
+    ) -> Result<CachedAugSample, crate::data::augmentation::AugmentationError> {
+        if let Some(entry) = self.cache.get(index) {
+            return Ok(entry);
+        }
+        let vision = self.loader.load(index).map_err(|error| {
+            crate::data::augmentation::AugmentationError::new(error.to_string())
+        })?;
+        let crowd = vision.targets.iter().map(|target| target.crowd).collect();
+        let sample = AugSample::from_vision(vision, index, self.imgsz, false)?;
+        let entry = CachedAugSample { sample, crowd };
+        self.cache.insert(index, entry.clone());
+        Ok(entry)
+    }
+}
+
+impl crate::data::augmentation::PartnerProvider for LazyPartnerPool<'_> {
+    fn len(&self) -> usize {
+        self.loader.len()
+    }
+
+    fn get(
+        &mut self,
+        index: usize,
+    ) -> Result<AugSample, crate::data::augmentation::AugmentationError> {
+        Ok(self.load(index)?.sample)
+    }
+
+    fn candidate_index(&self, logical_position: usize, draw: usize) -> usize {
+        let len = self.len();
+        if len == 0 {
+            return 0;
+        }
+        let start = logical_position.saturating_sub(len - 1) % len;
+        (start + draw.wrapping_mul(0x9e3779b9usize) % len) % len
+    }
+}
+
+struct VisionEpochFormatter<'a> {
+    config: &'a TrainingConfig,
+    images: &'a [PathBuf],
+    pipeline: AugmentationPipeline,
+    pools: Vec<LazyPartnerPool<'a>>,
+    order: Vec<usize>,
+    epoch: u64,
+    next_sample: usize,
+    pending: VecDeque<FormattedVisionBatch>,
+}
+
+type FormattedVisionBatch = (Vec<FormattedDetectionSample>, Vec<ImageMeta>);
+
+impl<'a> VisionEpochFormatter<'a> {
+    fn new(
+        config: &'a TrainingConfig,
+        images: &'a [PathBuf],
+        epoch: u64,
+        task: crate::training::TaskKind,
+        loader: VisionSampleLoader<'a>,
+    ) -> Result<Self, Box<dyn Error + Send + Sync>> {
+        let capacity = prefetch_sample_capacity(config.batch_size, config.prefetch);
+        let worker_count = config.workers.max(1).min(capacity);
+        let capacity_per_worker = capacity / worker_count;
+        let capacity_remainder = capacity % worker_count;
+        let pools = (0..worker_count)
+            .map(|worker| {
+                LazyPartnerPool::new(
+                    loader.clone(),
+                    capacity_per_worker + usize::from(worker < capacity_remainder),
+                    config.augmentation.imgsz,
+                )
+            })
+            .collect();
+        Ok(Self {
+            config,
+            images,
+            pipeline: AugmentationPipeline::for_epoch(
+                config.augmentation.resolve(task, true)?,
+                epoch as usize,
+                config.epochs,
+            )?,
+            pools,
+            order: crate::training::data::loader::epoch_permutation(
+                images.len(),
+                config.seed,
+                epoch,
+            ),
+            epoch,
+            next_sample: 0,
+            pending: VecDeque::with_capacity(config.prefetch),
+        })
+    }
+
+    fn batch_count(&self) -> usize {
+        self.images.len().div_ceil(self.config.batch_size)
+    }
+
+    fn next_formatted(&mut self) -> Result<Option<FormattedVisionBatch>, String> {
+        if self.pending.is_empty() {
+            self.refill().map_err(|error| error.to_string())?;
+        }
+        Ok(self.pending.pop_front())
+    }
+
+    fn refill(&mut self) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let end = (self.next_sample
+            + prefetch_sample_capacity(self.config.batch_size, self.config.prefetch))
+        .min(self.order.len());
+        if self.next_sample == end {
+            return Ok(());
+        }
+        let indexed = (self.next_sample..end)
+            .map(|logical_position| (logical_position, self.order[logical_position]))
+            .collect::<Vec<_>>();
+        let worker_count = self.pools.len().min(indexed.len());
+        let worker_chunk = indexed.len().div_ceil(worker_count);
+        let config = self.config;
+        let images = self.images;
+        let epoch = self.epoch;
+        let pipeline = &self.pipeline;
+        let mut prepared =
+            std::thread::scope(|scope| -> Result<Vec<_>, Box<dyn Error + Send + Sync>> {
+                let handles = self
+                    .pools
+                    .iter_mut()
+                    .take(worker_count)
+                    .zip(indexed.chunks(worker_chunk))
+                    .map(|(pool, chunk)| {
+                        let pipeline = pipeline.clone();
+                        scope.spawn(move || {
+                            chunk
+                                .iter()
+                                .map(|&(logical_position, index)| {
+                                    prepare_vision_sample(
+                                        config,
+                                        images,
+                                        &pipeline,
+                                        pool,
+                                        epoch,
+                                        logical_position,
+                                        index,
+                                    )
+                                })
+                                .collect::<Result<Vec<_>, _>>()
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                let mut output = Vec::with_capacity(indexed.len());
+                for handle in handles {
+                    output.extend(handle.join().map_err(|_| {
+                        Box::<dyn Error + Send + Sync>::from("vision data worker panicked")
+                    })??);
+                }
+                Ok(output)
+            })?;
+        prepared.sort_unstable_by_key(|(logical_position, _, _)| *logical_position);
+        let mut prepared = prepared.into_iter();
+        loop {
+            let chunk = prepared
+                .by_ref()
+                .take(self.config.batch_size)
+                .collect::<Vec<_>>();
+            if chunk.is_empty() {
+                break;
+            }
+            let (samples, metadata): (Vec<_>, Vec<_>) = chunk
+                .into_iter()
+                .map(|(_, sample, metadata)| (sample, metadata))
+                .unzip();
+            self.pending.push_back((samples, metadata));
+        }
+        self.next_sample = end;
+        Ok(())
+    }
+}
+
+fn prepare_vision_sample(
+    config: &TrainingConfig,
+    images: &[PathBuf],
+    pipeline: &AugmentationPipeline,
+    pool: &mut LazyPartnerPool<'_>,
+    epoch: u64,
+    logical_position: usize,
+    index: usize,
+) -> Result<(usize, FormattedDetectionSample, ImageMeta), Box<dyn Error + Send + Sync>> {
+    let primary = pool.load(index)?;
+    let path_text = images[index].to_string_lossy().into_owned();
+    let (sample, _) = pipeline.apply(
+        primary.sample,
+        pool,
+        SeedKey {
+            run_seed: config.seed,
+            epoch,
+            logical_position: logical_position as u64,
+            sample_index: index as u64,
+            rank: 0,
+            path: &path_text,
+        },
+    )?;
+    let [_, canvas_height, canvas_width] = sample.image_shape;
+    let geometry = &sample.geometry;
+    let metadata = ImageMeta {
+        image_id: path_text,
+        source_size: [
+            geometry.original_shape[1] as u32,
+            geometry.original_shape[0] as u32,
+        ],
+        canvas_size: [canvas_width as u32, canvas_height as u32],
+        scale: geometry.ratio,
+        pad: geometry.pad,
+        crowd: primary.crowd,
+    };
+    Ok((logical_position, sample, metadata))
+}
+
+struct DetectionBatchSource<'a, B: Backend> {
+    formatter: VisionEpochFormatter<'a>,
+    device: &'a B::Device,
+}
+
+impl<'a, B: Backend> DetectionBatchSource<'a, B> {
+    fn new(
+        config: &'a TrainingConfig,
+        images: &'a [PathBuf],
+        device: &'a B::Device,
+        epoch: u64,
+        loader: VisionSampleLoader<'a>,
+    ) -> Result<Self, Box<dyn Error + Send + Sync>> {
+        Ok(Self {
+            formatter: VisionEpochFormatter::new(
+                config,
+                images,
+                epoch,
+                crate::training::TaskKind::Detect,
+                loader,
+            )?,
+            device,
+        })
+    }
+}
+
+impl<B: Backend> EpochBatchSource<DetectionBatch<B>> for DetectionBatchSource<'_, B> {
+    fn batch_count(&self) -> usize {
+        self.formatter.batch_count()
+    }
+
+    fn next_batch(&mut self) -> Result<Option<DetectionBatch<B>>, String> {
+        self.formatter
+            .next_formatted()?
+            .map(|(samples, metadata)| {
+                FormattedDetectionBatch::collate(&samples)?.into_device(metadata, self.device)
+            })
+            .transpose()
+    }
+}
+
+struct SegmentationBatchSource<'a, B: Backend> {
+    formatter: VisionEpochFormatter<'a>,
+    device: &'a B::Device,
+}
+
+impl<'a, B: Backend> SegmentationBatchSource<'a, B> {
+    fn new(
+        config: &'a TrainingConfig,
+        images: &'a [PathBuf],
+        device: &'a B::Device,
+        epoch: u64,
+        loader: VisionSampleLoader<'a>,
+    ) -> Result<Self, Box<dyn Error + Send + Sync>> {
+        Ok(Self {
+            formatter: VisionEpochFormatter::new(
+                config,
+                images,
+                epoch,
+                crate::training::TaskKind::Segment,
+                loader,
+            )?,
+            device,
+        })
+    }
+}
+
+impl<B: Backend> EpochBatchSource<SegmentationBatch<B>> for SegmentationBatchSource<'_, B> {
+    fn batch_count(&self) -> usize {
+        self.formatter.batch_count()
+    }
+
+    fn next_batch(&mut self) -> Result<Option<SegmentationBatch<B>>, String> {
+        self.formatter
+            .next_formatted()?
+            .map(|(samples, metadata)| segmentation_into_device(&samples, metadata, self.device))
+            .transpose()
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 enum ReplacedProjection {
@@ -160,6 +747,8 @@ pub struct TrainingRequest {
     pub epochs: usize,
     pub batch_size: usize,
     pub accumulation: usize,
+    pub workers: usize,
+    pub prefetch: usize,
     pub image_size: Option<usize>,
     pub seed: u64,
     pub run_root: PathBuf,
@@ -226,6 +815,8 @@ fn train_inner(request: TrainingRequest) -> Result<PathBuf, Box<dyn Error + Send
         config.epochs = request.epochs;
         config.batch_size = request.batch_size;
         config.accumulation = request.accumulation;
+        config.workers = request.workers;
+        config.prefetch = request.prefetch;
         config.seed = request.seed;
         if matches!(
             crate::training::dispatch::recipe_for(config.model.architecture).loss,
@@ -256,48 +847,10 @@ fn train_inner(request: TrainingRequest) -> Result<PathBuf, Box<dyn Error + Send
     let epoch = resume_manifest
         .as_ref()
         .map_or(0, |value| value.state.epoch as u64);
-    let classification_batches = if config.model.task == crate::training::TaskKind::Classify {
-        Some(build_classification_batches(
-            &config,
-            &dataset,
-            &dataset.train_images,
-            &device,
-            epoch,
-            true,
-        )?)
-    } else {
-        None
-    };
-    let detection_batches = if config.model.task == crate::training::TaskKind::Detect {
-        Some(build_detection_batches(
-            &config,
-            &dataset,
-            &dataset.train_images,
-            &device,
-            epoch,
-            true,
-        )?)
-    } else {
-        None
-    };
-    let segmentation_batches = if config.model.task == crate::training::TaskKind::Segment {
-        Some(build_segmentation_batches(
-            &config,
-            &dataset,
-            &dataset.train_images,
-            &device,
-            epoch,
-            true,
-        )?)
-    } else {
-        None
-    };
-    let batch_count = classification_batches
-        .as_ref()
-        .map(Vec::len)
-        .or_else(|| detection_batches.as_ref().map(Vec::len))
-        .or_else(|| segmentation_batches.as_ref().map(Vec::len))
-        .ok_or("task produced no batch collection")?;
+    let batch_count = dataset.train_images.len().div_ceil(config.batch_size);
+    if batch_count == 0 {
+        return Err("training split produces no batches".into());
+    }
     let trainer = if let Some(resume) = &request.resume {
         Trainer::from_checkpoint(resume)?
     } else {
@@ -334,9 +887,16 @@ fn train_inner(request: TrainingRequest) -> Result<PathBuf, Box<dyn Error + Send
             run_task(
                 model,
                 trainer,
-                classification_batches.expect("classification dispatch has batches"),
+                ClassificationBatchSource::new(
+                    &config,
+                    &dataset,
+                    &dataset.train_images,
+                    &device,
+                    epoch,
+                    true,
+                )?,
                 |epoch| {
-                    build_classification_batches(
+                    ClassificationBatchSource::new(
                         &config,
                         &dataset,
                         &dataset.train_images,
@@ -354,18 +914,24 @@ fn train_inner(request: TrainingRequest) -> Result<PathBuf, Box<dyn Error + Send
     macro_rules! run_detect {
         ($model:expr, $official:expr, $projection:expr) => {{
             let model = pretrained!($model, $official, $projection);
+            let loader = VisionSampleLoader::new(&dataset, &dataset.train_images, true)?;
             run_task(
                 model,
                 trainer,
-                detection_batches.expect("detection dispatch has batches"),
+                DetectionBatchSource::new(
+                    &config,
+                    &dataset.train_images,
+                    &device,
+                    epoch,
+                    loader.clone(),
+                )?,
                 |epoch| {
-                    build_detection_batches(
+                    DetectionBatchSource::new(
                         &config,
-                        &dataset,
                         &dataset.train_images,
                         &device,
                         epoch,
-                        true,
+                        loader.clone(),
                     )
                 },
                 request.dry_run,
@@ -377,18 +943,24 @@ fn train_inner(request: TrainingRequest) -> Result<PathBuf, Box<dyn Error + Send
     macro_rules! run_segment {
         ($model:expr, $official:expr, $projection:expr) => {{
             let model = pretrained!($model, $official, $projection);
+            let loader = VisionSampleLoader::new(&dataset, &dataset.train_images, true)?;
             run_task(
                 model,
                 trainer,
-                segmentation_batches.expect("segmentation dispatch has batches"),
+                SegmentationBatchSource::new(
+                    &config,
+                    &dataset.train_images,
+                    &device,
+                    epoch,
+                    loader.clone(),
+                )?,
                 |epoch| {
-                    build_segmentation_batches(
+                    SegmentationBatchSource::new(
                         &config,
-                        &dataset,
                         &dataset.train_images,
                         &device,
                         epoch,
-                        true,
+                        loader.clone(),
                     )
                 },
                 request.dry_run,
@@ -667,10 +1239,10 @@ fn train_inner(request: TrainingRequest) -> Result<PathBuf, Box<dyn Error + Send
     Ok(run)
 }
 
-fn run_task<M, F>(
+fn run_task<M, F, S>(
     model: M,
     trainer: Trainer,
-    batches: Vec<M::Batch>,
+    mut batches: S,
     rebuild_batches: F,
     dry_run: bool,
     resume: Option<&PathBuf>,
@@ -678,11 +1250,15 @@ fn run_task<M, F>(
 ) -> Result<PathBuf, Box<dyn Error + Send + Sync>>
 where
     M: TrainableTask<TrainBackend> + Clone,
-    F: FnMut(u64) -> Result<Vec<M::Batch>, Box<dyn Error + Send + Sync>>,
+    F: FnMut(u64) -> Result<S, Box<dyn Error + Send + Sync>>,
+    S: EpochBatchSource<M::Batch>,
 {
     if dry_run {
+        let batch = batches
+            .next_batch()?
+            .ok_or("dry-run batch source produced no batches")?;
         let output = model.forward_loss(
-            &batches[0],
+            &batch,
             crate::training::engine::LossContext {
                 yolox_l1: trainer.state.yolox_l1,
                 one_to_many: trainer
@@ -697,7 +1273,9 @@ where
                     .map_or(1.0, |value| value.one_to_one),
             },
         )?;
-        if !output.finite {
+        let deferred_finite = output.deferred_component.is_none()
+            || crate::training::loss::common::scalar_value(output.total.clone()).is_finite();
+        if !output.finite || !deferred_finite {
             return Err("dry-run loss is non-finite".into());
         }
         let gradients = burn::optim::GradientsParams::from_grads(output.total.backward(), &model);
@@ -708,6 +1286,7 @@ where
     }
     let gradient_clip = trainer.config.gradient_clip as f32;
     let momentum = trainer.config.momentum;
+    let weight_decay = trainer.config.weight_decay as f32;
     match trainer.config.optimizer {
         OptimizerKind::AdamW => run_task_with_optimizer(
             model,
@@ -716,12 +1295,13 @@ where
             rebuild_batches,
             resume,
             device,
-            AdamWConfig::new()
-                .with_weight_decay(0.0)
-                .with_grad_clipping(Some(burn::grad_clipping::GradientClippingConfig::Norm(
+            (
+                crate::training::optimizer::selective_adamw::<TrainBackend, M>(
+                    weight_decay,
                     gradient_clip,
-                )))
-                .init(),
+                ),
+                false,
+            ),
         ),
         OptimizerKind::Sgd => run_task_with_optimizer(
             model,
@@ -730,35 +1310,40 @@ where
             rebuild_batches,
             resume,
             device,
-            SgdConfig::new()
-                .with_momentum(Some(
-                    MomentumConfig::new()
-                        .with_momentum(momentum)
-                        .with_dampening(0.0)
-                        .with_nesterov(true),
-                ))
-                .with_gradient_clipping(Some(burn::grad_clipping::GradientClippingConfig::Norm(
-                    gradient_clip,
-                )))
-                .init(),
+            (
+                SgdConfig::new()
+                    .with_momentum(Some(
+                        MomentumConfig::new()
+                            .with_momentum(momentum)
+                            .with_dampening(0.0)
+                            .with_nesterov(true),
+                    ))
+                    .with_gradient_clipping(Some(
+                        burn::grad_clipping::GradientClippingConfig::Norm(gradient_clip),
+                    ))
+                    .init(),
+                true,
+            ),
         ),
     }
 }
 
-fn run_task_with_optimizer<M, O, F>(
+fn run_task_with_optimizer<M, O, F, S>(
     mut model: M,
     mut trainer: Trainer,
-    mut batches: Vec<M::Batch>,
+    mut batches: S,
     mut rebuild_batches: F,
     resume: Option<&PathBuf>,
     device: &burn::tensor::Device<TrainBackend>,
-    mut optimizer: O,
+    optimizer: (O, bool),
 ) -> Result<PathBuf, Box<dyn Error + Send + Sync>>
 where
     M: TrainableTask<TrainBackend> + Clone,
     O: Optimizer<M, TrainBackend>,
-    F: FnMut(u64) -> Result<Vec<M::Batch>, Box<dyn Error + Send + Sync>>,
+    F: FnMut(u64) -> Result<S, Box<dyn Error + Send + Sync>>,
+    S: EpochBatchSource<M::Batch>,
 {
+    let (mut optimizer, external_weight_decay) = optimizer;
     let mut ema_model = model.clone();
     let mut ema_state = crate::training::ema::EmaState::new(0.9999)?;
     ema_state.updates = trainer.state.ema_updates;
@@ -772,10 +1357,11 @@ where
         ema_model = ema_model.load_record(decode_record::<TrainBackend, _>(ema_bytes, device)?);
     }
     while trainer.state.epoch < trainer.config.epochs {
-        let result = trainer.train_epoch::<TrainBackend, _, _, _>(
+        let result = trainer.train_epoch::<TrainBackend, _, _, _, _>(
             model,
             optimizer,
-            &batches,
+            &mut batches,
+            external_weight_decay,
             |current, _step| {
                 ema_model =
                     crate::training::ema::update_model(ema_model.clone(), current, &mut ema_state)?;
@@ -800,7 +1386,7 @@ where
             .run
             .checkpoints
             .join(format!("epoch-{:04}", trainer.state.epoch));
-        save_atomic(
+        let saved_manifest = save_atomic(
             &epoch_path,
             manifest.clone(),
             &[
@@ -809,24 +1395,16 @@ where
                 ("optimizer.bin", &optimizer_bytes),
             ],
         )?;
-        replace_atomic(
+        replace_atomic_from_saved(
             trainer.run.checkpoints.join("last"),
-            manifest.clone(),
-            &[
-                ("model.bin", &model_bytes),
-                ("ema.bin", &ema_bytes),
-                ("optimizer.bin", &optimizer_bytes),
-            ],
+            &epoch_path,
+            &saved_manifest,
         )?;
         if improved {
-            replace_atomic(
+            replace_atomic_from_saved(
                 trainer.run.checkpoints.join("best"),
-                manifest,
-                &[
-                    ("model.bin", &model_bytes),
-                    ("ema.bin", &ema_bytes),
-                    ("optimizer.bin", &optimizer_bytes),
-                ],
+                &epoch_path,
+                &saved_manifest,
             )?;
         }
         eprintln!(
@@ -835,7 +1413,7 @@ where
         );
         if trainer.state.epoch < trainer.config.epochs {
             batches = rebuild_batches(trainer.state.epoch as u64)?;
-            if batches.is_empty() {
+            if batches.batch_count() == 0 {
                 return Err("rebuilt epoch contains no batches".into());
             }
         }
@@ -857,53 +1435,47 @@ fn build_classification_batches<B: Backend>(
             .resolve(crate::training::TaskKind::Classify, training)?,
     )?;
     let order = crate::training::data::loader::epoch_permutation(images.len(), config.seed, epoch);
-    let mut formatted = Vec::<FormattedClassificationSample>::with_capacity(order.len());
-    let mut metadata = Vec::<ImageMeta>::with_capacity(order.len());
-    for (logical_position, index) in order.into_iter().enumerate() {
-        let path = &images[index];
-        let class_name = path
-            .parent()
-            .and_then(std::path::Path::file_name)
-            .and_then(|value| value.to_str())
-            .ok_or("classification image has no class parent directory")?;
-        let class_id = dataset
-            .class_names
-            .iter()
-            .position(|name| name == class_name)
-            .ok_or("classification directory is absent from class table")?;
-        let rgb = image::open(path)?.into_rgb8();
-        let source_size = [rgb.width(), rgb.height()];
-        let image = ByteImage::new(
-            rgb.width() as usize,
-            rgb.height() as usize,
-            3,
-            ColorOrder::Rgb,
-            rgb.into_raw(),
-        )?;
-        formatted.push(pipeline.apply(
-            image,
-            class_id as u32,
-            SeedKey {
-                run_seed: config.seed,
-                epoch,
-                logical_position: logical_position as u64,
-                sample_index: index as u64,
-                rank: 0,
-                path: &path.to_string_lossy(),
-            },
-        )?);
-        metadata.push(ImageMeta {
-            image_id: path.to_string_lossy().into_owned(),
-            source_size,
-            canvas_size: [
-                config.model.input_size[1] as u32,
-                config.model.input_size[0] as u32,
-            ],
-            scale: [1.0, 1.0],
-            pad: [0.0, 0.0],
-            crowd: Vec::new(),
-        });
-    }
+    let indexed = order.into_iter().enumerate().collect::<Vec<_>>();
+    let workers = config.workers.max(1).min(indexed.len().max(1));
+    let chunk_size = indexed.len().div_ceil(workers);
+    let mut prepared =
+        std::thread::scope(|scope| -> Result<Vec<_>, Box<dyn Error + Send + Sync>> {
+            let handles = indexed
+                .chunks(chunk_size.max(1))
+                .map(|chunk| {
+                    let pipeline = pipeline.clone();
+                    scope.spawn(move || {
+                        chunk
+                            .iter()
+                            .map(|&(logical_position, index)| {
+                                prepare_classification_sample(
+                                    config,
+                                    dataset,
+                                    images,
+                                    &pipeline,
+                                    epoch,
+                                    logical_position,
+                                    index,
+                                )
+                            })
+                            .collect::<Result<Vec<_>, _>>()
+                    })
+                })
+                .collect::<Vec<_>>();
+            let mut output = Vec::with_capacity(indexed.len());
+            for handle in handles {
+                let chunk = handle.join().map_err(|_| {
+                    Box::<dyn Error + Send + Sync>::from("classification data worker panicked")
+                })??;
+                output.extend(chunk);
+            }
+            Ok(output)
+        })?;
+    prepared.sort_unstable_by_key(|sample| sample.0);
+    let (formatted, metadata): (Vec<_>, Vec<_>) = prepared
+        .into_iter()
+        .map(|(_, sample, metadata)| (sample, metadata))
+        .unzip();
     let mut batches = Vec::new();
     for start in (0..formatted.len()).step_by(config.batch_size) {
         let end = (start + config.batch_size).min(formatted.len());
@@ -913,6 +1485,62 @@ fn build_classification_batches<B: Backend>(
         );
     }
     Ok(batches)
+}
+
+fn prepare_classification_sample(
+    config: &TrainingConfig,
+    dataset: &crate::training::data::ResolvedDataset,
+    images: &[PathBuf],
+    pipeline: &ClassificationPipeline,
+    epoch: u64,
+    logical_position: usize,
+    index: usize,
+) -> Result<(usize, FormattedClassificationSample, ImageMeta), Box<dyn Error + Send + Sync>> {
+    let path = &images[index];
+    let class_name = path
+        .parent()
+        .and_then(std::path::Path::file_name)
+        .and_then(|value| value.to_str())
+        .ok_or("classification image has no class parent directory")?;
+    let class_id = dataset
+        .class_names
+        .iter()
+        .position(|name| name == class_name)
+        .ok_or("classification directory is absent from class table")?;
+    let rgb = image::open(path)?.into_rgb8();
+    let source_size = [rgb.width(), rgb.height()];
+    let image = ByteImage::new(
+        rgb.width() as usize,
+        rgb.height() as usize,
+        3,
+        ColorOrder::Rgb,
+        rgb.into_raw(),
+    )?;
+    let path_text = path.to_string_lossy().into_owned();
+    let sample = pipeline.apply(
+        image,
+        class_id as u32,
+        SeedKey {
+            run_seed: config.seed,
+            epoch,
+            logical_position: logical_position as u64,
+            sample_index: index as u64,
+            rank: 0,
+            path: &path_text,
+        },
+    )?;
+    let metadata = ImageMeta {
+        image_id: path_text,
+        source_size,
+        canvas_size: [
+            config.model.input_size[1] as u32,
+            config.model.input_size[0] as u32,
+        ],
+        scale: [1.0, 1.0],
+        pad: [0.0, 0.0],
+        crowd: Vec::new(),
+    };
+    Ok((logical_position, sample, metadata))
 }
 
 fn build_detection_batches<B: Backend>(
@@ -2168,6 +2796,18 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn raw_sample_cache_and_prefetch_are_bounded() {
+        let mut cache = BoundedLru::new(4);
+        for index in 0..100 {
+            cache.insert(index, index);
+            assert!(cache.entries.len() <= 4);
+        }
+        assert_eq!(cache.peak, 4);
+        assert_eq!(prefetch_sample_capacity(8, 2), 16);
+        assert_eq!(prefetch_sample_capacity(usize::MAX, 2), usize::MAX);
+    }
 
     #[derive(Module, Debug)]
     struct TransferHead<B: Backend> {
