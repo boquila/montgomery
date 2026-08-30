@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use burn::tensor::{Tensor, backend::Backend};
+use burn::tensor::{Tensor, activation::log_sigmoid, backend::Backend};
 
 /// Differentiable scalar plus detached diagnostics returned by every native criterion.
 ///
@@ -36,7 +36,7 @@ pub fn bce_with_logits_tensor<B: Backend, const D: usize>(
     logits: Tensor<B, D>,
     targets: Tensor<B, D>,
 ) -> Tensor<B, D> {
-    logits.clone().clamp_min(0.0) - logits.clone() * targets + (-logits.abs()).exp().log1p()
+    (targets.neg() + 1.0) * logits.clone() - log_sigmoid(logits)
 }
 
 pub fn log_softmax(logits: &[f32]) -> Vec<f32> {
@@ -80,5 +80,25 @@ mod tests {
             }
         }
         assert!(cross_entropy(&[-100.0, 100.0], 0).unwrap().is_finite());
+    }
+
+    #[test]
+    fn tensor_bce_matches_scalar_reference() {
+        use burn::tensor::Tensor;
+        use burn_flex::Flex;
+
+        let device = Default::default();
+        let logits = [-100.0, -2.0, 0.0, 2.0, 100.0];
+        let targets = [0.0, 1.0, 0.0, 1.0, 1.0];
+        let actual = bce_with_logits_tensor(
+            Tensor::<Flex, 1>::from_floats(logits, &device),
+            Tensor::<Flex, 1>::from_floats(targets, &device),
+        )
+        .into_data();
+        let actual = actual.as_slice::<f32>().unwrap();
+        for ((logit, target), actual) in logits.into_iter().zip(targets).zip(actual) {
+            let expected = bce_with_logits(logit, target);
+            assert!((actual - expected).abs() < 1e-5, "{actual} != {expected}");
+        }
     }
 }
