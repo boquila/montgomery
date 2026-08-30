@@ -12,6 +12,93 @@ pub struct MaskMatch {
     pub normalized_box: BoxXyxy,
 }
 
+/// Differentiable 2x bilinear upsample with half-pixel centers and clamped borders.
+///
+/// Burn's WGPU JIT backend does not currently implement the backward pass for the generic
+/// bilinear interpolation operator. YOLO26's semantic tower always needs the fixed P3-stride-8 to
+/// mask-stride-4 resize, so expressing that exact resize with slices, arithmetic, and reshapes
+/// keeps the official interpolation geometry while remaining differentiable on WGPU.
+pub fn bilinear_upsample_2x<B: Backend>(input: Tensor<B, 4>) -> Tensor<B, 4> {
+    let [batch, channels, height, width] = input.dims();
+    let horizontal_prev = if width == 1 {
+        input.clone()
+    } else {
+        Tensor::cat(
+            vec![
+                input
+                    .clone()
+                    .slice([0..batch, 0..channels, 0..height, 0..1]),
+                input
+                    .clone()
+                    .slice([0..batch, 0..channels, 0..height, 0..width - 1]),
+            ],
+            3,
+        )
+    };
+    let horizontal_next = if width == 1 {
+        input.clone()
+    } else {
+        Tensor::cat(
+            vec![
+                input
+                    .clone()
+                    .slice([0..batch, 0..channels, 0..height, 1..width]),
+                input
+                    .clone()
+                    .slice([0..batch, 0..channels, 0..height, width - 1..width]),
+            ],
+            3,
+        )
+    };
+    let horizontal_even = horizontal_prev * 0.25 + input.clone() * 0.75;
+    let horizontal_odd = input * 0.75 + horizontal_next * 0.25;
+    let horizontal = Tensor::stack::<5>(vec![horizontal_even, horizontal_odd], 4).reshape([
+        batch,
+        channels,
+        height,
+        width * 2,
+    ]);
+
+    let vertical_prev = if height == 1 {
+        horizontal.clone()
+    } else {
+        Tensor::cat(
+            vec![
+                horizontal
+                    .clone()
+                    .slice([0..batch, 0..channels, 0..1, 0..width * 2]),
+                horizontal
+                    .clone()
+                    .slice([0..batch, 0..channels, 0..height - 1, 0..width * 2]),
+            ],
+            2,
+        )
+    };
+    let vertical_next = if height == 1 {
+        horizontal.clone()
+    } else {
+        Tensor::cat(
+            vec![
+                horizontal
+                    .clone()
+                    .slice([0..batch, 0..channels, 1..height, 0..width * 2]),
+                horizontal
+                    .clone()
+                    .slice([0..batch, 0..channels, height - 1..height, 0..width * 2]),
+            ],
+            2,
+        )
+    };
+    let vertical_even = vertical_prev * 0.25 + horizontal.clone() * 0.75;
+    let vertical_odd = horizontal * 0.75 + vertical_next * 0.25;
+    Tensor::stack::<5>(vec![vertical_even, vertical_odd], 3).reshape([
+        batch,
+        channels,
+        height * 2,
+        width * 2,
+    ])
+}
+
 /// Cropped prototype-mask BCE used by YOLO11/YOLO26 segmentation.
 pub fn instance_mask_loss<B: Backend>(
     coefficients: Tensor<B, 3>,
@@ -101,11 +188,55 @@ pub fn semantic_bce_dice_loss<B: Backend>(
     {
         return Err("semantic logits and target shapes disagree");
     }
-    let one_hot: Tensor<B, 4, Int> = class_map.one_hot(classes);
-    let target = one_hot.permute([0, 3, 1, 2]).float() * coverage.float().unsqueeze_dim::<4>(1);
+    let coverage = coverage.float().unsqueeze_dim::<4>(1);
+    let target = if classes == 1 {
+        // Burn deliberately rejects one-hot encodings with fewer than two classes. A one-class
+        // segmenter still has a valid semantic target: covered pixels belong to its sole object
+        // class and uncovered pixels are background.
+        coverage
+    } else {
+        let one_hot: Tensor<B, 4, Int> = class_map.one_hot(classes);
+        one_hot.permute([0, 3, 1, 2]).float() * coverage
+    };
     let bce = bce_with_logits_tensor(logits.clone(), target.clone()).mean();
     let probabilities = activation::sigmoid(logits);
     let intersection = (probabilities.clone() * target.clone()).sum();
     let dice = 1.0 - (intersection * 2.0 + 1.0) / (probabilities.sum() + target.sum() + 1.0);
     Ok(bce * 0.5 + dice * 0.5)
+}
+
+#[cfg(test)]
+mod tests {
+    use burn::tensor::{Bool, Int, Tensor};
+    use burn_flex::Flex;
+
+    use super::{bilinear_upsample_2x, semantic_bce_dice_loss};
+
+    #[test]
+    fn manual_bilinear_upsample_matches_half_pixel_geometry() {
+        let device = Default::default();
+        let input = Tensor::<Flex, 4>::from_floats([[[[1.0, 2.0], [3.0, 4.0]]]], &device);
+        let actual = bilinear_upsample_2x(input).into_data();
+        let expected = [
+            1.0, 1.25, 1.75, 2.0, 1.5, 1.75, 2.25, 2.5, 2.5, 2.75, 3.25, 3.5, 3.0, 3.25, 3.75, 4.0,
+        ];
+        assert_eq!(actual.shape.dims::<4>(), [1, 1, 4, 4]);
+        assert_eq!(actual.as_slice::<f32>().unwrap(), expected);
+    }
+
+    #[test]
+    fn single_class_semantic_target_uses_coverage_without_one_hot() {
+        let device = Default::default();
+        let logits = Tensor::<Flex, 4>::zeros([1, 1, 2, 2], &device);
+        let class_map = Tensor::<Flex, 3, Int>::from_ints([[[0, 0], [0, 0]]], &device);
+        let coverage =
+            Tensor::<Flex, 3, Bool>::from_bool([[[true, false], [false, true]]].into(), &device);
+
+        let loss = semantic_bce_dice_loss(logits, class_map, coverage)
+            .unwrap()
+            .into_data();
+        let value = loss.as_slice::<f32>().unwrap()[0];
+        assert!(value.is_finite());
+        assert!(value > 0.0);
+    }
 }

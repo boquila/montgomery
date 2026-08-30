@@ -296,6 +296,9 @@ training/loss parity, and YOLOX latency rows in the README performance table.
 
 - Training is non-default and WGPU-only (`--features training`); default inference graphs and
   prediction outputs must remain unchanged.
+- Run real training and hardware smoke workflows with `--release`; unoptimized Burn model graphs
+  are too slow for meaningful trainer verification. Unit tests and static checks keep their
+  documented profiles unless the test itself executes a model-training loop.
 - Losses consume raw logits. YOLOX alone uses objectness; modern heads use TAL. YOLOv10/YOLO26
   training builds carry one-to-many plus detached-feature one-to-one branches, and YOLO26 remains
   DFL-free. YOLO26-seg also detaches one-to-one prototypes and semantic logits.

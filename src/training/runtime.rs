@@ -173,6 +173,16 @@ pub struct TrainingRequest {
 }
 
 pub fn train(request: TrainingRequest) -> Result<PathBuf, Box<dyn Error + Send + Sync>> {
+    let worker = std::thread::Builder::new()
+        .name("boquilens-training".into())
+        .stack_size(64 * 1024 * 1024)
+        .spawn(move || train_inner(request))?;
+    worker.join().map_err(|_| {
+        Box::<dyn Error + Send + Sync>::from("native training worker thread panicked")
+    })?
+}
+
+fn train_inner(request: TrainingRequest) -> Result<PathBuf, Box<dyn Error + Send + Sync>> {
     if request.resume.is_some() && request.weights.is_some() {
         return Err("--resume and --weights are mutually exclusive".into());
     }
@@ -1226,6 +1236,16 @@ pub struct ValidationSummary {
 }
 
 pub fn validate(checkpoint: PathBuf) -> Result<ValidationSummary, Box<dyn Error + Send + Sync>> {
+    let worker = std::thread::Builder::new()
+        .name("boquilens-training-validation".into())
+        .stack_size(64 * 1024 * 1024)
+        .spawn(move || validate_inner(checkpoint))?;
+    worker.join().map_err(|_| {
+        Box::<dyn Error + Send + Sync>::from("native validation worker thread panicked")
+    })?
+}
+
+fn validate_inner(checkpoint: PathBuf) -> Result<ValidationSummary, Box<dyn Error + Send + Sync>> {
     let manifest = crate::training::checkpoint::load(&checkpoint)?;
     let dataset = DatasetManifest::load(&manifest.config.data)?;
     if dataset.class_names != manifest.config.model.class_names {
@@ -1463,14 +1483,18 @@ where
         let classes_data = batch.classes.into_data();
         let [batch_size, class_count] = logits_data.shape.dims::<2>();
         let values = logits_data.as_slice::<f32>()?;
-        let labels = classes_data.as_slice::<i64>()?;
+        let labels = classes_data
+            .as_slice::<i32>()?
+            .iter()
+            .map(|value| i64::from(*value))
+            .collect::<Vec<_>>();
         let rows = values
             .chunks_exact(class_count)
             .map(Vec::from)
             .collect::<Vec<_>>();
         let labels = labels
-            .iter()
-            .map(|value| usize::try_from(*value))
+            .into_iter()
+            .map(usize::try_from)
             .collect::<Result<Vec<_>, _>>()?;
         let metrics = crate::training::loss::classification::classification_loss(&rows, &labels)?;
         loss += f64::from(metrics.mean_loss) * batch_size as f64;
@@ -1658,9 +1682,17 @@ where
         let classes_data = batch.classes.into_data();
         let boxes_data = batch.boxes_xyxy.into_data();
         let valid_data = batch.valid.into_data();
-        let classes = classes_data.as_slice::<i64>()?;
+        let classes = classes_data
+            .as_slice::<i32>()?
+            .iter()
+            .map(|value| i64::from(*value))
+            .collect::<Vec<_>>();
         let boxes = boxes_data.as_slice::<f32>()?;
-        let valid = valid_data.as_slice::<bool>()?;
+        let valid = valid_data
+            .as_slice::<u32>()?
+            .iter()
+            .map(|value| *value != 0)
+            .collect::<Vec<_>>();
         let grouped = model.validation_detections(batch.images, validation);
         if grouped.len() != batch.metadata.len() {
             return Err("detector output batch size differs from validation metadata".into());
@@ -1817,9 +1849,17 @@ where
         let boxes_data = batch.detection.boxes_xyxy.into_data();
         let valid_data = batch.detection.valid.into_data();
         let masks_data = batch.masks.into_data();
-        let classes = classes_data.as_slice::<i64>()?;
+        let classes = classes_data
+            .as_slice::<i32>()?
+            .iter()
+            .map(|value| i64::from(*value))
+            .collect::<Vec<_>>();
         let boxes = boxes_data.as_slice::<f32>()?;
-        let valid = valid_data.as_slice::<bool>()?;
+        let valid = valid_data
+            .as_slice::<u32>()?
+            .iter()
+            .map(|value| *value != 0)
+            .collect::<Vec<_>>();
         let masks = masks_data.as_slice::<f32>()?;
         for (image, metadata) in batch.detection.metadata.iter().enumerate() {
             let input = batch.detection.images.clone().slice([
@@ -1968,6 +2008,20 @@ pub fn export(
     checkpoint: PathBuf,
     output: PathBuf,
 ) -> Result<PathBuf, Box<dyn Error + Send + Sync>> {
+    let worker = std::thread::Builder::new()
+        .name("boquilens-training-export".into())
+        .stack_size(64 * 1024 * 1024)
+        .spawn(move || export_inner(checkpoint, output))?;
+    worker.join().map_err(|_| {
+        Box::<dyn Error + Send + Sync>::from("native training export worker thread panicked")
+    })?
+}
+
+#[cfg(feature = "pretrained")]
+fn export_inner(
+    checkpoint: PathBuf,
+    output: PathBuf,
+) -> Result<PathBuf, Box<dyn Error + Send + Sync>> {
     let manifest = crate::training::checkpoint::load(&checkpoint)?;
     if output.extension().and_then(|value| value.to_str()) != Some("bpk") {
         return Err("native training artifacts must use the .bpk extension".into());
@@ -2066,6 +2120,9 @@ pub fn export(
     )?;
     if predictor.class_names() != manifest.config.model.class_names {
         return Err("public predictor reloaded a different artifact class table".into());
+    }
+    if predictor.input_size() != manifest.config.model.input_size[0] {
+        return Err("public predictor reloaded a different artifact input size".into());
     }
     Ok(exported)
 }

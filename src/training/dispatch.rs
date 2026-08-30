@@ -1,10 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use burn::tensor::{
-    backend::AutodiffBackend,
-    module::interpolate,
-    ops::{InterpolateMode, InterpolateOptions},
-};
+use burn::tensor::{ElementConversion, backend::AutodiffBackend};
 
 use crate::{
     ModelId,
@@ -122,14 +118,16 @@ fn detection_targets<B: burn::tensor::backend::Backend>(
     let boxes_data = batch.boxes_xyxy.clone().into_data();
     let valid_data = batch.valid.clone().into_data();
     let classes = classes_data
-        .as_slice::<i64>()
-        .map_err(|_| "target classes are not i64")?;
+        .iter::<B::IntElem>()
+        .map(|value| value.elem::<i64>())
+        .collect::<Vec<_>>();
     let boxes = boxes_data
         .as_slice::<f32>()
         .map_err(|_| "target boxes are not f32")?;
     let valid = valid_data
-        .as_slice::<bool>()
-        .map_err(|_| "target validity is not bool")?;
+        .iter::<B::BoolElem>()
+        .map(|value| value.elem::<u32>() != 0)
+        .collect::<Vec<_>>();
     let mut output = vec![Vec::new(); images];
     for (image, image_output) in output.iter_mut().enumerate().take(images) {
         for target in 0..max_targets {
@@ -137,11 +135,16 @@ fn detection_targets<B: burn::tensor::backend::Backend>(
             if valid[flat] {
                 let class_id =
                     usize::try_from(classes[flat]).map_err(|_| "negative target class")?;
-                image_output.push(TalGroundTruth {
-                    class_id,
-                    bbox: BoxXyxy::new(boxes[flat * 4..flat * 4 + 4].try_into().unwrap())
-                        .map_err(str::to_string)?,
-                });
+                let edges: [f32; 4] = boxes[flat * 4..flat * 4 + 4].try_into().unwrap();
+                if edges.into_iter().any(|value| !value.is_finite()) {
+                    return Err("target box edges are not finite".into());
+                }
+                // WGPU represents bool host data as integer storage. Treat a non-positive padded
+                // row as absent even if backend conversion reports its validity slot as true.
+                // Real transformed zero-area boxes are already filtered by Format.
+                if let Ok(bbox) = BoxXyxy::new(edges) {
+                    image_output.push(TalGroundTruth { class_id, bbox });
+                }
             }
         }
     }
@@ -461,22 +464,13 @@ macro_rules! yolo26_segment_task {
                     batch.masks.clone(),
                     &one_matches,
                 ).map_err(str::to_string)?;
-                let [_, target_height, target_width] = batch.semantic_class_map.dims();
                 let many_semantic = segmentation::semantic_bce_dice_loss(
-                    interpolate(
-                        output.one_to_many_semantic,
-                        [target_height, target_width],
-                        InterpolateOptions::new(InterpolateMode::Bilinear),
-                    ),
+                    segmentation::bilinear_upsample_2x(output.one_to_many_semantic),
                     batch.semantic_class_map.clone(),
                     batch.semantic_coverage.clone(),
                 ).map_err(str::to_string)?;
                 let one_semantic = segmentation::semantic_bce_dice_loss(
-                    interpolate(
-                        output.one_to_one_semantic,
-                        [target_height, target_width],
-                        InterpolateOptions::new(InterpolateMode::Bilinear),
-                    ),
+                    segmentation::bilinear_upsample_2x(output.one_to_one_semantic),
                     batch.semantic_class_map.clone(),
                     batch.semantic_coverage.clone(),
                 ).map_err(str::to_string)?;
@@ -520,6 +514,29 @@ mod tests {
         assert_eq!(recipe_for(ModelId::Yolo26N).reg_max, 1);
         assert!(recipe_for(ModelId::Yolov10N).end_to_end);
         assert_eq!(recipe_for(ModelId::Yolo11NCls).levels, 0);
+    }
+
+    #[test]
+    fn detached_targets_ignore_non_positive_padding_rows() {
+        use burn::tensor::{Bool, Int, Tensor};
+        use burn_flex::Flex;
+
+        let device = Default::default();
+        let batch = DetectionBatch::<Flex> {
+            images: Tensor::zeros([1, 3, 8, 8], &device),
+            classes: Tensor::<Flex, 2, Int>::from_ints([[7, 0]], &device),
+            boxes_xyxy: Tensor::from_floats(
+                [[[1.0, 1.0, 7.0, 7.0], [0.0, 0.0, 0.0, 0.0]]],
+                &device,
+            ),
+            valid: Tensor::<Flex, 2, Bool>::from_bool([[true, true]].into(), &device),
+            metadata: Vec::new(),
+        };
+
+        let targets = detection_targets(&batch).unwrap();
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].len(), 1);
+        assert_eq!(targets[0][0].class_id, 7);
     }
 
     #[test]

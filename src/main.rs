@@ -243,6 +243,14 @@ fn default_output(input: &std::path::Path) -> PathBuf {
 }
 
 fn main() -> boquilens::Result<()> {
+    #[cfg(all(windows, feature = "training", debug_assertions))]
+    if std::env::var_os("RUST_MIN_STACK").is_none() {
+        // Burn/CubeCL creates deep named worker threads after CLI startup. Windows' default Rust
+        // worker stack is too small for debug training graphs. Optimized training does not need
+        // this process-wide override. This point is still single-threaded and therefore satisfies
+        // `set_var`'s process-environment safety rule.
+        unsafe { std::env::set_var("RUST_MIN_STACK", "67108864") };
+    }
     let args = Args::parse();
     match args.command {
         Command::Predict(args) => predict(args),
@@ -440,7 +448,13 @@ fn run_predict<B: Backend>(
             | ModelId::Yolov8XCls
     ) {
         let (image, classifications) = predictor.predict_classification_path(&args.source)?;
-        report_classifications(args, &image, &output, &classifications)?;
+        report_classifications(
+            args,
+            &image,
+            &output,
+            predictor.input_size(),
+            &classifications,
+        )?;
         return Ok(());
     }
     if matches!(
@@ -526,6 +540,7 @@ fn report_classifications(
     args: &PredictArgs,
     image: &image::DynamicImage,
     output: &std::path::Path,
+    input_size: usize,
     classifications: &[boquilens::Classification],
 ) -> boquilens::Result<()> {
     let _ = image;
@@ -542,7 +557,7 @@ fn report_classifications(
             "{}",
             serde_json::to_string_pretty(&JsonOutput {
                 task: "classification",
-                input_size_px: boquilens::CLASSIFY_INPUT_SIZE,
+                input_size_px: input_size,
                 classes: classifications,
             })?
         );

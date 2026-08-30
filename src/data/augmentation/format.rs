@@ -41,6 +41,11 @@ pub fn apply(
     let w = sample.image.width();
     let h = sample.image.height();
     sample.instances.denormalize(w as f32, h as f32);
+    // Clipping/mixed-image transforms can collapse a box exactly onto a canvas edge. Filter it at
+    // the final shared boundary so classes, polygons, and generated masks remain aligned and the
+    // loss never receives a valid target with zero area.
+    let keep = sample.instances.remove_zero_area();
+    sample.classes = keep.iter().map(|&index| sample.classes[index]).collect();
     let masks = if segment {
         if mask_overlap {
             match mask::overlap(&mut sample.instances, &mut sample.classes, w, h, mask_ratio)? {
@@ -128,5 +133,39 @@ mod tests {
         let o = apply(s, 1, true, false, false).unwrap();
         assert_eq!(o.image_chw_u8, [3, 2, 1]);
         assert_eq!(o.boxes_xywh_normalized, [[0.5, 0.5, 1., 1.]]);
+    }
+
+    #[test]
+    fn format_discards_collapsed_boxes_and_keeps_classes_aligned() {
+        let s = AugSample {
+            image: ByteImage::filled(10, 10, 3, ColorOrder::Bgr, 0),
+            classes: vec![3, 7],
+            instances: Instances::new(
+                vec![BBox([10., 2., 10., 8.]), BBox([1., 1., 9., 9.])],
+                BoxFormat::Xyxy,
+                false,
+                None,
+            )
+            .unwrap(),
+            source: SourceMetadata {
+                primary_id: "collapsed".into(),
+                primary_index: 0,
+                mixed_indexes: vec![],
+            },
+            geometry: GeometryMetadata {
+                original_shape: [10, 10],
+                current_shape: [10, 10],
+                ratio: [1., 1.],
+                pad: [0., 0.],
+                reversible: true,
+            },
+        };
+
+        let formatted = apply(s, 1, true, false, false).unwrap();
+        assert_eq!(formatted.classes, [7]);
+        let box_xywh = formatted.boxes_xywh_normalized[0];
+        for (actual, expected) in box_xywh.into_iter().zip([0.5, 0.5, 0.8, 0.8]) {
+            assert!((actual - expected).abs() < 1e-6);
+        }
     }
 }

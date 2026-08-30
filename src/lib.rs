@@ -542,6 +542,7 @@ pub struct Predictor<B: Backend> {
     device: Device<B>,
     options: PredictOptions,
     class_names: Vec<String>,
+    input_size: usize,
 }
 
 fn catalog_class_names(model_id: ModelId) -> Vec<String> {
@@ -555,8 +556,24 @@ fn catalog_class_names(model_id: ModelId) -> Vec<String> {
     }
 }
 
+fn catalog_input_size(model_id: ModelId) -> usize {
+    if model_id.as_str().ends_with("-cls") {
+        CLASSIFY_INPUT_SIZE
+    } else if matches!(model_id, ModelId::YoloxNano | ModelId::YoloxTiny) {
+        416
+    } else {
+        INPUT_SIZE
+    }
+}
+
 #[cfg(feature = "pretrained")]
-fn trained_artifact_class_names(path: &Path, model_id: ModelId) -> Result<Vec<String>> {
+struct TrainedArtifactMetadata {
+    class_names: Vec<String>,
+    input_size: usize,
+}
+
+#[cfg(feature = "pretrained")]
+fn trained_artifact_metadata(path: &Path, model_id: ModelId) -> Result<TrainedArtifactMetadata> {
     #[derive(Deserialize)]
     struct MetadataEnvelope {
         metadata: std::collections::BTreeMap<String, String>,
@@ -600,7 +617,17 @@ fn trained_artifact_class_names(path: &Path, model_id: ModelId) -> Result<Vec<St
     {
         return Err("trained artifact class names must be non-empty and unique".into());
     }
-    Ok(names)
+    let encoded_size = metadata
+        .get("boquilens.input-size-json")
+        .ok_or("trained artifact is missing input-size metadata")?;
+    let input_size: [usize; 2] = serde_json::from_str(encoded_size)?;
+    if input_size[0] == 0 || input_size[0] != input_size[1] {
+        return Err("trained artifact currently requires a positive square input size".into());
+    }
+    Ok(TrainedArtifactMetadata {
+        class_names: names,
+        input_size: input_size[0],
+    })
 }
 
 pub type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
@@ -1360,6 +1387,11 @@ impl<B: Backend> Predictor<B> {
     ) -> Result<Self> {
         let options = options.validate()?;
         let checkpoint = checkpoint.into();
+        if checkpoint.extension().and_then(|value| value.to_str()) == Some("bpk")
+            && trained_artifact_metadata(&checkpoint, model_id).is_ok()
+        {
+            return Self::from_trained_artifact_on_device(model_id, checkpoint, device, options);
+        }
         match model_id {
             ModelId::YoloxNano
             | ModelId::YoloxTiny
@@ -1390,6 +1422,7 @@ impl<B: Backend> Predictor<B> {
                     device,
                     options,
                     class_names: catalog_class_names(model_id),
+                    input_size: catalog_input_size(model_id),
                 })
             }
             _ => {
@@ -1406,6 +1439,7 @@ impl<B: Backend> Predictor<B> {
                     device,
                     options,
                     class_names,
+                    input_size: catalog_input_size(model_id),
                 })
             }
         }
@@ -1434,8 +1468,8 @@ impl<B: Backend> Predictor<B> {
 
         let options = options.validate()?;
         let checkpoint = checkpoint.into();
-        let class_names = trained_artifact_class_names(&checkpoint, model_id)?;
-        let num_classes = class_names.len();
+        let metadata = trained_artifact_metadata(&checkpoint, model_id)?;
+        let num_classes = metadata.class_names.len();
         let model = match model_id {
             ModelId::YoloxNano
             | ModelId::YoloxTiny
@@ -1458,7 +1492,8 @@ impl<B: Backend> Predictor<B> {
             model,
             device,
             options,
-            class_names,
+            class_names: metadata.class_names,
+            input_size: metadata.input_size,
         })
     }
 
@@ -1545,6 +1580,7 @@ impl<B: Backend> Predictor<B> {
             device,
             options,
             class_names: catalog_class_names(model_id),
+            input_size: catalog_input_size(model_id),
         })
     }
 
@@ -1558,10 +1594,15 @@ impl<B: Backend> Predictor<B> {
         &self.class_names
     }
 
+    /// Square input side used by this artifact's preprocessing contract.
+    pub const fn input_size(&self) -> usize {
+        self.input_size
+    }
+
     /// Run object detection on an already-decoded image.
     pub fn predict(&self, image: &DynamicImage) -> Vec<Detection> {
         let prepared = match &self.model {
-            RuntimeModel::Yolox(_) => LetterboxedImage::yolox(image, INPUT_SIZE),
+            RuntimeModel::Yolox(_) => LetterboxedImage::yolox(image, self.input_size),
             RuntimeModel::Yolov3Tiny(_)
             | RuntimeModel::Yolov10N(_)
             | RuntimeModel::Yolov10S(_)
@@ -1618,7 +1659,9 @@ impl<B: Backend> Predictor<B> {
             | RuntimeModel::Yolo26ClsS(_)
             | RuntimeModel::Yolo26ClsM(_)
             | RuntimeModel::Yolo26ClsL(_)
-            | RuntimeModel::Yolo26ClsX(_) => LetterboxedImage::ultralytics(image, INPUT_SIZE, 32),
+            | RuntimeModel::Yolo26ClsX(_) => {
+                LetterboxedImage::ultralytics(image, self.input_size, 32)
+            }
         };
         let input = image_to_tensor(prepared.image().clone(), &self.device).unsqueeze::<4>();
         let boxes_by_class = match &self.model {
@@ -2032,7 +2075,7 @@ impl<B: Backend> Predictor<B> {
     /// identity).
     pub fn predict_classification(&self, image: &DynamicImage) -> Result<Vec<Classification>> {
         self.prepare_classification(image)?;
-        let input = image_to_tensor(classify_transform(image, CLASSIFY_INPUT_SIZE), &self.device)
+        let input = image_to_tensor(classify_transform(image, self.input_size), &self.device)
             .unsqueeze::<4>();
         let output = match &self.model {
             RuntimeModel::Yolo26ClsN(model) => model.classify(input / 255.0),
@@ -2126,7 +2169,7 @@ impl<B: Backend> Predictor<B> {
             | RuntimeModel::Yolo26SegM(_)
             | RuntimeModel::Yolo26SegL(_)
             | RuntimeModel::Yolo26SegX(_) => {
-                Ok(LetterboxedImage::ultralytics(image, INPUT_SIZE, 32))
+                Ok(LetterboxedImage::ultralytics(image, self.input_size, 32))
             }
             _ => Err(format!(
                 "{} is not a segmentation model; instance masks are available for \

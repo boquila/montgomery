@@ -38,18 +38,30 @@ official evaluation resolution is 416 px, so its published mAP (32.8) does not t
 
 The native trainer accepts Ultralytics-style dataset YAML and uses deterministic augmentation,
 padded targets, differentiable family-specific criteria, accumulation, selective decay, and
-full-fp32 model/optimizer/EMA checkpoints with epoch-boundary resume. Detector/segment training
-currently covers YOLOX, YOLOv3-Tiny-U, YOLOv10, YOLO11, and YOLO26; YOLOv8 classification is also
-wired. It consumes YOLO labels (polygons for segmentation), while classification uses class
-folders. Classification validation/export and detector box validation (AP50 and AP50--95) are
-wired into the CLI. YOLOv8 detect/segment, YOLO12 detect, segmentation metrics, detector/segment
-artifact export, and pretrained fine-tuning remain release gates, so training stays experimental.
+full-fp32 model/optimizer/EMA checkpoints with epoch-boundary resume. Every model/task row above is
+wired for training: YOLOX/YOLOv3/YOLOv8/YOLOv10/YOLO11/YOLO12/YOLO26 detection, the v8/v11/v26
+segmenters, and the v8/v11/v26 classifiers. Detection and segmentation accept YOLO or COCO
+manifests (including crowd-aware validation); classification uses class folders.
+
+`--weights` initializes from an official tensor-only checkpoint. Equal-class imports are strict;
+when the dataset class count changes, only the documented class-output projections remain freshly
+initialized. `--resume` instead restores the exact full-precision model, optimizer, EMA, schedule,
+progress, dataset identity, and class table, and is mutually exclusive with `--weights`. Validation
+reports source-space AP50/AP50--95 for boxes and masks or top-1/top-5 for classification. Export
+uses EMA weights, removes training-only branches, embeds the ordered custom class table and input
+size, and smoke-reloads the resulting Burnpack through the public `Predictor`.
+
+Use an optimized build for actual training; unoptimized model graphs are prohibitively slow:
 
 ```console
-cargo run --locked --features training -- train --help
-cargo run --locked --features training -- val --help
-cargo run --locked --features training -- export --help
+cargo run --locked --release --features training -- train --model yolo26n --data dataset.yaml --weights target/yolo26n-state.pt --epochs 100
+cargo run --locked --release --features training -- val --checkpoint runs/detect/train-.../checkpoints/last --json
+cargo run --locked --release --features training -- export --checkpoint runs/detect/train-.../checkpoints/last --output target/custom-yolo26n.bpk
+cargo run --locked --release -- predict --model yolo26n --weights target/custom-yolo26n.bpk --source image.jpg
 ```
+
+Training remains experimental until the external one-step fixtures, tiny-overfit proofs, and
+COCO8/COCO8-seg/ImageNet-small quality reports are complete on the maintained GPU.
 
 See [AUGMENTATION_COMPATIBILITY.md](AUGMENTATION_COMPATIBILITY.md) for augmentation parity and
 [TRAINING_IMPLEMENTATION_PLAN.md](TRAINING_IMPLEMENTATION_PLAN.md) for the remaining release gates.

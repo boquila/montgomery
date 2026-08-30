@@ -46,7 +46,9 @@ impl RunDirectory {
             .unwrap_or_default()
             .as_secs();
         let task = format!("{:?}", config.model.task).to_ascii_lowercase();
-        let root = config.run_root.join(task).join(format!(
+        let task_root = config.run_root.join(task);
+        fs::create_dir_all(&task_root)?;
+        let root = task_root.join(format!(
             "{}-{timestamp}-{:08x}",
             clean_name.trim_matches('-'),
             std::process::id()
