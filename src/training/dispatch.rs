@@ -399,8 +399,8 @@ macro_rules! yolo11_segment_task {
                     &matches,
                 ).map_err(str::to_string)?;
                 let mask_value = crate::training::loss::common::scalar_value(mask.clone());
-                detection.total = detection.total + mask * 7.5;
-                detection.total_value += mask_value * 7.5;
+                detection.total = detection.total + mask * segmentation::SEGMENTATION_GAIN;
+                detection.total_value += mask_value * segmentation::SEGMENTATION_GAIN as f32;
                 detection.components.insert("mask_loss".into(), mask_value);
                 detection.finite &= mask_value.is_finite();
                 Ok(detection)
@@ -483,13 +483,17 @@ macro_rules! yolo26_segment_task {
                         many_semantic.clone(),
                         one_semantic.clone(),
                     ]);
-                many.total = many.total + many_mask * 7.5 + many_semantic;
-                many.total_value += many_mask_value * 7.5 + many_semantic_value;
+                many.total = many.total
+                    + (many_mask + many_semantic) * segmentation::SEGMENTATION_GAIN;
+                many.total_value +=
+                    (many_mask_value + many_semantic_value) * segmentation::SEGMENTATION_GAIN as f32;
                 many.components.insert("mask_loss".into(), many_mask_value);
                 many.components.insert("semantic_loss".into(), many_semantic_value);
                 many.finite &= many_mask_value.is_finite() && many_semantic_value.is_finite();
-                one.total = one.total + one_mask * 7.5 + one_semantic;
-                one.total_value += one_mask_value * 7.5 + one_semantic_value;
+                one.total = one.total
+                    + (one_mask + one_semantic) * segmentation::SEGMENTATION_GAIN;
+                one.total_value +=
+                    (one_mask_value + one_semantic_value) * segmentation::SEGMENTATION_GAIN as f32;
                 one.components.insert("mask_loss".into(), one_mask_value);
                 one.components.insert("semantic_loss".into(), one_semantic_value);
                 one.finite &= one_mask_value.is_finite() && one_semantic_value.is_finite();

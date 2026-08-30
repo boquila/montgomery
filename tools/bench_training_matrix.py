@@ -207,17 +207,25 @@ def run_once(
         run_dir = find_native_run(completed.stdout + completed.stderr)
         metrics = run_dir / "metrics.csv"
         internal_seconds = None
+        metadata_path = run_dir / "environment.json"
     else:
         run_dir = project / name
         metrics = run_dir / "results.csv"
-        benchmark = json.loads((run_dir / "benchmark.json").read_text(encoding="utf-8"))
+        metadata_path = run_dir / "benchmark.json"
+        benchmark = json.loads(metadata_path.read_text(encoding="utf-8"))
         internal_seconds = float(benchmark["seconds"])
+    framework_metadata = (
+        json.loads(metadata_path.read_text(encoding="utf-8")) if metadata_path.exists() else {}
+    )
     curve = read_curve(metrics, framework, scenario.task)
+    normalized_command = [part.replace(str(ROOT), "<repo>") for part in command]
     result = {
         "framework": framework,
         "label": label,
         "wall_seconds": wall_seconds,
         "internal_seconds": internal_seconds,
+        "command": normalized_command,
+        "framework_metadata": framework_metadata,
         "run_dir": str(run_dir.relative_to(ROOT)),
         "loss_curve": curve,
         "final_loss": curve[-1] if curve else None,
@@ -273,12 +281,24 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--repeats", type=int, default=3)
+    parser.add_argument(
+        "--segmentation-repeats",
+        type=int,
+        default=2,
+        help="repeats for the substantially slower segmentation cells",
+    )
     parser.add_argument("--scenario", action="append", default=[])
     parser.add_argument("--skip-prime", action="store_true")
     parser.add_argument("--keep-runs", action="store_true")
+    parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--list", action="store_true")
     args = parser.parse_args()
-    if args.repeats < 1:
-        parser.error("--repeats must be positive")
+    if args.list:
+        for scenario in SCENARIOS:
+            print(scenario.id)
+        return
+    if args.repeats < 1 or args.segmentation_repeats < 1:
+        parser.error("repeat counts must be positive")
 
     scenarios = selected_scenarios(args.scenario)
     subprocess.run([sys.executable, str(DATA_SCRIPT)], cwd=ROOT, check=True)
@@ -286,12 +306,13 @@ def main() -> None:
     output = args.output.resolve()
     output_root = output.parent
     output_root.mkdir(parents=True, exist_ok=True)
-    result: dict[str, Any] = {
+    new_result: dict[str, Any] = {
         "schema": "boquilens-training-comparison-v1",
         "created_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "methodology": {
             "timer": "external process wall clock",
             "repeats": args.repeats,
+            "segmentation_repeats": args.segmentation_repeats,
             "native_prime_before_measurement": not args.skip_prime,
             "alternating_framework_order": True,
             "workers": 4,
@@ -309,8 +330,18 @@ def main() -> None:
         },
         "scenarios": [],
     }
+    if args.resume and output.exists():
+        result = json.loads(output.read_text(encoding="utf-8"))
+        if result.get("schema") != new_result["schema"]:
+            raise ValueError("cannot resume a result with a different schema")
+    else:
+        result = new_result
+    completed_ids = {entry["scenario"]["id"] for entry in result["scenarios"]}
 
     for index, scenario in enumerate(scenarios, start=1):
+        if scenario.id in completed_ids:
+            print(f"[{index}/{len(scenarios)}] {scenario.id}: already complete", flush=True)
+            continue
         print(f"[{index}/{len(scenarios)}] {scenario.id}", flush=True)
         entry: dict[str, Any] = {"scenario": asdict(scenario), "trials": {}}
         if not args.skip_prime:
@@ -318,10 +349,12 @@ def main() -> None:
             entry["native_prime"] = run_once(
                 "native", scenario, output_root, "prime", keep_logs=True, keep_run=args.keep_runs
             )
-        for repeat in range(args.repeats):
+        repeats = args.segmentation_repeats if scenario.task == "segment" else args.repeats
+        entry["repeat_count"] = repeats
+        for repeat in range(repeats):
             order = ("native", "ultralytics") if repeat % 2 == 0 else ("ultralytics", "native")
             for framework in order:
-                print(f"  trial {repeat + 1}/{args.repeats}: {framework}", flush=True)
+                print(f"  trial {repeat + 1}/{repeats}: {framework}", flush=True)
                 trial = run_once(
                     framework,
                     scenario,
