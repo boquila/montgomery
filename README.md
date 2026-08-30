@@ -6,7 +6,7 @@ Object detection, instance segmentation, and image classification in Rust with
 Inference is native Rust: model execution, preprocessing, decoding, and postprocessing do not
 require Python, PyTorch, or ONNX Runtime.
 
-![Detections drawn by boquilens on the bundled sample image](assets/dog_bike_man-detections.png)
+![Instance segmentation produced by YOLO11n-seg](assets/dog_bike_man-segmentation.png)
 
 ## Quick start
 
@@ -82,8 +82,6 @@ cargo run --locked --release -- predict --model yolo11n-seg --weights target/yol
 cargo run --locked --release -- predict --model yolo26s-cls --weights target/yolo26s-cls-imagenet1k-ultralytics-v8.4-boquilens-v1.bpk --source image.jpg --json
 ```
 
-![Instance segmentation produced by YOLO11n-seg](assets/dog_bike_man-segmentation.png)
-
 ## Rust API
 
 ```rust,no_run
@@ -156,6 +154,11 @@ cargo run --locked --release --features training -- export --checkpoint runs/det
 
 Training, validation, resume, and export workflows are implemented and smoke-tested. Convergence
 and reference-quality parity are not yet established.
+
+This is a 10-epoch WGPU smoke run of YOLO26n-cls on a 10-class, 12-image ImageNet subset (batch 2).
+It verifies that optimization updates the model; it is not a quality benchmark.
+
+![Native YOLO26n-cls training loss over 10 epochs](assets/training-loss.png)
 
 The supported augmentation contract is documented in
 [AUGMENTATION_COMPATIBILITY.md](AUGMENTATION_COMPATIBILITY.md).
