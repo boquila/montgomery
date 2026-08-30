@@ -595,8 +595,10 @@ mod tests {
     #[test]
     fn defaults_follow_task_contract() {
         let detect = OnnxExportOptions::for_model(ModelId::Yolo26N, "x.onnx".into());
+        let yolox = OnnxExportOptions::for_model(ModelId::YoloxNano, "x.onnx".into());
         let classify = OnnxExportOptions::for_model(ModelId::Yolo26NCls, "x.onnx".into());
         assert_eq!(detect.input_shape, [1, 3, 640, 640]);
+        assert_eq!(yolox.input_shape, [1, 3, 416, 416]);
         assert_eq!(classify.input_shape, [1, 3, 224, 224]);
         assert_eq!(detect.opset, 17);
     }

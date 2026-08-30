@@ -7,7 +7,7 @@ license = "AGPL-3.0"
 
 [features]
 default = ["pretrained", "onnx"]
-pretrained = ["burn/network", "dep:burn-store", "dep:ciborium", "dep:dirs", "dep:sha2"]
+pretrained = ["dep:burn-store", "dep:ciborium", "dep:sha2"]
 # Offline ONNX production is a Rust-to-SafeTensors-to-Python bridge. The feature adds no runtime
 # dependency to ONNX consumers; it only exposes the exporter and its CLI orchestration.
 onnx = ["pretrained"]
@@ -37,7 +37,6 @@ burn-store = { version = "=0.21.0-pre.4", default-features = false, features = [
 burn-wgpu = { version = "=0.21.0-pre.4", optional = true }
 ciborium = { version = "0.2", optional = true }
 clap = { version = "4", features = ["derive"] }
-dirs = { version = "6", optional = true }
 fast_image_resize = { version = "=6.0.0", features = ["image"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 itertools = { version = "0.14", default-features = false, features = ["use_alloc"] }

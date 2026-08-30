@@ -1,3 +1,5 @@
+//! Shared detection post-processing primitives.
+
 use alloc::vec::Vec;
 use burn::tensor::{ElementConversion, Tensor, backend::Backend};
 use itertools::Itertools;

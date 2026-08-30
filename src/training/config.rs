@@ -2,8 +2,8 @@ use std::{error::Error, fmt, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::ModelId;
 use crate::data::augmentation::AugmentationConfig;
-use crate::{CLASSIFY_INPUT_SIZE, INPUT_SIZE, ModelId};
 
 /// Task represented by a trainable model graph.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,13 +46,7 @@ impl ModelSpec {
         input_size: Option<[usize; 2]>,
     ) -> Result<Self, ConfigError> {
         let task = TaskKind::for_model(architecture);
-        let default = if task == TaskKind::Classify {
-            CLASSIFY_INPUT_SIZE
-        } else if matches!(architecture, ModelId::YoloxNano | ModelId::YoloxTiny) {
-            416
-        } else {
-            INPUT_SIZE
-        };
+        let default = architecture.default_input_size();
         let spec = Self {
             architecture,
             task,

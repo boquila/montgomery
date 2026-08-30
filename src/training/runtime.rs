@@ -1551,7 +1551,7 @@ trait DetectionForward {
         &self,
         images: Tensor<Wgpu, 4>,
         validation: &crate::training::config::ValidationConfig,
-    ) -> Vec<Vec<Vec<crate::models::yolox::BoundingBox>>>;
+    ) -> Vec<Vec<Vec<crate::postprocess::BoundingBox>>>;
 }
 
 impl DetectionForward for Yolox<Wgpu> {
@@ -1559,13 +1559,13 @@ impl DetectionForward for Yolox<Wgpu> {
         &self,
         images: Tensor<Wgpu, 4>,
         validation: &crate::training::config::ValidationConfig,
-    ) -> Vec<Vec<Vec<crate::models::yolox::BoundingBox>>> {
+    ) -> Vec<Vec<Vec<crate::postprocess::BoundingBox>>> {
         let output = self.forward(images * 255.0);
         let [batch, anchors, outputs] = output.dims();
         let boxes = output.clone().slice([0..batch, 0..anchors, 0..4]);
         let objectness = output.clone().slice([0..batch, 0..anchors, 4..5]);
         let scores = output.slice([0..batch, 0..anchors, 5..outputs]) * objectness;
-        crate::models::yolox::boxes::nms(boxes, scores, validation.iou, validation.confidence)
+        crate::postprocess::nms(boxes, scores, validation.iou, validation.confidence)
     }
 }
 
@@ -1574,14 +1574,14 @@ impl DetectionForward for crate::models::yolov3_tiny::Yolov3Tiny<Wgpu> {
         &self,
         images: Tensor<Wgpu, 4>,
         validation: &crate::training::config::ValidationConfig,
-    ) -> Vec<Vec<Vec<crate::models::yolox::BoundingBox>>> {
+    ) -> Vec<Vec<Vec<crate::postprocess::BoundingBox>>> {
         let output = self.forward(images);
         let [batch, anchors, _] = output.boxes.dims();
         let left_top = output.boxes.clone().slice([0..batch, 0..anchors, 0..2]);
         let right_bottom = output.boxes.slice([0..batch, 0..anchors, 2..4]);
         let center = (left_top.clone() + right_bottom.clone()) / 2.0;
         let size = right_bottom - left_top;
-        crate::models::yolox::boxes::nms(
+        crate::postprocess::nms(
             Tensor::cat(vec![center, size], 2),
             output.scores,
             validation.iou,
@@ -1597,9 +1597,9 @@ macro_rules! classic_detection_forward {
                 &self,
                 images: Tensor<Wgpu, 4>,
                 validation: &crate::training::config::ValidationConfig,
-            ) -> Vec<Vec<Vec<crate::models::yolox::BoundingBox>>> {
+            ) -> Vec<Vec<Vec<crate::postprocess::BoundingBox>>> {
                 let output = self.forward(images);
-                crate::models::yolox::boxes::nms(
+                crate::postprocess::nms(
                     output.boxes,
                     output.scores,
                     validation.iou,
@@ -1635,7 +1635,7 @@ macro_rules! end_to_end_detection_forward {
                 &self,
                 images: Tensor<Wgpu, 4>,
                 validation: &crate::training::config::ValidationConfig,
-            ) -> Vec<Vec<Vec<crate::models::yolox::BoundingBox>>> {
+            ) -> Vec<Vec<Vec<crate::postprocess::BoundingBox>>> {
                 let output = self.forward(images);
                 crate::end2end_topk_detections(
                     output.boxes,

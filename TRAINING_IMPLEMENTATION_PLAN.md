@@ -48,8 +48,10 @@ ordered class names, and input geometry, and the public predictor reloads those 
   constructor that uses those names instead of the static COCO/ImageNet tables.
 - [x] Finish validation configuration (`max_detections`, confidence/IoU policy) and COCO dataset
   orchestration, including crowd/ignore evaluation.
+- [x] Run native release-mode COCO8, COCO8-seg, and ImageNet-small optimizer/EMA/validation gates
+  on the maintained GPU.
 - [ ] Exercise the official one-step fixtures for every loss family, prove tiny overfit per task,
-  record COCO8/COCO8-seg/ImageNet-small quality deltas, and run the maintained-GPU hardware gates.
+  and record the external-reference quality deltas.
 - [x] Confirm exported inference CPU/GPU parity and leave all default/no-default inference tests
   unchanged.
 
@@ -58,6 +60,13 @@ ordered class names, and input geometry, and the public predictor reloads those 
 - Release-mode custom-class optimizer/EMA steps completed on the maintained RTX 5080 for YOLO26n
   detect, YOLO26n-seg, and YOLO11n-cls. Each checkpoint validated, exported, and reloaded through
   the public predictor.
+- One-epoch native release runs completed for YOLO26n on COCO8 (loss 3.1506), YOLO26n-seg on
+  COCO8-seg (loss 7.3249), and YOLO26n-cls on ImageNet-10 (loss 2.2592). Validation completed for
+  all three tasks; generated reports and full-state checkpoints remain under
+  `target/training-quality/native-runs/`.
+- DFL-free YOLO26 raw side distances can briefly decode to inverted boxes early in fine-tuning.
+  TAL now treats those finite predictions as zero-overlap candidates instead of aborting the batch;
+  non-finite predictions remain errors.
 - YOLO26n-seg independently reported box/mask AP. Its semantic branch now uses an exact
   differentiable 2x half-pixel bilinear expression because Burn's WGPU JIT does not provide the
   generic bilinear-interpolation backward; one-class semantic targets bypass Burn's two-class

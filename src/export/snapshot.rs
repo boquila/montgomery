@@ -14,11 +14,6 @@ use crate::{Predictor, Result, RuntimeModel};
 use super::{keymap::reverse_rules, spec::ExportSpec};
 
 #[derive(Module, Debug)]
-struct YoloxReference<B: Backend> {
-    predictions: Param<Tensor<B, 3>>,
-}
-
-#[derive(Module, Debug)]
 struct DetectReference<B: Backend> {
     boxes: Param<Tensor<B, 3>>,
     scores: Param<Tensor<B, 3>>,
@@ -214,8 +209,19 @@ pub(crate) fn write_references(
         }
         match &predictor.model {
             RuntimeModel::Yolox(model) => {
-                let module = YoloxReference {
-                    predictions: Param::from_tensor(model.forward(input)),
+                let output = model.forward(input);
+                let [batch, anchors, channels] = output.dims();
+                let boxes = output.clone().slice([0..batch, 0..anchors, 0..4]);
+                let center = boxes.clone().slice([0..batch, 0..anchors, 0..2]);
+                let half = boxes.slice([0..batch, 0..anchors, 2..4]) / 2.0;
+                let objectness = output.clone().slice([0..batch, 0..anchors, 4..5]);
+                let scores = output.slice([0..batch, 0..anchors, 5..channels]) * objectness;
+                let module = DetectReference {
+                    boxes: Param::from_tensor(Tensor::cat(
+                        vec![center.clone() - half.clone(), center + half],
+                        2,
+                    )),
+                    scores: Param::from_tensor(scores),
                 };
                 save_reference(&module, &path)?;
             }

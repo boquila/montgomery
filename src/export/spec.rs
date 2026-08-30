@@ -89,14 +89,9 @@ const DETECT_OUTPUTS: &[OutputTensorSpec] = &[
     OutputTensorSpec {
         name: "scores",
         rank: 3,
-        semantic: "per-class sigmoid probabilities",
+        semantic: "per-class detection scores",
     },
 ];
-const YOLOX_OUTPUTS: &[OutputTensorSpec] = &[OutputTensorSpec {
-    name: "predictions",
-    rank: 3,
-    semantic: "cx,cy,w,h,objectness,class probabilities",
-}];
 const SEGMENT_OUTPUTS: &[OutputTensorSpec] = &[
     OutputTensorSpec {
         name: "boxes",
@@ -497,16 +492,11 @@ impl ExportSpec {
             ),
         };
 
-        let default_size = if task == ExportTask::Classify {
-            224
-        } else {
-            640
-        };
-        let outputs = match (family, task) {
-            (ExportFamily::Yolox, _) => YOLOX_OUTPUTS,
-            (_, ExportTask::Detect) => DETECT_OUTPUTS,
-            (_, ExportTask::Segment) => SEGMENT_OUTPUTS,
-            (_, ExportTask::Classify) => CLASSIFY_OUTPUTS,
+        let default_size = model_id.default_input_size();
+        let outputs = match task {
+            ExportTask::Detect => DETECT_OUTPUTS,
+            ExportTask::Segment => SEGMENT_OUTPUTS,
+            ExportTask::Classify => CLASSIFY_OUTPUTS,
         };
         let box_format = match (family, task) {
             (_, ExportTask::Classify) => None,
@@ -582,5 +572,19 @@ mod tests {
             assert_eq!(spec.default_input[2] % spec.stride, 0);
             assert!(!spec.outputs.is_empty());
         }
+    }
+
+    #[test]
+    fn yolox_uses_the_portable_detection_contract() {
+        let spec = ExportSpec::for_model(ModelId::YoloxNano);
+        assert_eq!(spec.default_input, [1, 3, 416, 416]);
+        assert_eq!(
+            spec.outputs
+                .iter()
+                .map(|output| output.name)
+                .collect::<Vec<_>>(),
+            ["boxes", "scores"]
+        );
+        assert_eq!(spec.box_format, Some(BoxFormat::Xyxy));
     }
 }

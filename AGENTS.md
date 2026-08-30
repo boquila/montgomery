@@ -68,15 +68,16 @@ end.
 
 ## Fast path
 
-Stable YOLOX inference (substitute any `yolox-nano|tiny|s|m|l|x` name; the official checkpoint
-downloads to the model cache on first use):
+Stable YOLOX inference uses the same native Burnpack workflow as every other family (substitute any
+`yolox-nano|tiny|s|m|l|x` name):
 
 ```console
-cargo run --release -- predict --model yolox-nano --source assets/dog_bike_man.jpg
+cargo run --release -- pack-weights --model yolox-nano --input target/yolox_nano.pth --output target/yolox-nano-coco-official-v0.1.1rc0-boquilens-v1.bpk
+cargo run --release -- predict --model yolox-nano --weights target/yolox-nano-coco-official-v0.1.1rc0-boquilens-v1.bpk --source assets/dog_bike_man.jpg
 ```
 
-YOLOv3-Tiny-U, YOLO11, YOLOv8, YOLO12, and the YOLOv10/YOLO26 scales require a tensor-only state
-and then a native artifact. The complete workflow is documented in `README.md`; the short form
+Ultralytics-family models require a tensor-only state and then a native artifact. The complete
+workflow is documented in `README.md`; the short form
 (substitute any `yolov10n/s/m/b/l/x`, `yolo11n/s/m/l/x`, `yolov8n/s/m/l/x`, `yolo12n/s/m/l/x`, or
 `yolo26n/s/m/l/x` name; task variants follow the same loop with their suffixes — `yolo11n/s/m/l/x-seg`,
 `yolov8n/s/m/l/x-seg`, `yolo26n/s/m/l/x-seg`, and the `-cls` classification variants of the v8/11/26
@@ -173,6 +174,8 @@ belong under `target/` and must not be committed.
 - YOLOX batch norm uses PyTorch defaults (eps 1e-5, momentum 0.1), not the Ultralytics convention
   (eps 1e-3, momentum 0.03). Small running-variance channels make the epsilon difference visible at
   inference time — the golden tests against the official YOLOX sources catch it.
+- YOLOX uses the same native `.bpk` runtime contract as every other family. The official `.pth` is
+  a conversion/parity input only, never the normal runtime format.
 - YOLOv10 (all scales) is NMS-free: its one2one head output is top-300 selected and
   confidence-filtered like Ultralytics' end-to-end postprocess, not passed through non-maximum
   suppression. YOLO26 (all scales) shares that postprocess and is additionally DFL-free: the box

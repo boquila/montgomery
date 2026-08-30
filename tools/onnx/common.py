@@ -20,7 +20,6 @@ from compare import (
     compare_end2end_detections,
     compare_output,
     compare_scored_boxes,
-    compare_yolox_predictions,
 )
 
 STANDARD_OPERATORS = {
@@ -103,7 +102,7 @@ def _set_metadata(model: onnx.ModelProto, metadata: dict[str, str]) -> None:
 def _expected_ranks(manifest: dict, names: list[str]) -> dict[str, int]:
     if manifest["profile"] == "ultralytics":
         return {name: (4 if name == "output1" else 3 if manifest["task"] != "classify" else 2) for name in names}
-    ranks = {"predictions": 3, "boxes": 3, "scores": 3, "coefficients": 3, "prototypes": 4,
+    ranks = {"boxes": 3, "scores": 3, "coefficients": 3, "prototypes": 4,
              "logits": 2, "probabilities": 2}
     return {name: ranks[name] for name in names}
 
@@ -190,18 +189,21 @@ def validate_runtime(
                 expected[score_index].detach().cpu().numpy() if score_index is not None else None
             )
             if burn is not None:
-                if manifest["family"] == "yolox" and name == "predictions":
-                    burn_report = compare_yolox_predictions(burn[name], torch_array)
-                elif manifest["family"] == "yolov3-tiny" and name == "boxes":
+                if manifest["family"] in {"yolox", "yolov3-tiny"} and name == "boxes":
                     burn_report = compare_scored_boxes(
                         name,
                         burn[name],
                         torch_array,
                         burn["scores"],
                         torch_scores,
+                        tolerance=0.125 if manifest["family"] == "yolox" else 1e-2,
                     )
                 else:
-                    tolerance = 2e-3 if manifest["family"] == "yolov3-tiny" and name == "scores" else None
+                    tolerance = (
+                        2e-3
+                        if manifest["family"] in {"yolox", "yolov3-tiny"} and name == "scores"
+                        else None
+                    )
                     burn_report = compare_output(name, burn[name], torch_array, tolerance)
                 burn_report["case"] = case_name
                 burn_report["comparison"] = "burn-vs-pytorch"
@@ -213,18 +215,21 @@ def validate_runtime(
                 and name == "output0"
             ):
                 report = compare_end2end_detections(torch_array, ort_value)
-            elif manifest["family"] == "yolox" and name == "predictions":
-                report = compare_yolox_predictions(torch_array, ort_value)
-            elif manifest["family"] == "yolov3-tiny" and name == "boxes":
+            elif manifest["family"] in {"yolox", "yolov3-tiny"} and name == "boxes":
                 report = compare_scored_boxes(
                     name,
                     torch_array,
                     ort_value,
                     torch_scores,
                     actual[score_index],
+                    tolerance=0.125 if manifest["family"] == "yolox" else 1e-2,
                 )
             else:
-                tolerance = 2e-3 if manifest["family"] == "yolov3-tiny" and name == "scores" else None
+                tolerance = (
+                    2e-3
+                    if manifest["family"] in {"yolox", "yolov3-tiny"} and name == "scores"
+                    else None
+                )
                 report = compare_output(name, torch_array, ort_value, tolerance)
             report["case"] = case_name
             report["comparison"] = "pytorch-vs-onnxruntime"

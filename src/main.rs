@@ -42,7 +42,7 @@ struct Args {
 enum Command {
     /// Run object detection on an image.
     Predict(PredictArgs),
-    /// Pack imported tensor state into a versioned native Burnpack artifact.
+    /// Pack an imported upstream checkpoint into a versioned native Burnpack artifact.
     PackWeights(PackWeightsArgs),
     /// Export the exact loaded Burn model weights to a validated portable ONNX artifact.
     #[cfg(feature = "onnx")]
@@ -178,7 +178,7 @@ struct PackWeightsArgs {
     #[arg(long)]
     model: ModelId,
 
-    /// Tensor-only imported checkpoint produced by the model-specific development bridge.
+    /// Official YOLOX .pth or tensor-only state produced by the Ultralytics development bridge.
     #[arg(long)]
     input: PathBuf,
 
@@ -203,9 +203,9 @@ struct PredictArgs {
     #[arg(long)]
     model: ModelId,
 
-    /// Local checkpoint. YOLOX accepts official .pth; Ultralytics-family models prefer native .bpk.
+    /// Local boquilens .bpk artifact.
     #[arg(long)]
-    weights: Option<PathBuf>,
+    weights: PathBuf,
 
     /// Compute device for inference.
     #[arg(long, value_enum, default_value = "cpu")]
@@ -416,18 +416,20 @@ fn run_predict<B: Backend>(
     options: PredictOptions,
     device: Device<B>,
 ) -> boquilens::Result<()> {
+    if args.weights.extension().and_then(|value| value.to_str()) != Some("bpk") {
+        return Err(
+            "predict --weights requires a native .bpk artifact; convert upstream checkpoints with pack-weights"
+                .into(),
+        );
+    }
     let output = args
         .output
         .clone()
         .unwrap_or_else(|| default_output(&args.source));
 
     eprintln!("Loading {} weights with Burn...", args.model);
-    let predictor: Predictor<B> = match &args.weights {
-        Some(checkpoint) => {
-            Predictor::from_checkpoint_on_device(args.model, checkpoint.clone(), device, options)?
-        }
-        None => Predictor::new_on_device(args.model, options, device)?,
-    };
+    let predictor: Predictor<B> =
+        Predictor::from_checkpoint_on_device(args.model, args.weights.clone(), device, options)?;
 
     if matches!(
         args.model,

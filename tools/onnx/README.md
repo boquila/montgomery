@@ -18,8 +18,8 @@ mistaken for the pinned checkout.
 
 Portable exports run each deterministic input through the exact loaded Burn graph, the pinned
 PyTorch reconstruction, and ONNX Runtime. The sidecar records full-tensor maximum, mean, RMS, and
-relative errors. Detection-only numerical exceptions are task-semantic and explicit: YOLOX packed
-boxes and the legacy YOLOv3-Tiny DFL boxes are gated at the documented 0.25 confidence threshold,
+relative errors. Detection-only numerical exceptions are task-semantic and explicit: YOLOX and
+legacy YOLOv3-Tiny boxes are gated at the documented 0.25 confidence threshold,
 and NMS-free top-k rows below that threshold may reorder between runtimes. Shapes, dtypes,
 finiteness, probability tolerances, all confidence-relevant rows, and the complete ungated error
 statistics remain mandatory. `--no-verify` skips the extra Burn comparison, never ONNX Runtime.

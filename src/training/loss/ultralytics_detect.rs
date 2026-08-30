@@ -172,10 +172,24 @@ pub fn tensor_loss_with_matches<B: Backend>(
             .map(|anchor| {
                 let box_offset = (image * anchor_count + anchor) * 4;
                 let score_offset = (image * anchor_count + anchor) * classes;
+                let [xmin, ymin, xmax, ymax]: [f32; 4] =
+                    decoded_host[box_offset..box_offset + 4].try_into().unwrap();
+                if [xmin, ymin, xmax, ymax]
+                    .into_iter()
+                    .any(|value| !value.is_finite())
+                {
+                    return Err("decoded box edges are not finite");
+                }
+                // DFL-free YOLO26 distances are raw signed outputs. Early in fine-tuning they can
+                // decode to inverted edges; those predictions have zero overlap and must remain
+                // valid assignment candidates rather than aborting the complete batch.
                 Ok(TalPrediction {
-                    bbox: crate::training::geometry::BoxXyxy::new(
-                        decoded_host[box_offset..box_offset + 4].try_into().unwrap(),
-                    )?,
+                    bbox: crate::training::geometry::BoxXyxy {
+                        xmin,
+                        ymin,
+                        xmax,
+                        ymax,
+                    },
                     class_scores: score_host[score_offset..score_offset + classes].to_vec(),
                 })
             })
@@ -367,5 +381,34 @@ mod tests {
         assert_eq!((left, right), (14, 15));
         assert!((lw + rw - 1.0).abs() < 1e-6);
         assert!(dfl_loss(&[0.0; 16], 100.0).unwrap().is_finite());
+    }
+
+    #[test]
+    fn direct_loss_treats_inverted_early_predictions_as_zero_overlap() {
+        use burn::tensor::Tensor;
+        use burn_flex::Flex;
+
+        let device = Default::default();
+        let raw_boxes = Tensor::<Flex, 3>::from_floats([[[-1.0], [-1.0], [-1.0], [-1.0]]], &device);
+        let raw_scores = Tensor::<Flex, 3>::zeros([1, 1, 1], &device);
+        let targets = vec![vec![TalGroundTruth {
+            class_id: 0,
+            bbox: crate::training::geometry::BoxXyxy::new([0.0, 0.0, 8.0, 8.0]).unwrap(),
+        }]];
+        let loss = tensor_loss(
+            raw_boxes,
+            raw_scores,
+            &[FeatureLevelLayout {
+                height: 1,
+                width: 1,
+                stride: 8,
+            }],
+            &targets,
+            DetectionLossConfig::direct([8, 8], 1),
+        )
+        .unwrap();
+        assert!(loss.finite);
+        assert_eq!(loss.targets, 1);
+        assert_eq!(loss.foreground, 0);
     }
 }

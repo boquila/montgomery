@@ -16,7 +16,8 @@ Orientation first:
 - Inference modes in the wild: one2one end-to-end heads are top-k selected + confidence filtered
   (`end2end_topk_detections` in `src/lib.rs`); plain heads go through class-aware NMS.
 - Non-Ultralytics families need the same ground-truth discipline with different tooling. YOLOX
-  (the stable family) consumes its official `.pth` directly (no pack-weights bridge), and its
+  imports its official `.pth` through `pack-weights` and consumes the resulting native `.bpk` at
+  runtime. Its
   golden fixtures come from the *official YOLOX repository sources* instead of the Ultralytics
   package: `tools/export_yolox_fixtures.py` assembles a small import package from a plain YOLOX
   checkout under `target/yolox-ref/`, loads the checkpoint with `strict=True`, and dumps per-stage
@@ -98,12 +99,11 @@ existing templates. Hard rules:
 - `src/lib.rs`:
   - `ModelId` variant + `as_str` + `FromStr` aliases + unknown-model error text;
   - `RuntimeModel` variant;
-  - `Predictor::new` (experimental models require `--weights`), `from_checkpoint` arm
+  - `from_checkpoint` arm
     (`.bpk` → burnpack, else PyTorch state, inside a 64 MB-stack worker thread);
-  - `predict` arms: `LetterboxedImage::ultralytics(image, 640, 32)` for stride-32 Ultralytics
-    models, input `/ 255.0`, then the right decode path;
-  - `pack_weights` arm + its error message;
-  - the `parses_stable_model_names` and packer-rejection tests.
+  - the model preprocessing profile and appropriate shared runtime dispatch trait;
+  - `pack_weights` arm;
+  - the model-name, input-size, and packer-extension tests.
 - `src/main.rs`: `--model` help text lists the new name.
 
 ## 5. Conversion tooling

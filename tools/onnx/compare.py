@@ -49,14 +49,13 @@ def compare_scored_boxes(
     expected_scores: np.ndarray,
     actual_scores: np.ndarray,
     confidence: float = 0.25,
+    tolerance: float = 1e-2,
 ) -> dict[str, object]:
     """Compare boxes that can participate in inference after confidence filtering.
 
-    YOLOv3-Tiny's legacy DFL head is ill-conditioned on synthetic inputs for anchors whose every
-    class probability is effectively zero. Tiny backend rounding differences can move those
-    discarded boxes by many pixels even though the score tensors and all observable detections
-    agree. We still audit the entire tensor for shape, dtype, finiteness, and error statistics,
-    while applying the numerical release gate to every anchor that either runtime could retain.
+    Some decoded heads are ill-conditioned on synthetic inputs for anchors whose every class score
+    is effectively zero. We still audit the entire tensor structurally while applying the numerical
+    release gate to every anchor that either runtime could retain.
     """
     if expected.dtype != actual.dtype:
         raise RuntimeError(f"{name}: dtype mismatch: expected {expected.dtype}, actual {actual.dtype}")
@@ -77,7 +76,6 @@ def compare_scored_boxes(
     rms = float(np.sqrt(np.mean(delta * delta))) if delta.size else 0.0
     relative = float((delta / denominator).max(initial=0.0))
     gated_maximum = float(gated_delta.max(initial=0.0))
-    tolerance = 1e-2
     if gated_maximum > tolerance:
         gated = np.where(meaningful, delta, -1.0)
         index = np.unravel_index(int(gated.argmax()), gated.shape)
@@ -100,56 +98,6 @@ def compare_scored_boxes(
         "gated_anchors": int(meaningful_anchors.sum()),
         "discarded_anchors": int(meaningful_anchors.size - meaningful_anchors.sum()),
         "tolerance_note": "legacy DFL boxes below confidence are structurally audited but numerically non-observable",
-    }
-
-
-def compare_yolox_predictions(
-    expected: np.ndarray,
-    actual: np.ndarray,
-    confidence: float = 0.25,
-) -> dict[str, object]:
-    """Gate YOLOX's packed output according to its observable detection semantics."""
-    name = "predictions"
-    if expected.dtype != actual.dtype:
-        raise RuntimeError(f"{name}: dtype mismatch: {expected.dtype} != {actual.dtype}")
-    if expected.shape != actual.shape or expected.ndim != 3 or expected.shape[-1] < 6:
-        raise RuntimeError(f"{name}: incompatible YOLOX prediction shapes {expected.shape}, {actual.shape}")
-    if not np.isfinite(expected).all() or not np.isfinite(actual).all():
-        raise RuntimeError(f"{name}: non-finite output")
-
-    delta = np.abs(expected.astype(np.float64) - actual.astype(np.float64))
-    expected_confidence = expected[..., 4:5] * expected[..., 5:]
-    actual_confidence = actual[..., 4:5] * actual[..., 5:]
-    meaningful = np.maximum(expected_confidence.max(axis=-1), actual_confidence.max(axis=-1)) >= confidence
-    box_delta = delta[..., :4]
-    gated_box_delta = box_delta[np.broadcast_to(meaningful[..., None], box_delta.shape)]
-    probability_delta = delta[..., 4:]
-    box_max = float(gated_box_delta.max(initial=0.0))
-    probability_max = float(probability_delta.max(initial=0.0))
-    box_tolerance = 0.125
-    probability_tolerance = 2e-3
-    if box_max > box_tolerance or probability_max > probability_tolerance:
-        raise RuntimeError(
-            f"{name}: YOLOX semantic parity failed: confidence-relevant box max_abs={box_max:.8g} "
-            f"(tolerance={box_tolerance:.8g}), probability max_abs={probability_max:.8g} "
-            f"(tolerance={probability_tolerance:.8g})"
-        )
-    denominator = np.maximum(np.abs(expected.astype(np.float64)), 1e-8)
-    return {
-        "name": name,
-        "shape": list(expected.shape),
-        "dtype": str(expected.dtype),
-        "max_abs": float(delta.max(initial=0.0)),
-        "max_rel": float((delta / denominator).max(initial=0.0)),
-        "mean_abs": float(delta.mean()),
-        "rms": float(np.sqrt(np.mean(delta * delta))),
-        "gated_box_max_abs": box_max,
-        "probability_max_abs": probability_max,
-        "confidence_gate": confidence,
-        "gated_anchors": int(meaningful.sum()),
-        "discarded_anchors": int(meaningful.size - meaningful.sum()),
-        "box_tolerance": box_tolerance,
-        "probability_tolerance": probability_tolerance,
     }
 
 

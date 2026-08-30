@@ -15,6 +15,7 @@ mod data;
 #[cfg(feature = "onnx")]
 pub mod export;
 pub mod models;
+mod postprocess;
 #[cfg(feature = "training")]
 pub mod training;
 
@@ -54,9 +55,8 @@ use crate::models::yolov10::head::MAX_DETECTIONS as YOLOV10_MAX_DETECTIONS;
 use crate::models::yolov10::{
     Yolov10BConfig, Yolov10LConfig, Yolov10MConfig, Yolov10NConfig, Yolov10SConfig, Yolov10XConfig,
 };
-#[cfg(feature = "pretrained")]
-use crate::models::yolox::weights;
-use crate::models::yolox::{Yolox, boxes::BoundingBox, boxes::nms};
+use crate::models::yolox::Yolox;
+use crate::postprocess::{BoundingBox, nms};
 use burn::tensor::{Device, ElementConversion, Tensor, TensorData, backend::Backend};
 #[cfg(feature = "pretrained")]
 use burn_flex::Flex;
@@ -279,6 +279,29 @@ impl ModelId {
             Self::Yolo26MCls => "yolo26m-cls",
             Self::Yolo26LCls => "yolo26l-cls",
             Self::Yolo26XCls => "yolo26x-cls",
+        }
+    }
+
+    /// Default square input side for this catalog model.
+    pub const fn default_input_size(self) -> usize {
+        match self {
+            Self::YoloxNano | Self::YoloxTiny => 416,
+            Self::Yolo11NCls
+            | Self::Yolo11SCls
+            | Self::Yolo11MCls
+            | Self::Yolo11LCls
+            | Self::Yolo11XCls
+            | Self::Yolov8NCls
+            | Self::Yolov8SCls
+            | Self::Yolov8MCls
+            | Self::Yolov8LCls
+            | Self::Yolov8XCls
+            | Self::Yolo26NCls
+            | Self::Yolo26SCls
+            | Self::Yolo26MCls
+            | Self::Yolo26LCls
+            | Self::Yolo26XCls => CLASSIFY_INPUT_SIZE,
+            _ => INPUT_SIZE,
         }
     }
 }
@@ -545,6 +568,33 @@ pub struct Predictor<B: Backend> {
     input_size: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DetectionPreprocess {
+    Yolox,
+    Ultralytics,
+}
+
+impl ModelId {
+    const fn detection_preprocess(self) -> DetectionPreprocess {
+        match self {
+            Self::YoloxNano
+            | Self::YoloxTiny
+            | Self::YoloxS
+            | Self::YoloxM
+            | Self::YoloxL
+            | Self::YoloxX => DetectionPreprocess::Yolox,
+            _ => DetectionPreprocess::Ultralytics,
+        }
+    }
+
+    const fn detection_input_scale(self) -> f64 {
+        match self.detection_preprocess() {
+            DetectionPreprocess::Yolox => 1.0,
+            DetectionPreprocess::Ultralytics => 1.0 / 255.0,
+        }
+    }
+}
+
 fn catalog_class_names(model_id: ModelId) -> Vec<String> {
     if model_id.as_str().ends_with("-cls") {
         IMAGENET_CLASSES
@@ -557,13 +607,7 @@ fn catalog_class_names(model_id: ModelId) -> Vec<String> {
 }
 
 fn catalog_input_size(model_id: ModelId) -> usize {
-    if model_id.as_str().ends_with("-cls") {
-        CLASSIFY_INPUT_SIZE
-    } else if matches!(model_id, ModelId::YoloxNano | ModelId::YoloxTiny) {
-        416
-    } else {
-        INPUT_SIZE
-    }
+    model_id.default_input_size()
 }
 
 #[cfg(feature = "pretrained")]
@@ -632,8 +676,8 @@ fn trained_artifact_metadata(path: &Path, model_id: ModelId) -> Result<TrainedAr
 
 pub type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 
-/// Construct the requested Ultralytics-family model inside a large-stack worker and load either
-/// its native Burnpack artifact or its tensor-only PyTorch state.
+/// Construct the requested model inside a large-stack worker and load either its native Burnpack
+/// artifact or an upstream tensor state accepted by that family.
 ///
 /// Deep module construction overflows the small default main-thread stack on Windows in debug
 /// builds, so the graph is built in the worker thread.
@@ -642,7 +686,7 @@ pub type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 type ModelLoader<B> = Box<dyn FnOnce(&Device<B>) -> Result<RuntimeModel<B>> + Send>;
 
 #[cfg(feature = "pretrained")]
-fn load_ultralytics_checkpoint<B: Backend>(
+fn load_model_checkpoint<B: Backend>(
     model_id: ModelId,
     checkpoint: PathBuf,
     device: Device<B>,
@@ -676,6 +720,21 @@ fn load_ultralytics_checkpoint<B: Backend>(
         };
     }
     let loader: ModelLoader<B> = match model_id {
+        ModelId::YoloxNano
+        | ModelId::YoloxTiny
+        | ModelId::YoloxS
+        | ModelId::YoloxM
+        | ModelId::YoloxL
+        | ModelId::YoloxX => Box::new(move |device: &Device<B>| {
+            let constructor = yolox_constructor::<B>(model_id);
+            let mut model = constructor(num_classes, device);
+            if checkpoint.extension().and_then(|value| value.to_str()) == Some("bpk") {
+                model.load_burnpack_weights(checkpoint)?;
+            } else {
+                model.load_pytorch_weights(checkpoint)?;
+            }
+            Ok(RuntimeModel::Yolox(Box::new(model)))
+        }),
         ModelId::Yolov3TinyU => Box::new(load_variant!(Yolov3TinyConfig, RuntimeModel::Yolov3Tiny)),
         ModelId::Yolov10N => Box::new(load_variant!(Yolov10NConfig, RuntimeModel::Yolov10N)),
         ModelId::Yolov10S => Box::new(load_variant!(Yolov10SConfig, RuntimeModel::Yolov10S)),
@@ -733,14 +792,6 @@ fn load_ultralytics_checkpoint<B: Backend>(
         ModelId::Yolo26MCls => Box::new(load_variant!(Yolo26ClsMConfig, RuntimeModel::Yolo26ClsM)),
         ModelId::Yolo26LCls => Box::new(load_variant!(Yolo26ClsLConfig, RuntimeModel::Yolo26ClsL)),
         ModelId::Yolo26XCls => Box::new(load_variant!(Yolo26ClsXConfig, RuntimeModel::Yolo26ClsX)),
-        ModelId::YoloxNano
-        | ModelId::YoloxTiny
-        | ModelId::YoloxS
-        | ModelId::YoloxM
-        | ModelId::YoloxL
-        | ModelId::YoloxX => {
-            return Err("YOLOX accepts its official .pth checkpoint directly and is loaded without the Ultralytics state bridge".into());
-        }
     };
     let worker = std::thread::Builder::new()
         .name("boquilens-model-loader".into())
@@ -825,10 +876,32 @@ impl_end_to_end_classifier!(yolo26: [Yolo26ClsN, Yolo26ClsS, Yolo26ClsM, Yolo26C
 impl_end_to_end_classifier!(yolo11: [Yolo11ClsN, Yolo11ClsS, Yolo11ClsM, Yolo11ClsL, Yolo11ClsX]);
 impl_end_to_end_classifier!(yolov8: [Yolov8ClsN, Yolov8ClsS, Yolov8ClsM, Yolov8ClsL, Yolov8ClsX]);
 
-/// Uniform classic-detection entry point shared by every YOLO11 scale variant, so the runtime can
-/// dispatch to any of them without naming the concrete scale type.
+/// Uniform classic-detection entry point shared by every NMS-based detector family.
 trait ClassicDetector<B: Backend> {
     fn detect(&self, input: Tensor<B, 4>) -> (Tensor<B, 3>, Tensor<B, 3>);
+}
+
+impl<B: Backend> ClassicDetector<B> for Yolox<B> {
+    fn detect(&self, input: Tensor<B, 4>) -> (Tensor<B, 3>, Tensor<B, 3>) {
+        let output = self.forward(input);
+        let [batch, anchors, channels] = output.dims();
+        let boxes = output.clone().slice([0..batch, 0..anchors, 0..4]);
+        let objectness = output.clone().slice([0..batch, 0..anchors, 4..5]);
+        let class_scores = output.slice([0..batch, 0..anchors, 5..channels]);
+        (boxes, class_scores * objectness)
+    }
+}
+
+impl<B: Backend> ClassicDetector<B> for Yolov3Tiny<B> {
+    fn detect(&self, input: Tensor<B, 4>) -> (Tensor<B, 3>, Tensor<B, 3>) {
+        let output = self.forward(input);
+        let [batch, anchors, _] = output.boxes.dims();
+        let left_top = output.boxes.clone().slice([0..batch, 0..anchors, 0..2]);
+        let right_bottom = output.boxes.slice([0..batch, 0..anchors, 2..4]);
+        let center = (left_top.clone() + right_bottom.clone()) / 2.0;
+        let size = right_bottom - left_top;
+        (Tensor::cat(vec![center, size], 2), output.scores)
+    }
 }
 
 macro_rules! impl_classic_detector {
@@ -856,15 +929,15 @@ impl<B: Backend, M: ClassicDetector<B>> ClassicDetector<B> for Box<M> {
 
 /// Decode and suppress classic (NMS-based) predictions for any scale variant.
 ///
-/// The YOLO11 head emits center-size model-input boxes exactly like Ultralytics' classic head, so
-/// they feed the generic class-aware NMS helper directly.
+/// Implementations normalize family-specific head layouts to center-size boxes and per-class
+/// detection scores before feeding the generic class-aware NMS helper.
 fn run_classic_detections<B: Backend>(
     model: &impl ClassicDetector<B>,
     input: Tensor<B, 4>,
     iou_threshold: f32,
     confidence_threshold: f32,
 ) -> Vec<Vec<Vec<BoundingBox>>> {
-    let (boxes, scores) = model.detect(input / 255.0);
+    let (boxes, scores) = model.detect(input);
     nms(boxes, scores, iou_threshold, confidence_threshold)
 }
 
@@ -941,7 +1014,7 @@ pub(crate) fn run_end_to_end_segmentations<B: Backend>(
     max_detections: usize,
     confidence_threshold: f32,
 ) -> SegmentationOutputCpu {
-    let output = model.segment(input / 255.0);
+    let output = model.segment(input);
     let [_, proto_channels, proto_height, proto_width] = output.prototypes.dims();
     let [_, _, anchors] = output.coefficients.dims();
     let [batch, anchors_scores, num_classes] = output.decoded.scores.dims();
@@ -1062,7 +1135,7 @@ pub(crate) fn run_classic_segmentations<B: Backend>(
     iou_threshold: f32,
     confidence_threshold: f32,
 ) -> SegmentationOutputCpu {
-    let output = model.segment(input / 255.0);
+    let output = model.segment(input);
     let [_, proto_channels, proto_height, proto_width] = output.prototypes.dims();
     let [_, _, anchors] = output.coefficients.dims();
     let [_, anchors_scores, num_classes] = output.scores.dims();
@@ -1127,9 +1200,10 @@ pub(crate) fn run_classic_segmentations<B: Backend>(
         class_candidates.sort_by(|a, b| b.0.confidence.partial_cmp(&a.0.confidence).unwrap());
         let mut kept: Vec<(BoundingBox, usize)> = Vec::new();
         for (bbox, anchor) in class_candidates {
-            if kept.iter().all(|(kept_box, _)| {
-                crate::models::yolox::boxes::iou(kept_box, &bbox) <= iou_threshold
-            }) {
+            if kept
+                .iter()
+                .all(|(kept_box, _)| crate::postprocess::iou(kept_box, &bbox) <= iou_threshold)
+            {
                 kept.push((bbox, anchor));
             }
         }
@@ -1273,101 +1347,17 @@ fn run_end_to_end<B: Backend>(
     max_detections: usize,
     confidence_threshold: f32,
 ) -> Vec<Vec<Vec<BoundingBox>>> {
-    let (boxes, scores) = model.detect(input / 255.0);
+    let (boxes, scores) = model.detect(input);
     end2end_topk_detections(boxes, scores, max_detections, confidence_threshold)
 }
 
 impl<B: Backend> Predictor<B> {
-    /// Load a catalog model with its official pretrained weights on the backend's default device.
-    #[cfg(feature = "pretrained")]
-    pub fn new(model_id: ModelId, options: PredictOptions) -> Result<Self> {
-        Self::new_on_device(model_id, options, Device::<B>::default())
-    }
-
-    /// Load a catalog model with its official pretrained weights on an explicit device.
-    #[cfg(feature = "pretrained")]
-    pub fn new_on_device(
-        model_id: ModelId,
-        options: PredictOptions,
-        device: Device<B>,
-    ) -> Result<Self> {
-        let options = options.validate()?;
-        match model_id {
-            ModelId::YoloxNano
-            | ModelId::YoloxTiny
-            | ModelId::YoloxS
-            | ModelId::YoloxM
-            | ModelId::YoloxL
-            | ModelId::YoloxX => Self::load_yolox_on_device(model_id, options, device),
-            ModelId::Yolov3TinyU
-            | ModelId::Yolov10N
-            | ModelId::Yolov10S
-            | ModelId::Yolov10M
-            | ModelId::Yolov10B
-            | ModelId::Yolov10L
-            | ModelId::Yolov10X
-            |             ModelId::Yolo11N
-            | ModelId::Yolo11S
-            | ModelId::Yolo11M
-            | ModelId::Yolo11L
-            | ModelId::Yolo11X
-            | ModelId::Yolo11NSeg
-            | ModelId::Yolo11SSeg
-            | ModelId::Yolo11MSeg
-            | ModelId::Yolo11LSeg
-            | ModelId::Yolo11XSeg
-            | ModelId::Yolo11NCls
-            | ModelId::Yolo11SCls
-            | ModelId::Yolo11MCls
-            | ModelId::Yolo11LCls
-            | ModelId::Yolo11XCls
-            | ModelId::Yolov8N
-            | ModelId::Yolov8S
-            | ModelId::Yolov8M
-            | ModelId::Yolov8L
-            | ModelId::Yolov8X
-            | ModelId::Yolov8NSeg
-            | ModelId::Yolov8SSeg
-            | ModelId::Yolov8MSeg
-            | ModelId::Yolov8LSeg
-            | ModelId::Yolov8XSeg
-            | ModelId::Yolov8NCls
-            | ModelId::Yolov8SCls
-            | ModelId::Yolov8MCls
-            | ModelId::Yolov8LCls
-            | ModelId::Yolov8XCls
-            | ModelId::Yolo12N
-            | ModelId::Yolo12S
-            | ModelId::Yolo12M
-            | ModelId::Yolo12L
-            | ModelId::Yolo12X
-            | ModelId::Yolo26N
-            | ModelId::Yolo26S
-            | ModelId::Yolo26M
-            | ModelId::Yolo26L
-            | ModelId::Yolo26X
-            | ModelId::Yolo26NSeg
-            | ModelId::Yolo26SSeg
-            | ModelId::Yolo26MSeg
-            | ModelId::Yolo26LSeg
-            | ModelId::Yolo26XSeg
-            | ModelId::Yolo26NCls
-            | ModelId::Yolo26SCls
-            | ModelId::Yolo26MCls
-            | ModelId::Yolo26LCls
-            | ModelId::Yolo26XCls => Err(format!(
-                "{} currently requires --weights with a boquilens .bpk artifact; see the README's one-time weight preparation",
-                model_id
-            )
-            .into()),
-        }
-    }
-
-    /// Load a model from a supported PyTorch state checkpoint on the backend's default device.
+    /// Load a model from a native Burnpack or supported upstream tensor checkpoint on the
+    /// backend's default device.
     ///
-    /// YOLOX accepts its official checkpoint directly. The Ultralytics-family models require the
-    /// tensor-only state produced by `tools/export_ultralytics_state.py` because Burn's pickle
-    /// reader cannot deserialize the Python model objects stored in a full Ultralytics checkpoint.
+    /// Production inference uses native `.bpk` artifacts. Direct upstream import remains available
+    /// for conversion and parity work: YOLOX accepts its official `.pth`, while Ultralytics-family
+    /// models require the tensor-only state produced by `tools/export_ultralytics_state.py`.
     #[cfg(feature = "pretrained")]
     pub fn from_checkpoint(
         model_id: ModelId,
@@ -1392,57 +1382,16 @@ impl<B: Backend> Predictor<B> {
         {
             return Self::from_trained_artifact_on_device(model_id, checkpoint, device, options);
         }
-        match model_id {
-            ModelId::YoloxNano
-            | ModelId::YoloxTiny
-            | ModelId::YoloxS
-            | ModelId::YoloxM
-            | ModelId::YoloxL
-            | ModelId::YoloxX => {
-                let worker = std::thread::Builder::new()
-                    .name("boquilens-model-loader".into())
-                    .stack_size(64 * 1024 * 1024)
-                    .spawn({
-                        let device = device.clone();
-                        move || {
-                            let constructor = yolox_constructor::<B>(model_id);
-                            let mut model: Yolox<B> = constructor(COCO_CLASSES.len(), &device);
-                            model.load_pytorch_weights(checkpoint)?;
-                            Ok::<_, Box<dyn Error + Send + Sync>>(RuntimeModel::Yolox(Box::new(
-                                model,
-                            )))
-                        }
-                    })?;
-                let model = worker
-                    .join()
-                    .map_err(|_| "YOLOX model loader thread panicked")??;
-                Ok(Self {
-                    model_id,
-                    model,
-                    device,
-                    options,
-                    class_names: catalog_class_names(model_id),
-                    input_size: catalog_input_size(model_id),
-                })
-            }
-            _ => {
-                let class_names = catalog_class_names(model_id);
-                let model = load_ultralytics_checkpoint(
-                    model_id,
-                    checkpoint,
-                    device.clone(),
-                    class_names.len(),
-                )?;
-                Ok(Self {
-                    model_id,
-                    model,
-                    device,
-                    options,
-                    class_names,
-                    input_size: catalog_input_size(model_id),
-                })
-            }
-        }
+        let class_names = catalog_class_names(model_id);
+        let model = load_model_checkpoint(model_id, checkpoint, device.clone(), class_names.len())?;
+        Ok(Self {
+            model_id,
+            model,
+            device,
+            options,
+            class_names,
+            input_size: catalog_input_size(model_id),
+        })
     }
 
     /// Load a native artifact exported from a training checkpoint, using its embedded ordered
@@ -1464,29 +1413,11 @@ impl<B: Backend> Predictor<B> {
         device: Device<B>,
         options: PredictOptions,
     ) -> Result<Self> {
-        use burn_store::ModuleSnapshot as _;
-
         let options = options.validate()?;
         let checkpoint = checkpoint.into();
         let metadata = trained_artifact_metadata(&checkpoint, model_id)?;
         let num_classes = metadata.class_names.len();
-        let model = match model_id {
-            ModelId::YoloxNano
-            | ModelId::YoloxTiny
-            | ModelId::YoloxS
-            | ModelId::YoloxM
-            | ModelId::YoloxL
-            | ModelId::YoloxX => {
-                let constructor = yolox_constructor::<B>(model_id);
-                let mut model = constructor(num_classes, &device);
-                let mut store = burn_store::BurnpackStore::from_file(&checkpoint)
-                    .with_from_adapter(burn_store::HalfPrecisionAdapter::new())
-                    .zero_copy(true);
-                model.load_from(&mut store)?;
-                RuntimeModel::Yolox(Box::new(model))
-            }
-            _ => load_ultralytics_checkpoint(model_id, checkpoint, device.clone(), num_classes)?,
-        };
+        let model = load_model_checkpoint(model_id, checkpoint, device.clone(), num_classes)?;
         Ok(Self {
             model_id,
             model,
@@ -1494,93 +1425,6 @@ impl<B: Backend> Predictor<B> {
             options,
             class_names: metadata.class_names,
             input_size: metadata.input_size,
-        })
-    }
-
-    /// Load pretrained COCO weights, downloading them to the model cache on first use.
-    #[cfg(feature = "pretrained")]
-    pub fn yolox_nano(options: PredictOptions) -> Result<Self> {
-        Self::new(ModelId::YoloxNano, options)
-    }
-
-    /// Load pretrained COCO weights, downloading them to the model cache on first use.
-    #[cfg(feature = "pretrained")]
-    pub fn yolox_tiny(options: PredictOptions) -> Result<Self> {
-        Self::new(ModelId::YoloxTiny, options)
-    }
-
-    /// Load pretrained COCO weights, downloading them to the model cache on first use.
-    #[cfg(feature = "pretrained")]
-    pub fn yolox_s(options: PredictOptions) -> Result<Self> {
-        Self::new(ModelId::YoloxS, options)
-    }
-
-    /// Load pretrained COCO weights, downloading them to the model cache on first use.
-    #[cfg(feature = "pretrained")]
-    pub fn yolox_m(options: PredictOptions) -> Result<Self> {
-        Self::new(ModelId::YoloxM, options)
-    }
-
-    /// Load pretrained COCO weights, downloading them to the model cache on first use.
-    #[cfg(feature = "pretrained")]
-    pub fn yolox_l(options: PredictOptions) -> Result<Self> {
-        Self::new(ModelId::YoloxL, options)
-    }
-
-    /// Load pretrained COCO weights, downloading them to the model cache on first use.
-    #[cfg(feature = "pretrained")]
-    pub fn yolox_x(options: PredictOptions) -> Result<Self> {
-        Self::new(ModelId::YoloxX, options)
-    }
-
-    #[cfg(feature = "pretrained")]
-    fn load_yolox_on_device(
-        model_id: ModelId,
-        options: PredictOptions,
-        device: Device<B>,
-    ) -> Result<Self> {
-        // Constructing this deeply nested module can exceed the small default main-thread stack
-        // on Windows in debug builds. Keep that platform detail out of the public API.
-        let worker = std::thread::Builder::new()
-            .name("boquilens-model-loader".into())
-            .stack_size(64 * 1024 * 1024)
-            .spawn({
-                let device = device.clone();
-                move || {
-                    let model: Yolox<B> = match model_id {
-                        ModelId::YoloxNano => {
-                            Yolox::yolox_nano_pretrained(weights::YoloxNano::Coco, &device)?
-                        }
-                        ModelId::YoloxTiny => {
-                            Yolox::yolox_tiny_pretrained(weights::YoloxTiny::Coco, &device)?
-                        }
-                        ModelId::YoloxS => {
-                            Yolox::yolox_s_pretrained(weights::YoloxS::Coco, &device)?
-                        }
-                        ModelId::YoloxM => {
-                            Yolox::yolox_m_pretrained(weights::YoloxM::Coco, &device)?
-                        }
-                        ModelId::YoloxL => {
-                            Yolox::yolox_l_pretrained(weights::YoloxL::Coco, &device)?
-                        }
-                        ModelId::YoloxX => {
-                            Yolox::yolox_x_pretrained(weights::YoloxX::Coco, &device)?
-                        }
-                        _ => unreachable!("non-YOLOX models are rejected before this loader"),
-                    };
-                    Ok::<_, Box<dyn Error + Send + Sync>>(RuntimeModel::Yolox(Box::new(model)))
-                }
-            })?;
-        let model = worker
-            .join()
-            .map_err(|_| "YOLOX model loader thread panicked")??;
-        Ok(Self {
-            model_id,
-            model,
-            device,
-            options,
-            class_names: catalog_class_names(model_id),
-            input_size: catalog_input_size(model_id),
         })
     }
 
@@ -1601,99 +1445,20 @@ impl<B: Backend> Predictor<B> {
 
     /// Run object detection on an already-decoded image.
     pub fn predict(&self, image: &DynamicImage) -> Vec<Detection> {
-        let prepared = match &self.model {
-            RuntimeModel::Yolox(_) => LetterboxedImage::yolox(image, self.input_size),
-            RuntimeModel::Yolov3Tiny(_)
-            | RuntimeModel::Yolov10N(_)
-            | RuntimeModel::Yolov10S(_)
-            | RuntimeModel::Yolov10M(_)
-            | RuntimeModel::Yolov10B(_)
-            | RuntimeModel::Yolov10L(_)
-            | RuntimeModel::Yolov10X(_)
-            | RuntimeModel::Yolo11N(_)
-            | RuntimeModel::Yolo11S(_)
-            | RuntimeModel::Yolo11M(_)
-            | RuntimeModel::Yolo11L(_)
-            | RuntimeModel::Yolo11X(_)
-            | RuntimeModel::Yolo11SegN(_)
-            | RuntimeModel::Yolo11SegS(_)
-            | RuntimeModel::Yolo11SegM(_)
-            | RuntimeModel::Yolo11SegL(_)
-            | RuntimeModel::Yolo11SegX(_)
-            | RuntimeModel::Yolo11ClsN(_)
-            | RuntimeModel::Yolo11ClsS(_)
-            | RuntimeModel::Yolo11ClsM(_)
-            | RuntimeModel::Yolo11ClsL(_)
-            | RuntimeModel::Yolo11ClsX(_)
-            | RuntimeModel::Yolov8N(_)
-            | RuntimeModel::Yolov8S(_)
-            | RuntimeModel::Yolov8M(_)
-            | RuntimeModel::Yolov8L(_)
-            | RuntimeModel::Yolov8X(_)
-            | RuntimeModel::Yolov8SegN(_)
-            | RuntimeModel::Yolov8SegS(_)
-            | RuntimeModel::Yolov8SegM(_)
-            | RuntimeModel::Yolov8SegL(_)
-            | RuntimeModel::Yolov8SegX(_)
-            | RuntimeModel::Yolov8ClsN(_)
-            | RuntimeModel::Yolov8ClsS(_)
-            | RuntimeModel::Yolov8ClsM(_)
-            | RuntimeModel::Yolov8ClsL(_)
-            | RuntimeModel::Yolov8ClsX(_)
-            | RuntimeModel::Yolo12N(_)
-            | RuntimeModel::Yolo12S(_)
-            | RuntimeModel::Yolo12M(_)
-            | RuntimeModel::Yolo12L(_)
-            | RuntimeModel::Yolo12X(_)
-            | RuntimeModel::Yolo26N(_)
-            | RuntimeModel::Yolo26S(_)
-            | RuntimeModel::Yolo26M(_)
-            | RuntimeModel::Yolo26L(_)
-            | RuntimeModel::Yolo26X(_)
-            | RuntimeModel::Yolo26SegN(_)
-            | RuntimeModel::Yolo26SegS(_)
-            | RuntimeModel::Yolo26SegM(_)
-            | RuntimeModel::Yolo26SegL(_)
-            | RuntimeModel::Yolo26SegX(_)
-            | RuntimeModel::Yolo26ClsN(_)
-            | RuntimeModel::Yolo26ClsS(_)
-            | RuntimeModel::Yolo26ClsM(_)
-            | RuntimeModel::Yolo26ClsL(_)
-            | RuntimeModel::Yolo26ClsX(_) => {
+        let prepared = match self.model_id.detection_preprocess() {
+            DetectionPreprocess::Yolox => LetterboxedImage::yolox(image, self.input_size),
+            DetectionPreprocess::Ultralytics => {
                 LetterboxedImage::ultralytics(image, self.input_size, 32)
             }
         };
-        let input = image_to_tensor(prepared.image().clone(), &self.device).unsqueeze::<4>();
+        let input = image_to_tensor(prepared.image().clone(), &self.device).unsqueeze::<4>()
+            * self.model_id.detection_input_scale();
         let boxes_by_class = match &self.model {
             RuntimeModel::Yolox(model) => {
-                let output = model.forward(input);
-                let [_, num_boxes, num_outputs] = output.dims();
-                let boxes = output.clone().slice([0..1, 0..num_boxes, 0..4]);
-                let objectness = output.clone().slice([0..1, 0..num_boxes, 4..5]);
-                let class_scores = output.slice([0..1, 0..num_boxes, 5..num_outputs]);
-                nms(
-                    boxes,
-                    class_scores * objectness,
-                    self.options.iou,
-                    self.options.confidence,
-                )
+                run_classic_detections(model, input, self.options.iou, self.options.confidence)
             }
             RuntimeModel::Yolov3Tiny(model) => {
-                // Ultralytics inference consumes RGB values in [0, 1]. YOLOX's transform above
-                // intentionally consumes the original [0, 255] range, so normalization belongs
-                // in this model-specific branch.
-                let output = model.forward(input / 255.0);
-                let [batch, anchors, _] = output.boxes.dims();
-                let left_top = output.boxes.clone().slice([0..batch, 0..anchors, 0..2]);
-                let right_bottom = output.boxes.slice([0..batch, 0..anchors, 2..4]);
-                let center = (left_top.clone() + right_bottom.clone()) / 2.0;
-                let size = right_bottom - left_top;
-                nms(
-                    Tensor::cat(vec![center, size], 2),
-                    output.scores,
-                    self.options.iou,
-                    self.options.confidence,
-                )
+                run_classic_detections(model, input, self.options.iou, self.options.confidence)
             }
             RuntimeModel::Yolov10N(model) => run_end_to_end(
                 model,
@@ -1942,7 +1707,8 @@ impl<B: Backend> Predictor<B> {
             prepared.image().width() as usize,
             prepared.image().height() as usize,
         );
-        let input = image_to_tensor(prepared.image().clone(), &self.device).unsqueeze::<4>();
+        let input = image_to_tensor(prepared.image().clone(), &self.device).unsqueeze::<4>()
+            * self.model_id.detection_input_scale();
         let output = match &self.model {
             RuntimeModel::Yolo11SegN(model) => {
                 run_classic_segmentations(model, input, self.options.iou, self.options.confidence)
@@ -2181,12 +1947,11 @@ impl<B: Backend> Predictor<B> {
     }
 }
 
-/// Convert imported Ultralytics-family tensor state into boquilens' versioned native Burnpack
-/// format.
+/// Convert imported upstream tensor state into boquilens' versioned native Burnpack format.
 ///
-/// The input is the tensor-only state generated by `tools/export_ultralytics_state.py`. The output
-/// must end in `.bpk` and is stored with half-precision tensors, matching the precision of the
-/// official checkpoint. Existing output files are never overwritten.
+/// YOLOX accepts its official `.pth` checkpoint; Ultralytics-family inputs are the tensor-only
+/// states generated by `tools/export_ultralytics_state.py`. The output must end in `.bpk` and is
+/// stored with half-precision tensors. Existing output files are never overwritten.
 #[cfg(feature = "pretrained")]
 #[derive(Debug)]
 pub struct PackedWeights {
@@ -2201,21 +1966,6 @@ pub fn pack_weights(
     input: impl Into<PathBuf>,
     output: impl Into<PathBuf>,
 ) -> Result<PackedWeights> {
-    if matches!(
-        model_id,
-        ModelId::YoloxNano
-            | ModelId::YoloxTiny
-            | ModelId::YoloxS
-            | ModelId::YoloxM
-            | ModelId::YoloxL
-            | ModelId::YoloxX
-    ) {
-        return Err(
-            "native weight packing is currently implemented only for the Ultralytics-family \
-             models; YOLOX loads its official .pth checkpoint directly"
-                .into(),
-        );
-    }
     let input = input.into();
     let output = output.into();
     if output.extension().and_then(|value| value.to_str()) != Some("bpk") {
@@ -2248,7 +1998,20 @@ pub fn pack_weights(
                     model.save_burnpack_weights(&output)?;
                 }};
             }
+            macro_rules! pack_yolox {
+                ($constructor:path) => {{
+                    let mut model = $constructor(COCO_CLASSES.len(), &device);
+                    model.load_pytorch_weights(&input)?;
+                    model.save_burnpack_weights(&output, model_id.as_str())?;
+                }};
+            }
             match model_id {
+                ModelId::YoloxNano => pack_yolox!(Yolox::<Flex>::yolox_nano),
+                ModelId::YoloxTiny => pack_yolox!(Yolox::<Flex>::yolox_tiny),
+                ModelId::YoloxS => pack_yolox!(Yolox::<Flex>::yolox_s),
+                ModelId::YoloxM => pack_yolox!(Yolox::<Flex>::yolox_m),
+                ModelId::YoloxL => pack_yolox!(Yolox::<Flex>::yolox_l),
+                ModelId::YoloxX => pack_yolox!(Yolox::<Flex>::yolox_x),
                 ModelId::Yolov3TinyU => pack_variant!(Yolov3TinyConfig),
                 ModelId::Yolov10N => pack_variant!(Yolov10NConfig),
                 ModelId::Yolov10S => pack_variant!(Yolov10SConfig),
@@ -2306,18 +2069,6 @@ pub fn pack_weights(
                 ModelId::Yolo26MCls => pack_variant!(Yolo26ClsMConfig),
                 ModelId::Yolo26LCls => pack_variant!(Yolo26ClsLConfig),
                 ModelId::Yolo26XCls => pack_variant!(Yolo26ClsXConfig),
-                ModelId::YoloxNano
-                | ModelId::YoloxTiny
-                | ModelId::YoloxS
-                | ModelId::YoloxM
-                | ModelId::YoloxL
-                | ModelId::YoloxX => {
-                    return Err(
-                        "native weight packing is currently implemented only for the Ultralytics-family \
-                         models; YOLOX loads its official .pth checkpoint directly"
-                            .into(),
-                    );
-                }
             }
             Ok::<_, Box<dyn Error + Send + Sync>>(())
         })?;
@@ -2742,7 +2493,7 @@ mod tests {
 
     #[cfg(feature = "pretrained")]
     #[test]
-    fn native_weight_packer_rejects_unsupported_model_and_extension() {
+    fn native_weight_packer_rejects_non_burnpack_extension_for_every_model() {
         for model_id in [
             ModelId::YoloxNano,
             ModelId::YoloxTiny,
@@ -2750,15 +2501,6 @@ mod tests {
             ModelId::YoloxM,
             ModelId::YoloxL,
             ModelId::YoloxX,
-        ] {
-            assert!(
-                pack_weights(model_id, "unused.pt", "unused.bpk")
-                    .unwrap_err()
-                    .to_string()
-                    .contains("Ultralytics-family models")
-            );
-        }
-        for model_id in [
             ModelId::Yolov3TinyU,
             ModelId::Yolov10N,
             ModelId::Yolov10S,
@@ -2823,6 +2565,59 @@ mod tests {
                     .to_string()
                     .contains(".bpk extension")
             );
+        }
+    }
+
+    /// Check that the production YOLOX artifact preserves the direct official-checkpoint result.
+    /// Requires the external checkpoint and generated artifact under `target/`.
+    #[cfg(feature = "pretrained")]
+    #[test]
+    #[ignore]
+    fn yolox_nano_burnpack_matches_official_checkpoint_end_to_end() {
+        let options = PredictOptions::default();
+        let official = Predictor::<Flex>::from_checkpoint(
+            ModelId::YoloxNano,
+            "target/checkpoints/yolox_nano.pth",
+            options,
+        )
+        .unwrap();
+        let artifact = Predictor::<Flex>::from_checkpoint(
+            ModelId::YoloxNano,
+            "target/yolox-nano-coco-official-v0.1.1rc0-boquilens-v1.bpk",
+            options,
+        )
+        .unwrap();
+        let image = image::open("assets/dog_bike_man.jpg").unwrap();
+        let expected = official.predict(&image);
+        let actual = artifact.predict(&image);
+
+        // The common f16 artifact policy can move candidates across the 0.25 confidence cutoff.
+        // Require bidirectional agreement for the stable, high-confidence subset instead.
+        for (name, references, candidates) in [
+            ("official", &expected, &actual),
+            ("artifact", &actual, &expected),
+        ] {
+            for reference in references.iter().filter(|item| item.confidence >= 0.65) {
+                let matched = candidates.iter().any(|candidate| {
+                    candidate.class_id == reference.class_id
+                        && (candidate.confidence - reference.confidence).abs() <= 0.03
+                        && test_box_iou(
+                            (
+                                reference.xmin,
+                                reference.ymin,
+                                reference.xmax,
+                                reference.ymax,
+                            ),
+                            (
+                                candidate.xmin,
+                                candidate.ymin,
+                                candidate.xmax,
+                                candidate.ymax,
+                            ),
+                        ) >= 0.90
+                });
+                assert!(matched, "no {name} match for {reference:?}");
+            }
         }
     }
 

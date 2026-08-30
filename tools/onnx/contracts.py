@@ -66,14 +66,15 @@ class YoloxPortable(torch.nn.Module):
         self.model = model
 
     def forward(self, images: torch.Tensor):
-        return self.model(images)
+        predictions = self.model(images)
+        boxes = _xywh_to_xyxy(predictions[..., :4])
+        scores = predictions[..., 4:5] * predictions[..., 5:]
+        return boxes, scores
 
 
 def output_names(task: str, profile: str, family: str) -> list[str]:
     if profile == "ultralytics":
         return ["output0", "output1"] if task == "segment" else ["output0"]
-    if family == "yolox":
-        return ["predictions"]
     if task == "detect":
         return ["boxes", "scores"]
     if task == "segment":

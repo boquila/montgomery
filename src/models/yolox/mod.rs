@@ -5,13 +5,12 @@
 
 mod blocks;
 mod bottleneck;
-pub mod boxes;
 mod darknet;
 mod head;
 pub mod model;
 mod pafpn;
 pub mod weights;
 
-pub use boxes::BoundingBox;
+pub use crate::postprocess::BoundingBox;
 pub use head::{FeatureLevelShape, RawPredictions};
 pub use model::{Yolox, YoloxConfig};

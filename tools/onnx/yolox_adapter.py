@@ -83,4 +83,4 @@ def build(manifest: dict, workdir: Path) -> tuple[torch.nn.Module, list[str]]:
     result = model.load_state_dict(state, strict=False)
     if result.unexpected_keys or [key for key in result.missing_keys if not key.endswith("num_batches_tracked")]:
         raise RuntimeError(f"YOLOX state load failed: {result}")
-    return YoloxPortable(model).eval(), ["predictions"]
+    return YoloxPortable(model).eval(), ["boxes", "scores"]

@@ -10,8 +10,11 @@ use super::{
 
 #[cfg(feature = "pretrained")]
 use {
-    super::weights::{self, WeightsMeta},
-    burn_store::{ModuleSnapshot, PytorchStore, PytorchStoreError},
+    super::weights,
+    burn_store::{
+        BurnpackError, BurnpackStore, HalfPrecisionAdapter, ModuleSnapshot, PytorchStore,
+        PytorchStoreError,
+    },
     std::path::PathBuf,
 };
 
@@ -48,28 +51,6 @@ impl<B: Backend> Yolox<B> {
         YoloxConfig::new(0.33, 0.25, num_classes, true).init(device)
     }
 
-    /// YOLOX-Nano from [`YOLOX: Exceeding YOLO Series in 2021`](https://arxiv.org/abs/2107.08430)
-    /// with pre-trained weights.
-    ///
-    /// # Arguments
-    ///
-    /// * `num_classes`: Number of output classes of the model.
-    /// * `device` - Device to create the module on.
-    ///
-    /// # Returns
-    ///
-    /// A YOLOX-Nano module with pre-trained weights.
-    #[cfg(feature = "pretrained")]
-    pub fn yolox_nano_pretrained(
-        weights: weights::YoloxNano,
-        device: &Device<B>,
-    ) -> Result<Self, PytorchStoreError> {
-        let weights = weights.weights();
-        let mut model = Self::yolox_nano(weights.num_classes, device);
-        Self::load_weights(&mut model, &weights)?;
-        Ok(model)
-    }
-
     /// YOLOX-Tiny from [`YOLOX: Exceeding YOLO Series in 2021`](https://arxiv.org/abs/2107.08430).
     ///
     /// # Arguments
@@ -82,28 +63,6 @@ impl<B: Backend> Yolox<B> {
     /// A YOLOX-Tiny module.
     pub fn yolox_tiny(num_classes: usize, device: &Device<B>) -> Self {
         YoloxConfig::new(0.33, 0.375, num_classes, false).init(device)
-    }
-
-    /// YOLOX-Tiny from [`YOLOX: Exceeding YOLO Series in 2021`](https://arxiv.org/abs/2107.08430)
-    /// with pre-trained weights.
-    ///
-    /// # Arguments
-    ///
-    /// * `num_classes`: Number of output classes of the model.
-    /// * `device` - Device to create the module on.
-    ///
-    /// # Returns
-    ///
-    /// A YOLOX-Tiny module with pre-trained weights.
-    #[cfg(feature = "pretrained")]
-    pub fn yolox_tiny_pretrained(
-        weights: weights::YoloxTiny,
-        device: &Device<B>,
-    ) -> Result<Self, PytorchStoreError> {
-        let weights = weights.weights();
-        let mut model = Self::yolox_tiny(weights.num_classes, device);
-        Self::load_weights(&mut model, &weights)?;
-        Ok(model)
     }
 
     /// YOLOX-S from [`YOLOX: Exceeding YOLO Series in 2021`](https://arxiv.org/abs/2107.08430).
@@ -120,28 +79,6 @@ impl<B: Backend> Yolox<B> {
         YoloxConfig::new(0.33, 0.50, num_classes, false).init(device)
     }
 
-    /// YOLOX-S from [`YOLOX: Exceeding YOLO Series in 2021`](https://arxiv.org/abs/2107.08430)
-    /// with pre-trained weights.
-    ///
-    /// # Arguments
-    ///
-    /// * `num_classes`: Number of output classes of the model.
-    /// * `device` - Device to create the module on.
-    ///
-    /// # Returns
-    ///
-    /// A YOLOX-S module with pre-trained weights.
-    #[cfg(feature = "pretrained")]
-    pub fn yolox_s_pretrained(
-        weights: weights::YoloxS,
-        device: &Device<B>,
-    ) -> Result<Self, PytorchStoreError> {
-        let weights = weights.weights();
-        let mut model = Self::yolox_s(weights.num_classes, device);
-        Self::load_weights(&mut model, &weights)?;
-        Ok(model)
-    }
-
     /// YOLOX-M from [`YOLOX: Exceeding YOLO Series in 2021`](https://arxiv.org/abs/2107.08430).
     ///
     /// # Arguments
@@ -154,28 +91,6 @@ impl<B: Backend> Yolox<B> {
     /// A YOLOX-M module.
     pub fn yolox_m(num_classes: usize, device: &Device<B>) -> Self {
         YoloxConfig::new(0.67, 0.75, num_classes, false).init(device)
-    }
-
-    /// YOLOX-M from [`YOLOX: Exceeding YOLO Series in 2021`](https://arxiv.org/abs/2107.08430)
-    /// with pre-trained weights.
-    ///
-    /// # Arguments
-    ///
-    /// * `num_classes`: Number of output classes of the model.
-    /// * `device` - Device to create the module on.
-    ///
-    /// # Returns
-    ///
-    /// A YOLOX-M module with pre-trained weights.
-    #[cfg(feature = "pretrained")]
-    pub fn yolox_m_pretrained(
-        weights: weights::YoloxM,
-        device: &Device<B>,
-    ) -> Result<Self, PytorchStoreError> {
-        let weights = weights.weights();
-        let mut model = Self::yolox_m(weights.num_classes, device);
-        Self::load_weights(&mut model, &weights)?;
-        Ok(model)
     }
 
     /// YOLOX-L from [`YOLOX: Exceeding YOLO Series in 2021`](https://arxiv.org/abs/2107.08430).
@@ -192,28 +107,6 @@ impl<B: Backend> Yolox<B> {
         YoloxConfig::new(1., 1., num_classes, false).init(device)
     }
 
-    /// YOLOX-L from [`YOLOX: Exceeding YOLO Series in 2021`](https://arxiv.org/abs/2107.08430)
-    /// with pre-trained weights.
-    ///
-    /// # Arguments
-    ///
-    /// * `num_classes`: Number of output classes of the model.
-    /// * `device` - Device to create the module on.
-    ///
-    /// # Returns
-    ///
-    /// A YOLOX-L module with pre-trained weights.
-    #[cfg(feature = "pretrained")]
-    pub fn yolox_l_pretrained(
-        weights: weights::YoloxL,
-        device: &Device<B>,
-    ) -> Result<Self, PytorchStoreError> {
-        let weights = weights.weights();
-        let mut model = Self::yolox_l(weights.num_classes, device);
-        Self::load_weights(&mut model, &weights)?;
-        Ok(model)
-    }
-
     /// YOLOX-X from [`YOLOX: Exceeding YOLO Series in 2021`](https://arxiv.org/abs/2107.08430).
     ///
     /// # Arguments
@@ -226,39 +119,6 @@ impl<B: Backend> Yolox<B> {
     /// A YOLOX-X module.
     pub fn yolox_x(num_classes: usize, device: &Device<B>) -> Self {
         YoloxConfig::new(1.33, 1.25, num_classes, false).init(device)
-    }
-
-    /// YOLOX-X from [`YOLOX: Exceeding YOLO Series in 2021`](https://arxiv.org/abs/2107.08430)
-    /// with pre-trained weights.
-    ///
-    /// # Arguments
-    ///
-    /// * `num_classes`: Number of output classes of the model.
-    /// * `device` - Device to create the module on.
-    ///
-    /// # Returns
-    ///
-    /// A YOLOX-X module with pre-trained weights.
-    #[cfg(feature = "pretrained")]
-    pub fn yolox_x_pretrained(
-        weights: weights::YoloxX,
-        device: &Device<B>,
-    ) -> Result<Self, PytorchStoreError> {
-        let weights = weights.weights();
-        let mut model = Self::yolox_x(weights.num_classes, device);
-        Self::load_weights(&mut model, &weights)?;
-        Ok(model)
-    }
-
-    /// Load specified pre-trained PyTorch weights into the model.
-    #[cfg(feature = "pretrained")]
-    fn load_weights(model: &mut Self, weights: &weights::Weights) -> Result<(), PytorchStoreError> {
-        // Download torch weights
-        let torch_weights = weights.download().map_err(|err| {
-            PytorchStoreError::Other(format!("Could not download weights.\nError: {err}"))
-        })?;
-
-        model.load_pytorch_weights(torch_weights)
     }
 
     /// Import a YOLOX PyTorch checkpoint into this Burn model.
@@ -292,6 +152,36 @@ impl<B: Backend> Yolox<B> {
         self.load_from(&mut store)?;
 
         Ok(())
+    }
+
+    /// Load a boquilens-native, half-precision YOLOX Burnpack artifact.
+    #[cfg(feature = "pretrained")]
+    pub fn load_burnpack_weights(&mut self, path: impl Into<PathBuf>) -> Result<(), BurnpackError> {
+        let mut store = BurnpackStore::from_file(path.into())
+            .with_from_adapter(HalfPrecisionAdapter::new())
+            .zero_copy(true);
+        self.load_from(&mut store).map(|_| ())
+    }
+
+    /// Save an imported official checkpoint as a versioned native artifact.
+    #[cfg(feature = "pretrained")]
+    pub fn save_burnpack_weights(
+        &self,
+        path: impl Into<PathBuf>,
+        model_id: &str,
+    ) -> Result<(), BurnpackError> {
+        let mut store = BurnpackStore::from_file(path.into())
+            .metadata(
+                "boquilens.artifact-format",
+                weights::artifact_format(model_id),
+            )
+            .metadata("boquilens.model", model_id)
+            .metadata("boquilens.classes", "coco-80")
+            .metadata("boquilens.precision", "f16")
+            .metadata("boquilens.source", "yolox-official-v0.1.1rc0")
+            .metadata("boquilens.license", "Apache-2.0")
+            .with_to_adapter(HalfPrecisionAdapter::new());
+        self.save_into(&mut store)
     }
 }
 
@@ -385,25 +275,34 @@ mod tests {
         .unsqueeze::<4>()
     }
 
+    fn official_checkpoint_path(id: &str) -> PathBuf {
+        let checkpoint = weights::official_checkpoint(id).expect("registered YOLOX checkpoint");
+        let path = PathBuf::from("target/checkpoints").join(checkpoint.filename);
+        assert!(
+            path.exists(),
+            "download the official checkpoint from {} to {} (SHA-256 {})",
+            checkpoint.url,
+            path.display(),
+            checkpoint.sha256
+        );
+        path
+    }
+
     macro_rules! checkpoint_test {
-        ($fn_name:ident, $constructor:ident, $weights:ident) => {
-            /// Import the official Apache-2.0 checkpoint (downloaded to the model cache on first
-            /// use) and run a forward. Kept ignored because it fetches an external asset.
+        ($fn_name:ident, $constructor:ident, $id:literal) => {
+            /// Import the official Apache-2.0 checkpoint and run a forward.
             #[test]
             #[ignore]
             fn $fn_name() {
-                let weights = weights::$weights::Coco.weights();
+                let checkpoint = official_checkpoint_path($id);
                 let worker = std::thread::Builder::new()
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
                         let device = <Device<Flex>>::default();
-                        let mut model: Yolox<Flex> =
-                            Yolox::$constructor(weights.num_classes, &device);
-                        model
-                            .load_pytorch_weights(weights.download().unwrap())
-                            .unwrap();
+                        let mut model: Yolox<Flex> = Yolox::$constructor(80, &device);
+                        model.load_pytorch_weights(checkpoint).unwrap();
                         let output = model.forward(Tensor::zeros([1, 3, 64, 64], &device));
-                        assert_eq!(output.dims(), [1, 84, 5 + weights.num_classes]);
+                        assert_eq!(output.dims(), [1, 84, 85]);
                     })
                     .unwrap();
                 worker.join().unwrap();
@@ -412,7 +311,7 @@ mod tests {
     }
 
     macro_rules! golden_test {
-        ($fn_name:ident, $constructor:ident, $weights:ident, $id:literal) => {
+        ($fn_name:ident, $constructor:ident, $id:literal) => {
             /// Compare Burn's graph numerics against the official YOLOX PyTorch forward on the
             /// same preprocessed input. Requires tools/export_yolox_fixtures.py output under
             /// target/. Kept ignored because the fixtures derive from the external checkpoint.
@@ -432,16 +331,13 @@ mod tests {
                 assert_eq!(fixture.format, "boquilens-yolox-golden-v1");
                 assert_eq!(fixture.model, $id);
 
-                let weights = weights::$weights::Coco.weights();
+                let checkpoint = official_checkpoint_path($id);
                 let worker = std::thread::Builder::new()
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
                         let device = <Device<Flex>>::default();
-                        let mut model: Yolox<Flex> =
-                            Yolox::$constructor(weights.num_classes, &device);
-                        model
-                            .load_pytorch_weights(weights.download().unwrap())
-                            .unwrap();
+                        let mut model: Yolox<Flex> = Yolox::$constructor(80, &device);
+                        model.load_pytorch_weights(checkpoint).unwrap();
                         let input = load_reference_input($id, &device);
 
                         let dark = model.backbone.backbone().forward(input.clone());
@@ -466,71 +362,49 @@ mod tests {
     checkpoint_test!(
         yolox_nano_imports_official_checkpoint_and_runs_forward,
         yolox_nano,
-        YoloxNano
+        "yolox-nano"
     );
 
     checkpoint_test!(
         yolox_tiny_imports_official_checkpoint_and_runs_forward,
         yolox_tiny,
-        YoloxTiny
+        "yolox-tiny"
     );
     checkpoint_test!(
         yolox_s_imports_official_checkpoint_and_runs_forward,
         yolox_s,
-        YoloxS
+        "yolox-s"
     );
     checkpoint_test!(
         yolox_m_imports_official_checkpoint_and_runs_forward,
         yolox_m,
-        YoloxM
+        "yolox-m"
     );
     checkpoint_test!(
         yolox_l_imports_official_checkpoint_and_runs_forward,
         yolox_l,
-        YoloxL
+        "yolox-l"
     );
     checkpoint_test!(
         yolox_x_imports_official_checkpoint_and_runs_forward,
         yolox_x,
-        YoloxX
+        "yolox-x"
     );
 
     golden_test!(
         yolox_nano_matches_official_pytorch_outputs,
         yolox_nano,
-        YoloxNano,
         "yolox-nano"
     );
     golden_test!(
         yolox_tiny_matches_official_pytorch_outputs,
         yolox_tiny,
-        YoloxTiny,
         "yolox-tiny"
     );
-    golden_test!(
-        yolox_s_matches_official_pytorch_outputs,
-        yolox_s,
-        YoloxS,
-        "yolox-s"
-    );
-    golden_test!(
-        yolox_m_matches_official_pytorch_outputs,
-        yolox_m,
-        YoloxM,
-        "yolox-m"
-    );
-    golden_test!(
-        yolox_l_matches_official_pytorch_outputs,
-        yolox_l,
-        YoloxL,
-        "yolox-l"
-    );
-    golden_test!(
-        yolox_x_matches_official_pytorch_outputs,
-        yolox_x,
-        YoloxX,
-        "yolox-x"
-    );
+    golden_test!(yolox_s_matches_official_pytorch_outputs, yolox_s, "yolox-s");
+    golden_test!(yolox_m_matches_official_pytorch_outputs, yolox_m, "yolox-m");
+    golden_test!(yolox_l_matches_official_pytorch_outputs, yolox_l, "yolox-l");
+    golden_test!(yolox_x_matches_official_pytorch_outputs, yolox_x, "yolox-x");
 }
 
 impl YoloxConfig {

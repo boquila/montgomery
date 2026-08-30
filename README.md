@@ -8,17 +8,18 @@ or ONNX Runtime.
 
 ## Models
 
-Every model runs **object detection** on COCO-80 classes at 640 px input; the YOLO11-seg,
+Every model runs **object detection** on COCO-80 classes; YOLOX Nano/Tiny use their official
+416 px input and the remaining detectors use 640 px. The YOLO11-seg,
 YOLOv8-seg, and YOLO26-seg variants add **instance segmentation**, and the YOLO26-cls, YOLO11-cls,
 and YOLOv8-cls variants run
 **image classification** on ImageNet-1k at 224 px. Default builds expose **Predict**. The
 non-default `training` feature adds experimental native WGPU `train`, `val`, and training-checkpoint
-`export` commands. Experimental models additionally support a one-time `pack-weights` conversion
-into boquilens' native Burnpack format.
+`export` commands. Every pretrained family uses a one-time `pack-weights` conversion into
+boquilens' native Burnpack format; normal inference consumes `.bpk` only.
 
 | Model    | Status       | Task                        | Modes   | Variants                     | Weights                          |
 | -------- | ------------ | --------------------------- | ------- | ---------------------------- | -------------------------------- |
-| YOLOX    | stable       | Detect                      | Predict | nano, tiny, s, m, l, x       | official `.pth`, auto-downloaded |
+| YOLOX    | stable       | Detect                      | Predict | nano, tiny, s, m, l, x       | one-time `.bpk` pack             |
 | YOLOv3   | experimental | Detect                      | Predict | tiny-u                       | one-time `.bpk` pack             |
 | YOLOv10  | experimental | Detect                      | Predict | n, s, m, b, l, x             | one-time `.bpk` pack             |
 | YOLO11   | experimental | Detect, Segment, Classify   | Predict | n, s, m, l, x (+n..x -seg/-cls) | one-time `.bpk` pack         |
@@ -31,10 +32,10 @@ the modern families use n/s/m/l/x; YOLOv10 replaces the xl scale with b). Pass t
 CLI name: `yolox-nano`, `yolox-tiny`, `yolox-s`, `yolox-m`, `yolox-l`, `yolox-x`, `yolov3-tinyu`,
 `yolov10n`, ..., `yolo11n`, ..., `yolo11n-seg`, ..., `yolo26x`, `yolo26n-seg`, ..., `yolo26n-cls`, ...,
 `yolov8n`, ..., `yolov8n-seg`, ..., `yolov8n-cls`, ..., `yolo12n`, ..., `yolo11n-cls`, ..., `yolo26x-cls`.
-YOLOX ships Apache-2.0 weights downloaded from the official release.
+YOLOX Burnpacks are converted from the official Apache-2.0 checkpoints.
 Ultralytics-family weights are AGPL-3.0, and the native artifacts derived from them inherit that
-license (see [NOTICE](NOTICE)). Every detect model runs at 640 px input; note that YOLOX-Tiny's
-official evaluation resolution is 416 px, so its published mAP (32.8) does not transfer one-to-one.
+license (see [NOTICE](NOTICE)). YOLOX Nano and Tiny run at their official 416 px resolution; other
+detect models run at 640 px.
 
 The native trainer accepts Ultralytics-style dataset YAML and uses deterministic augmentation,
 padded targets, differentiable family-specific criteria, accumulation, selective decay, and
@@ -105,8 +106,8 @@ postprocessing, validation, hash, and license contract. Exporting a checkpoint d
 license of its architecture or weights; see [NOTICE](NOTICE). `--no-verify` omits only the extra
 exact-Burn comparison; checker, strict shape inference, and ONNX Runtime execution remain mandatory.
 
-YOLO11, YOLOv8, and YOLO12 are the modern detect families whose predictions pass through classic
-class-aware non-maximum suppression (the others are NMS-free end-to-end); YOLOv8's head keeps the
+YOLOX, YOLOv3, YOLO11, YOLOv8, and YOLO12 pass through shared classic class-aware non-maximum
+suppression; YOLOv10 and YOLO26 use NMS-free end-to-end selection. YOLOv8's head keeps the
 legacy full-3x3-conv classification towers while YOLO11/YOLO12 use the light DWConv flavor, and
 YOLO12 adds the area-attention `A2C2f` backbone/neck stages (l/x carry a learnable gamma residual).
 The YOLO11-seg and YOLOv8-seg models share that NMS
@@ -222,9 +223,15 @@ Bring-up order (owner priority: newest first, task-type reuse preferred): YOLO26
 YOLOv9. Task-type result APIs (`Classification`, `SegmentationDetection`) are shared across the
 families that use the same decode path.
 
-### Preparing experimental weights
+### Preparing weights
 
-One-time conversion of an official Ultralytics checkpoint (Python is a conversion-time dependency
+YOLOX checkpoints can be packed directly from the official `.pth` release:
+
+```console
+cargo run --release -- pack-weights --model yolox-nano --input target/yolox_nano.pth --output target/yolox-nano-coco-official-v0.1.1rc0-boquilens-v1.bpk
+```
+
+Ultralytics checkpoints first need a tensor-only state (Python is a conversion-time dependency
 only); substitute the model name for `yolov3-tinyu`, `yolov10n/s/m/b/l/x`, `yolo11n/s/m/l/x`,
 `yolo11n/s/m/l/x-seg`, `yolo11n/s/m/l/x-cls`, `yolov8n/s/m/l/x`, `yolov8n/s/m/l/x-seg`,
 `yolov8n/s/m/l/x-cls`, `yolo12n/s/m/l/x`, `yolo26n/s/m/l/x`, `yolo26n/s/m/l/x-seg`, or
@@ -242,7 +249,7 @@ After that, inference only needs the `.bpk` artifact and Rust.
 ## Usage
 
 ```console
-cargo run --release -- predict --model yolox-nano --source assets/dog_bike_man.jpg
+cargo run --release -- predict --model yolox-nano --weights target/yolox-nano-coco-official-v0.1.1rc0-boquilens-v1.bpk --source assets/dog_bike_man.jpg
 cargo run --release -- predict --model yolo26n --weights target/yolo26n-coco-ultralytics-v8.4-boquilens-v1.bpk --source image.jpg --json --confidence 0.30
 cargo run --release -- predict --model yolo11n-seg --weights target/yolo11n-seg-coco-ultralytics-v8.4-boquilens-v1.bpk --source image.jpg --masks
 cargo run --release -- predict --model yolov8n-seg --weights target/yolov8n-seg-coco-ultralytics-v8.4-boquilens-v1.bpk --source image.jpg --masks
@@ -262,12 +269,15 @@ full bitmask is available through the Rust API).
 ### Rust API
 
 ```rust,no_run
-use boquilens::{PredictOptions, Predictor};
+use boquilens::{ModelId, PredictOptions, Predictor};
+use burn_flex::Flex;
 
 fn main() -> boquilens::Result<()> {
-    // Every YOLOX scale has a dedicated helper (yolox_nano, yolox_tiny, yolox_s, yolox_m,
-    // yolox_l, yolox_x); other models load through Predictor::new with a ModelId.
-    let predictor = Predictor::yolox_x(PredictOptions::default())?;
+    let predictor = Predictor::<Flex>::from_checkpoint(
+        ModelId::YoloxX,
+        "target/yolox-x-coco-official-v0.1.1rc0-boquilens-v1.bpk",
+        PredictOptions::default(),
+    )?;
     let (_image, detections) = predictor.predict_path("image.jpg")?;
     for detection in detections {
         println!("{}: {:.1}%", detection.class_name, detection.confidence * 100.0);
@@ -283,9 +293,14 @@ coverage mask (`InstanceMask`, `width * height` bytes):
 
 ```rust,no_run
 use boquilens::{ModelId, PredictOptions, Predictor};
+use burn_flex::Flex;
 
 fn main() -> boquilens::Result<()> {
-    let predictor = Predictor::new(ModelId::Yolo11NSeg, PredictOptions::default())?;
+    let predictor = Predictor::<Flex>::from_checkpoint(
+        ModelId::Yolo11NSeg,
+        "target/yolo11n-seg-coco-ultralytics-v8.4-boquilens-v1.bpk",
+        PredictOptions::default(),
+    )?;
     let (_image, detections) = predictor.predict_segmentation_path("image.jpg")?;
     for detection in detections {
         let covered = detection.mask.data.iter().filter(|pixel| **pixel).count();
@@ -303,9 +318,14 @@ to 224 px, centered 224x224 crop, RGB scaled to `[0, 1]`:
 
 ```rust,no_run
 use boquilens::{ModelId, PredictOptions, Predictor};
+use burn_flex::Flex;
 
 fn main() -> boquilens::Result<()> {
-    let predictor = Predictor::new(ModelId::Yolo26SCls, PredictOptions::default())?;
+    let predictor = Predictor::<Flex>::from_checkpoint(
+        ModelId::Yolo26SCls,
+        "target/yolo26s-cls-imagenet1k-ultralytics-v8.4-boquilens-v1.bpk",
+        PredictOptions::default(),
+    )?;
     let (_image, classifications) = predictor.predict_classification_path("image.jpg")?;
     for classification in classifications {
         println!("{}: {:.1}%", classification.class_name, classification.confidence * 100.0);
@@ -317,9 +337,10 @@ fn main() -> boquilens::Result<()> {
 ## Performance
 
 Single-image, batch-1 inference: model forward, head decode, and result sync, on Burn's Flex CPU
-backend in release mode. Detect/segment rows run at 640 px input; the `-cls` classification rows
-run at 224 px (each model's official inference resolution). Artifacts store f16 weights that are
-upcast and computed in f32. Each number is the median of 10 timed runs after 3 warmup runs,
+backend in release mode. YOLOX Nano/Tiny run at 416 px, other detect/segment rows at 640 px, and
+the `-cls` classification rows at 224 px (each model's official inference resolution). Artifacts
+store f16 weights that are upcast and computed in f32. Each number is the median of 10 timed runs
+after 3 warmup runs,
 measured sequentially (one test at a time) via:
 
 ```console
