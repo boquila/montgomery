@@ -156,10 +156,10 @@ cargo run --locked --release --features training -- export --checkpoint runs/det
 Training, validation, resume, and export workflows are implemented and smoke-tested. Convergence
 and reference-quality parity are not yet established.
 
-The reproducible RTX 5080 comparison covers 27 matched Ultralytics workloads across tasks, families,
-scales, batches, resolutions, and ten-epoch smoke runs. Native wins 7 of 9 nano family/task cells,
-including every classification cell; YOLO26n detection is within 8%, and batch-4 detection and
-segmentation are faster. See the
+The reproducible RTX 5080 comparison covers 30 matched Ultralytics workloads across tasks, families,
+scales, batches, resolutions, and ten-epoch smoke runs. Native wins all 12 smallest-variant family/task cells,
+including YOLO26n detection and segmentation. Medium segmentation, batch-1 detection/segmentation,
+640 px, and longer runs remain slower. See the
 [full performance report](docs/performance-comparison.MD) for every result, chart, limitation, and the
 one-command benchmark harness.
 
