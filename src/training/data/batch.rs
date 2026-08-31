@@ -3,6 +3,7 @@ use burn::tensor::{Bool, Int, Tensor, TensorData, backend::Backend};
 use super::sample::ImageMeta;
 use crate::data::augmentation::AugRng;
 use crate::data::augmentation::{FormattedClassificationSample, FormattedDetectionSample};
+use crate::training::{assign::tal::TalGroundTruth, geometry::BoxXyxy};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FormattedDetectionBatch {
@@ -162,9 +163,11 @@ pub fn sample_multi_scale_side(
 
 pub struct DetectionBatch<B: Backend> {
     pub images: Tensor<B, 4>,
-    pub classes: Tensor<B, 2, Int>,
-    pub boxes_xyxy: Tensor<B, 3>,
-    pub valid: Tensor<B, 2, Bool>,
+    /// Assignment targets retained on the host.
+    ///
+    /// Formatting already owns these values before the image is uploaded. Keeping them here
+    /// avoids immediately downloading three padded target tensors on every training step.
+    pub targets: Vec<Vec<TalGroundTruth>>,
     pub metadata: Vec<ImageMeta>,
 }
 
@@ -183,7 +186,7 @@ pub struct ClassificationBatch<B: Backend> {
 }
 
 impl FormattedDetectionBatch {
-    /// Upload a formatted detection batch using padded targets and an explicit validity mask.
+    /// Upload images and retain assignment targets on the host.
     pub fn into_device<B: Backend>(
         self,
         metadata: Vec<ImageMeta>,
@@ -193,48 +196,34 @@ impl FormattedDetectionBatch {
         if metadata.len() != batch || channels != 3 {
             return Err("detection metadata/image batch shape mismatch".into());
         }
-        let max_objects = self
-            .batch_indexes
-            .iter()
-            .copied()
-            .fold(vec![0_usize; batch], |mut counts, index| {
-                if index < batch {
-                    counts[index] += 1;
-                }
-                counts
-            })
-            .into_iter()
-            .max()
-            .unwrap_or(0)
-            .max(1);
         if self.classes.len() != self.batch_indexes.len()
             || self.classes.len() != self.boxes_xywh_normalized.len()
             || self.batch_indexes.iter().any(|index| *index >= batch)
         {
             return Err("formatted detection target arrays are inconsistent".into());
         }
-        let mut classes = vec![0_i64; batch * max_objects];
-        let mut boxes = vec![0_f32; batch * max_objects * 4];
-        let mut valid = vec![false; batch * max_objects];
-        let mut offsets = vec![0_usize; batch];
+        let mut targets = vec![Vec::new(); batch];
         for ((batch_index, class), xywh) in self
             .batch_indexes
             .into_iter()
             .zip(self.classes)
             .zip(self.boxes_xywh_normalized)
         {
-            let object = offsets[batch_index];
-            offsets[batch_index] += 1;
-            let flat = batch_index * max_objects + object;
-            classes[flat] = i64::from(class);
-            valid[flat] = true;
             let [cx, cy, w, h] = xywh;
-            boxes[flat * 4..flat * 4 + 4].copy_from_slice(&[
+            let edges = [
                 (cx - w * 0.5) * width as f32,
                 (cy - h * 0.5) * height as f32,
                 (cx + w * 0.5) * width as f32,
                 (cy + h * 0.5) * height as f32,
-            ]);
+            ];
+            // Format normally removes degenerate boxes. Retain the old detached-target behavior
+            // of ignoring a malformed row instead of letting it enter assignment.
+            if let Ok(bbox) = BoxXyxy::new(edges) {
+                targets[batch_index].push(TalGroundTruth {
+                    class_id: class as usize,
+                    bbox,
+                });
+            }
         }
         Ok(DetectionBatch {
             images: Tensor::from_data(
@@ -247,9 +236,7 @@ impl FormattedDetectionBatch {
                 ),
                 device,
             ),
-            classes: Tensor::from_data(TensorData::new(classes, [batch, max_objects]), device),
-            boxes_xyxy: Tensor::from_data(TensorData::new(boxes, [batch, max_objects, 4]), device),
-            valid: Tensor::from_data(TensorData::new(valid, [batch, max_objects]), device),
+            targets,
             metadata,
         })
     }
@@ -402,6 +389,7 @@ impl FormattedClassificationBatch {
 #[cfg(test)]
 mod formatted_tests {
     use super::*;
+
     #[test]
     fn multi_scale_rounds_each_dimension_up_to_stride() {
         assert_eq!(multi_scale_shape([320, 640], 608, 32).unwrap(), [320, 608]);
@@ -420,5 +408,43 @@ mod formatted_tests {
         assert_eq!(shape, [1, 1, 4, 4]);
         assert_eq!(images.len(), 16);
         assert_eq!(batch.boxes_xywh_normalized, [[0.5, 0.5, 1.0, 1.0]]);
+    }
+
+    #[test]
+    fn device_batch_retains_exact_host_assignment_targets() {
+        use burn_flex::Flex;
+
+        let formatted = FormattedDetectionBatch {
+            images_nchw_u8: vec![0; 2 * 3 * 8 * 12],
+            image_shape: [2, 3, 8, 12],
+            batch_indexes: vec![0, 1],
+            classes: vec![3, 7],
+            boxes_xywh_normalized: vec![[0.5, 0.5, 0.5, 0.5], [0.25, 0.75, 0.25, 0.25]],
+        };
+        let metadata = (0..2)
+            .map(|index| ImageMeta {
+                image_id: index.to_string(),
+                source_size: [12, 8],
+                canvas_size: [12, 8],
+                scale: [1.0, 1.0],
+                pad: [0.0, 0.0],
+                crowd: Vec::new(),
+            })
+            .collect();
+        let batch = formatted
+            .into_device::<Flex>(metadata, &Default::default())
+            .unwrap();
+
+        assert_eq!(batch.targets.len(), 2);
+        assert_eq!(batch.targets[0][0].class_id, 3);
+        assert_eq!(
+            batch.targets[0][0].bbox,
+            BoxXyxy::new([3.0, 2.0, 9.0, 6.0]).unwrap()
+        );
+        assert_eq!(batch.targets[1][0].class_id, 7);
+        assert_eq!(
+            batch.targets[1][0].bbox,
+            BoxXyxy::new([1.5, 5.0, 4.5, 7.0]).unwrap()
+        );
     }
 }

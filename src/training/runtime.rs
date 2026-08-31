@@ -49,8 +49,8 @@ use crate::{
     training::{
         ModelSpec, Trainer,
         checkpoint::{
-            CheckpointManifest, decode_record, encode_record, replace_atomic_from_saved,
-            save_atomic,
+            CheckpointManifest, PendingCheckpoint, decode_record, encode_record,
+            spawn_epoch_publication,
         },
         config::{OptimizerKind, ScheduleKind, TrainingConfig},
         data::{
@@ -1359,6 +1359,7 @@ where
         let ema_bytes = std::fs::read(path.join("ema.bin"))?;
         ema_model = ema_model.load_record(decode_record::<TrainBackend, _>(ema_bytes, device)?);
     }
+    let mut pending_checkpoint: Option<PendingCheckpoint> = None;
     while trainer.state.epoch < trainer.config.epochs {
         let result = trainer.train_epoch::<TrainBackend, _, _, _, _>(
             model,
@@ -1370,7 +1371,11 @@ where
                     crate::training::ema::update_model(ema_model.clone(), current, &mut ema_state)?;
                 Ok(())
             },
-        )?;
+        );
+        if let Some(pending) = pending_checkpoint.take() {
+            pending.finish()?;
+        }
+        let result = result?;
         model = result.0;
         optimizer = result.1;
         trainer.state.ema_updates = ema_state.updates;
@@ -1407,40 +1412,26 @@ where
             trainer.state.clone(),
             trainer.scheduler.clone(),
         );
-        let epoch_path = trainer
-            .run
-            .checkpoints
-            .join(format!("epoch-{:04}", trainer.state.epoch));
-        let saved_manifest = save_atomic(
-            &epoch_path,
-            manifest.clone(),
-            &[
-                ("model.bin", &model_bytes),
-                ("ema.bin", &ema_bytes),
-                ("optimizer.bin", &optimizer_bytes),
+        let payload_sizes = [model_bytes.len(), ema_bytes.len(), optimizer_bytes.len()];
+        pending_checkpoint = Some(spawn_epoch_publication(
+            trainer.run.checkpoints.clone(),
+            trainer.state.epoch,
+            manifest,
+            vec![
+                ("model.bin", model_bytes),
+                ("ema.bin", ema_bytes),
+                ("optimizer.bin", optimizer_bytes),
             ],
-        )?;
-        replace_atomic_from_saved(
-            trainer.run.checkpoints.join("last"),
-            &epoch_path,
-            &saved_manifest,
-        )?;
-        if improved {
-            replace_atomic_from_saved(
-                trainer.run.checkpoints.join("best"),
-                &epoch_path,
-                &saved_manifest,
-            )?;
-        }
+            improved,
+        ));
         if profile_training {
             eprintln!(
-                "checkpoint-profile epoch={} encode_ms={:.3} save_ms={:.3} model_mb={:.2} ema_mb={:.2} optimizer_mb={:.2}",
+                "checkpoint-profile epoch={} encode_ms={:.3} publication=async model_mb={:.2} ema_mb={:.2} optimizer_mb={:.2}",
                 trainer.state.epoch,
                 encoded_at.duration_since(checkpoint_started).as_secs_f64() * 1_000.0,
-                encoded_at.elapsed().as_secs_f64() * 1_000.0,
-                model_bytes.len() as f64 / (1024.0 * 1024.0),
-                ema_bytes.len() as f64 / (1024.0 * 1024.0),
-                optimizer_bytes.len() as f64 / (1024.0 * 1024.0),
+                payload_sizes[0] as f64 / (1024.0 * 1024.0),
+                payload_sizes[1] as f64 / (1024.0 * 1024.0),
+                payload_sizes[2] as f64 / (1024.0 * 1024.0),
             );
         }
         eprintln!(
@@ -1453,6 +1444,9 @@ where
                 return Err("rebuilt epoch contains no batches".into());
             }
         }
+    }
+    if let Some(pending) = pending_checkpoint {
+        pending.finish()?;
     }
     Ok(trainer.run.root)
 }
@@ -2342,21 +2336,7 @@ where
     let mut targets = Vec::new();
     let mut image_count = 0;
     for batch in batches {
-        let [batch_size, max_targets] = batch.classes.dims();
-        let classes_data = batch.classes.into_data();
-        let boxes_data = batch.boxes_xyxy.into_data();
-        let valid_data = batch.valid.into_data();
-        let classes = classes_data
-            .as_slice::<i32>()?
-            .iter()
-            .map(|value| i64::from(*value))
-            .collect::<Vec<_>>();
-        let boxes = boxes_data.as_slice::<f32>()?;
-        let valid = valid_data
-            .as_slice::<u32>()?
-            .iter()
-            .map(|value| *value != 0)
-            .collect::<Vec<_>>();
+        let batch_size = batch.images.dims()[0];
         let grouped = model.validation_detections(batch.images, validation);
         if grouped.len() != batch.metadata.len() {
             return Err("detector output batch size differs from validation metadata".into());
@@ -2383,18 +2363,19 @@ where
                     });
                 }
             }
-            for target in 0..max_targets {
-                let flat = image * max_targets + target;
-                if !valid[flat] {
-                    continue;
-                }
-                let class_id = usize::try_from(classes[flat])?;
-                if let Some(bbox) =
-                    source_box(metadata, boxes[flat * 4..flat * 4 + 4].try_into().unwrap())
-                {
+            for (target, item) in batch.targets[image].iter().enumerate() {
+                if let Some(bbox) = source_box(
+                    metadata,
+                    [
+                        item.bbox.xmin,
+                        item.bbox.ymin,
+                        item.bbox.xmax,
+                        item.bbox.ymax,
+                    ],
+                ) {
                     targets.push(crate::training::metrics::detection::MetricTarget {
                         image_id: metadata.image_id.clone(),
-                        class_id,
+                        class_id: item.class_id,
                         bbox,
                         crowd: metadata.crowd.get(target).copied().unwrap_or(false),
                     });
@@ -2503,27 +2484,18 @@ where
     let mut mask_targets = Vec::new();
     let mut image_count = 0;
     for batch in batches {
-        let [batch_size, max_targets] = batch.detection.classes.dims();
-        let [_, _, image_height, image_width] = batch.detection.images.dims();
+        let [batch_size, _, image_height, image_width] = batch.detection.images.dims();
         let [mask_batch, mask_count, mask_height, mask_width] = batch.masks.dims();
-        if mask_batch != batch_size || mask_count != max_targets {
+        if mask_batch != batch_size
+            || batch
+                .detection
+                .targets
+                .iter()
+                .any(|targets| targets.len() > mask_count)
+        {
             return Err("segmentation target tensors disagree on batch/object shape".into());
         }
-        let classes_data = batch.detection.classes.into_data();
-        let boxes_data = batch.detection.boxes_xyxy.into_data();
-        let valid_data = batch.detection.valid.into_data();
         let masks_data = batch.masks.into_data();
-        let classes = classes_data
-            .as_slice::<i32>()?
-            .iter()
-            .map(|value| i64::from(*value))
-            .collect::<Vec<_>>();
-        let boxes = boxes_data.as_slice::<f32>()?;
-        let valid = valid_data
-            .as_slice::<u32>()?
-            .iter()
-            .map(|value| *value != 0)
-            .collect::<Vec<_>>();
         let masks = masks_data.as_slice::<f32>()?;
         for (image, metadata) in batch.detection.metadata.iter().enumerate() {
             let input = batch.detection.images.clone().slice([
@@ -2573,18 +2545,19 @@ where
                     },
                 );
             }
-            for target in 0..max_targets {
-                let flat = image * max_targets + target;
-                if !valid[flat] {
-                    continue;
-                }
-                let class_id = usize::try_from(classes[flat])?;
-                let Some(bbox) =
-                    source_box(metadata, boxes[flat * 4..flat * 4 + 4].try_into().unwrap())
-                else {
+            for (target, item) in batch.detection.targets[image].iter().enumerate() {
+                let Some(bbox) = source_box(
+                    metadata,
+                    [
+                        item.bbox.xmin,
+                        item.bbox.ymin,
+                        item.bbox.xmax,
+                        item.bbox.ymax,
+                    ],
+                ) else {
                     continue;
                 };
-                let mask_start = flat * mask_height * mask_width;
+                let mask_start = (image * mask_count + target) * mask_height * mask_width;
                 let canvas_mask = masks[mask_start..mask_start + mask_height * mask_width]
                     .iter()
                     .map(|value| *value > 0.5)
@@ -2592,13 +2565,13 @@ where
                 let mask = source_mask(metadata, &canvas_mask, mask_width, mask_height);
                 box_targets.push(crate::training::metrics::detection::MetricTarget {
                     image_id: metadata.image_id.clone(),
-                    class_id,
+                    class_id: item.class_id,
                     bbox,
                     crowd: metadata.crowd.get(target).copied().unwrap_or(false),
                 });
                 mask_targets.push(crate::training::metrics::segmentation::MetricMaskTarget {
                     image_id: metadata.image_id.clone(),
-                    class_id,
+                    class_id: item.class_id,
                     mask,
                     crowd: metadata.crowd.get(target).copied().unwrap_or(false),
                 });

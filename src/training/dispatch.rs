@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use burn::tensor::{ElementConversion, backend::AutodiffBackend};
+use burn::tensor::backend::AutodiffBackend;
 
 use crate::{
     ModelId,
@@ -26,7 +26,7 @@ use crate::{
         assign::{simota::GroundTruth, tal::TalGroundTruth},
         data::batch::{ClassificationBatch, DetectionBatch, SegmentationBatch},
         engine::{LossContext, TrainableTask},
-        geometry::{BoxXyxy, FeatureLevelLayout},
+        geometry::FeatureLevelLayout,
         loss::{classification, segmentation, ultralytics_detect, yolox},
     },
 };
@@ -112,43 +112,12 @@ pub const fn recipe_for(model: ModelId) -> TrainingRecipe {
 
 fn detection_targets<B: burn::tensor::backend::Backend>(
     batch: &DetectionBatch<B>,
-) -> Result<Vec<Vec<TalGroundTruth>>, String> {
-    let [images, max_targets] = batch.classes.dims();
-    let classes_data = batch.classes.clone().into_data();
-    let boxes_data = batch.boxes_xyxy.clone().into_data();
-    let valid_data = batch.valid.clone().into_data();
-    let classes = classes_data
-        .iter::<B::IntElem>()
-        .map(|value| value.elem::<i64>())
-        .collect::<Vec<_>>();
-    let boxes = boxes_data
-        .as_slice::<f32>()
-        .map_err(|_| "target boxes are not f32")?;
-    let valid = valid_data
-        .iter::<B::BoolElem>()
-        .map(|value| value.elem::<u32>() != 0)
-        .collect::<Vec<_>>();
-    let mut output = vec![Vec::new(); images];
-    for (image, image_output) in output.iter_mut().enumerate().take(images) {
-        for target in 0..max_targets {
-            let flat = image * max_targets + target;
-            if valid[flat] {
-                let class_id =
-                    usize::try_from(classes[flat]).map_err(|_| "negative target class")?;
-                let edges: [f32; 4] = boxes[flat * 4..flat * 4 + 4].try_into().unwrap();
-                if edges.into_iter().any(|value| !value.is_finite()) {
-                    return Err("target box edges are not finite".into());
-                }
-                // WGPU represents bool host data as integer storage. Treat a non-positive padded
-                // row as absent even if backend conversion reports its validity slot as true.
-                // Real transformed zero-area boxes are already filtered by Format.
-                if let Ok(bbox) = BoxXyxy::new(edges) {
-                    image_output.push(TalGroundTruth { class_id, bbox });
-                }
-            }
-        }
+) -> Result<&[Vec<TalGroundTruth>], String> {
+    let images = batch.images.dims()[0];
+    if batch.targets.len() != images {
+        return Err("host target batch size differs from image batch".into());
     }
-    Ok(output)
+    Ok(&batch.targets)
 }
 
 impl<B: AutodiffBackend> TrainableTask<B> for Yolox<B> {
@@ -161,10 +130,10 @@ impl<B: AutodiffBackend> TrainableTask<B> for Yolox<B> {
     ) -> Result<crate::training::loss::common::LossOutput<B>, String> {
         let tal = detection_targets(batch)?;
         let targets = tal
-            .into_iter()
+            .iter()
             .map(|items| {
                 items
-                    .into_iter()
+                    .iter()
                     .map(|item| GroundTruth {
                         class_id: item.class_id,
                         bbox: item.bbox,
@@ -243,7 +212,7 @@ impl<B: AutodiffBackend> TrainableTask<B> for Yolov3Tiny<B> {
                     stride: 32,
                 },
             ],
-            &detection_targets(batch)?,
+            detection_targets(batch)?,
             ultralytics_detect::DetectionLossConfig::dfl([height, width], 10),
         )
         .map_err(str::to_string)
@@ -269,7 +238,7 @@ macro_rules! yolo11_detect_task {
                         FeatureLevelLayout { height: height / 16, width: width / 16, stride: 16 },
                         FeatureLevelLayout { height: height / 32, width: width / 32, stride: 32 },
                     ],
-                    &detection_targets(batch)?,
+                    detection_targets(batch)?,
                     ultralytics_detect::DetectionLossConfig::dfl([height, width], 10),
                 )
                 .map_err(str::to_string)
@@ -389,7 +358,7 @@ macro_rules! yolo11_segment_task {
                         FeatureLevelLayout { height: height / 16, width: width / 16, stride: 16 },
                         FeatureLevelLayout { height: height / 32, width: width / 32, stride: 32 },
                     ],
-                    &detection_targets(&batch.detection)?,
+                    detection_targets(&batch.detection)?,
                     ultralytics_detect::DetectionLossConfig::dfl([height, width], 10),
                 ).map_err(str::to_string)?;
                 let mask = segmentation::instance_mask_loss(
@@ -523,19 +492,18 @@ mod tests {
     }
 
     #[test]
-    fn detached_targets_ignore_non_positive_padding_rows() {
-        use burn::tensor::{Bool, Int, Tensor};
+    fn detached_targets_use_the_host_batch() {
+        use crate::training::geometry::BoxXyxy;
+        use burn::tensor::Tensor;
         use burn_flex::Flex;
 
         let device = Default::default();
         let batch = DetectionBatch::<Flex> {
             images: Tensor::zeros([1, 3, 8, 8], &device),
-            classes: Tensor::<Flex, 2, Int>::from_ints([[7, 0]], &device),
-            boxes_xyxy: Tensor::from_floats(
-                [[[1.0, 1.0, 7.0, 7.0], [0.0, 0.0, 0.0, 0.0]]],
-                &device,
-            ),
-            valid: Tensor::<Flex, 2, Bool>::from_bool([[true, true]].into(), &device),
+            targets: vec![vec![TalGroundTruth {
+                class_id: 7,
+                bbox: BoxXyxy::new([1.0, 1.0, 7.0, 7.0]).unwrap(),
+            }]],
             metadata: Vec::new(),
         };
 

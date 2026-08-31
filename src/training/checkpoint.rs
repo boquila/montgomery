@@ -17,6 +17,56 @@ use crate::training::{TrainingConfig, scheduler::LrScheduler, state::TrainingSta
 
 pub const CHECKPOINT_FORMAT: &str = "boquilens-training-v1";
 
+pub struct PendingCheckpoint {
+    handle: std::thread::JoinHandle<Result<(), CheckpointError>>,
+}
+
+impl PendingCheckpoint {
+    /// Wait until the checkpoint is durably published and surface worker failures.
+    pub fn finish(self) -> Result<(), CheckpointError> {
+        self.handle
+            .join()
+            .map_err(|_| CheckpointError::new("checkpoint publication worker panicked"))?
+    }
+}
+
+/// Publish an already encoded epoch checkpoint on a dedicated CPU/file-I/O worker.
+///
+/// Callers retain at most one [`PendingCheckpoint`] and must finish it before starting another.
+pub fn spawn_epoch_publication(
+    checkpoints: PathBuf,
+    epoch: usize,
+    manifest: CheckpointManifest,
+    payloads: Vec<(&'static str, Vec<u8>)>,
+    improved: bool,
+) -> PendingCheckpoint {
+    PendingCheckpoint {
+        handle: std::thread::spawn(move || {
+            publish_epoch_checkpoint(&checkpoints, epoch, manifest, &payloads, improved)
+        }),
+    }
+}
+
+fn publish_epoch_checkpoint(
+    checkpoints: &Path,
+    epoch: usize,
+    manifest: CheckpointManifest,
+    payloads: &[(&str, Vec<u8>)],
+    improved: bool,
+) -> Result<(), CheckpointError> {
+    let epoch_path = checkpoints.join(format!("epoch-{epoch:04}"));
+    let borrowed = payloads
+        .iter()
+        .map(|(name, bytes)| (*name, bytes.as_slice()))
+        .collect::<Vec<_>>();
+    let saved_manifest = save_atomic(&epoch_path, manifest, &borrowed)?;
+    replace_atomic_from_saved(checkpoints.join("last"), &epoch_path, &saved_manifest)?;
+    if improved {
+        replace_atomic_from_saved(checkpoints.join("best"), &epoch_path, &saved_manifest)?;
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CheckpointManifest {
     pub format: String,
@@ -345,6 +395,45 @@ mod tests {
         replace_atomic_from(&last, &epoch_two).unwrap();
         assert_eq!(fs::read(last.join("model.bin")).unwrap(), b"second");
         assert_eq!(load(&last).unwrap().state.global_seed, 9);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn asynchronous_publication_is_atomic_and_surfaces_worker_errors() {
+        let root = unique_path("checkpoint-async");
+        fs::create_dir_all(&root).unwrap();
+        let spec = ModelSpec::new(ModelId::YoloxNano, vec!["object".into()], None).unwrap();
+        let config = TrainingConfig::yolox(spec, "data.yaml".into(), "runs".into());
+        let scheduler = LrScheduler::new(ScheduleKind::Cosine, 0.1, 0.05, 0, 2).unwrap();
+        let first =
+            CheckpointManifest::new(config.clone(), TrainingState::new(7), scheduler.clone());
+        spawn_epoch_publication(
+            root.clone(),
+            1,
+            first,
+            vec![("model.bin", b"first".to_vec())],
+            true,
+        )
+        .finish()
+        .unwrap();
+        assert_eq!(fs::read(root.join("last/model.bin")).unwrap(), b"first");
+        assert_eq!(fs::read(root.join("best/model.bin")).unwrap(), b"first");
+
+        let obstruction = root.join(format!(".last.incoming-{}", std::process::id()));
+        fs::create_dir(&obstruction).unwrap();
+        let second = CheckpointManifest::new(config, TrainingState::new(9), scheduler);
+        let error = spawn_epoch_publication(
+            root.clone(),
+            2,
+            second,
+            vec![("model.bin", b"second".to_vec())],
+            false,
+        )
+        .finish()
+        .unwrap_err();
+        assert!(error.to_string().contains("temporary path already exists"));
+        assert_eq!(fs::read(root.join("last/model.bin")).unwrap(), b"first");
+        assert_eq!(load(root.join("epoch-0002")).unwrap().state.global_seed, 9);
         fs::remove_dir_all(root).unwrap();
     }
 }
