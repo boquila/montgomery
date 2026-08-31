@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import os
 import platform
@@ -32,6 +33,29 @@ ULTRA_SCRIPT = ROOT / "tools" / "bench_ultralytics_train.py"
 ULTRA_VALIDATION_SCRIPT = ROOT / "tools" / "validate_ultralytics_training.py"
 DATA_SCRIPT = ROOT / "tools" / "prepare_training_benchmark_data.py"
 DEFAULT_OUTPUT = ROOT / "target" / "performance-comparison" / "results.json"
+
+
+def repository_metadata() -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    try:
+        metadata["revision"] = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
+        ).strip()
+        metadata["dirty"] = bool(
+            subprocess.check_output(
+                ["git", "status", "--short"], cwd=ROOT, text=True
+            ).strip()
+        )
+    except (OSError, subprocess.CalledProcessError):
+        metadata["revision"] = None
+        metadata["dirty"] = None
+    if NATIVE.is_file():
+        digest = hashlib.sha256()
+        with NATIVE.open("rb") as binary:
+            for chunk in iter(lambda: binary.read(1024 * 1024), b""):
+                digest.update(chunk)
+        metadata["native_binary_sha256"] = digest.hexdigest()
+    return metadata
 
 
 @dataclass(frozen=True)
@@ -379,6 +403,7 @@ def main() -> None:
             "processor": platform.processor(),
             "python": sys.version,
         },
+        "source": repository_metadata(),
         "scenarios": [],
     }
     if args.resume and output.exists():

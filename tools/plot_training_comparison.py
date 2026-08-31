@@ -250,10 +250,45 @@ def effective_throughput(entries: dict[str, dict], output: Path) -> None:
     finish(figure, output / "effective-throughput.png")
 
 
+def optimization_before_after(
+    baseline_entries: dict[str, dict], entries: dict[str, dict], output: Path
+) -> None:
+    scenario_id = "yolov8n-segment"
+    if scenario_id not in baseline_entries or scenario_id not in entries:
+        return
+    baseline = median(baseline_entries[scenario_id], "native")
+    optimized = median(entries[scenario_id], "native")
+    ultralytics = median(entries[scenario_id], "ultralytics")
+    labels = ["native before\nvectorization", "native after\nvectorization", "Ultralytics"]
+    values = [baseline, optimized, ultralytics]
+    figure, axis = plt.subplots(figsize=(9, 5.8))
+    bars = axis.bar(labels, values, color=["#c4b5fd", NATIVE, ULTRA], width=0.62)
+    axis.bar_label(bars, labels=[f"{value:.2f}s" for value in values], padding=5, fontsize=12)
+    axis.set_ylabel("External command wall time (seconds)")
+    figure.suptitle(
+        "YOLOv8n segmentation optimization",
+        x=0.10,
+        y=0.98,
+        ha="left",
+        fontsize=20,
+        fontweight="bold",
+    )
+    axis.set_title(
+        f"Same 48-step workload · native improved {baseline / optimized:.1f}×",
+        loc="left",
+        color="#475569",
+        fontsize=11,
+        pad=12,
+    )
+    axis.spines[["top", "right"]].set_visible(False)
+    finish(figure, output / "segmentation-before-after.png")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("results", type=Path)
     parser.add_argument("output", type=Path)
+    parser.add_argument("--baseline", type=Path)
     args = parser.parse_args()
     configure()
     _, entries = load(args.results)
@@ -267,6 +302,9 @@ def main() -> None:
     convergence(entries, args.output)
     first_vs_warm(entries, args.output)
     effective_throughput(entries, args.output)
+    if args.baseline:
+        _, baseline_entries = load(args.baseline)
+        optimization_before_after(baseline_entries, entries, args.output)
 
 
 if __name__ == "__main__":
