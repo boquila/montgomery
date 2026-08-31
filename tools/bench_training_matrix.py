@@ -99,6 +99,9 @@ SCENARIOS = [
                224 if task == "classify" else 320, 2, 3)
       for model in ("yolov8n", "yolo11n", "yolo26n")
       for task, suffix in (("classify", "cls"), ("detect", ""), ("segment", "seg"))),
+    # Detect-only families at the same settings as the other nano detectors.
+    *(Scenario(f"{model}-detect", "family-task", model, "detect", 320, 2, 3)
+      for model in ("yolov3-tinyu", "yolov10n", "yolo12n")),
     # YOLO26 scale coverage at fixed task settings.
     *(Scenario(f"yolo26{scale}-{task}", "scale", f"yolo26{scale}-{suffix}" if suffix else f"yolo26{scale}",
                task, 224 if task == "classify" else 320, 2, 3)
