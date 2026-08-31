@@ -150,6 +150,10 @@ def command_for(framework: str, scenario: Scenario, project: Path, name: str) ->
             str(project),
             "--name",
             name,
+            "--no-val",
+            "--no-export",
+            "--save-period",
+            "1",
         ]
     return [
         sys.executable,
@@ -180,7 +184,7 @@ def read_curve(path: Path, framework: str, task: str) -> list[float]:
     with path.open(newline="", encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
     if framework == "native":
-        return [float(row["loss"]) for row in rows]
+        return [float(row["train/loss"]) for row in rows]
     if task == "classify":
         return [float(row["train/loss"]) for row in rows]
     keys = ["train/box_loss", "train/seg_loss", "train/cls_loss", "train/dfl_loss"]
@@ -235,7 +239,7 @@ def run_once(
         )
     if framework == "native":
         run_dir = find_native_run(completed.stdout + completed.stderr)
-        metrics = run_dir / "metrics.csv"
+        metrics = run_dir / "results.csv"
         internal_seconds = None
         metadata_path = run_dir / "environment.json"
     else:

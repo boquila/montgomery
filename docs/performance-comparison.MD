@@ -209,9 +209,18 @@ uv run --locked tools/benchmark_training.py --scenario yolov8n-segment --repeats
 Use `--list` on `tools/bench_training_matrix.py` to see every scenario. Runs can be resumed, and full
 checkpoints can be retained with `--keep-runs`; they are deleted by default to keep output small.
 
-## What to optimize next
+## Follow-up status
 
-1. Reduce WGPU dispatch overhead for batch-1 and high-resolution YOLO26 workloads.
-2. Reduce per-epoch full-precision record extraction cost in long runs.
-3. Profile the remaining YOLO26 mask-head backward path at medium and larger scales.
-4. Add full-dataset convergence runs before making quality-parity claims.
+- WGPU aggregation was swept at 8, 16, 32, 64, and 128 queued tasks across batch-1 detect/segment,
+  640 px detect, and YOLO26m segment. The existing 32-task default was best overall; higher values
+  consistently regressed, while apparent 16-task wins disappeared on repeat trials. Re-run with
+  `uv run --locked tools/profile_wgpu_training.py`.
+- Long runs now extract full-precision model/EMA/optimizer records only on a fitness improvement,
+  every `--save-period` epochs (10 by default), at early stop, and at completion. Publication still
+  overlaps the next epoch, and only `best`/`last` remain.
+- The same profile isolates medium segmentation: backward is about 54–57% of measured GPU step
+  time. Mask/semantic ablations and alternate depthwise kernels did not clear the 5% acceptance
+  gate, so no correctness-risking shortcut was retained.
+- A strict full-COCO runner now rejects partial datasets and executes matched detect/segment
+  training plus validation: `uv run --locked tools/bench_full_convergence.py --download`. Full
+  convergence results are still required before any quality-parity claim.

@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     error::Error,
     fmt,
     time::{Duration, Instant},
@@ -65,9 +66,10 @@ impl LossContext {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct EpochSummary {
     pub mean_loss: f32,
+    pub mean_components: BTreeMap<String, f32>,
     pub microbatches: usize,
     pub optimizer_steps: usize,
 }
@@ -165,6 +167,7 @@ impl Trainer {
         }
         let mut accumulator = GradientsAccumulator::<M>::new();
         let mut loss_sum = 0.0_f64;
+        let mut component_sums = BTreeMap::<String, f64>::new();
         let diagnostic_capacity = batch_count.min(DIAGNOSTIC_CHUNK_SIZE);
         let mut events = Vec::with_capacity(diagnostic_capacity);
         let mut deferred = Vec::<DeferredDiagnostic<B>>::with_capacity(diagnostic_capacity);
@@ -292,6 +295,7 @@ impl Trainer {
                     &mut deferred,
                     &mut events,
                     &mut loss_sum,
+                    &mut component_sums,
                 )?;
             }
         }
@@ -301,8 +305,13 @@ impl Trainer {
             &mut deferred,
             &mut events,
             &mut loss_sum,
+            &mut component_sums,
         )?;
         let mean_loss = (loss_sum / batch_count as f64) as f32;
+        let mean_components = component_sums
+            .into_iter()
+            .map(|(name, value)| (name, (value / batch_count as f64) as f32))
+            .collect();
         if profile {
             eprintln!(
                 "training-profile epoch={} batches={} data_ms={:.3} forward_ms={:.3} backward_ms={:.3} optimizer_ms={:.3} after_step_ms={:.3}",
@@ -315,14 +324,6 @@ impl Trainer {
                 after_step_time.as_secs_f64() * 1e3,
             );
         }
-        self.run
-            .append_metrics(
-                self.state.epoch,
-                mean_loss,
-                None,
-                self.scheduler.current_lr(),
-            )
-            .map_err(EngineError::io)?;
         self.state.epoch += 1;
         self.state.next_batch = 0;
         if let Some(schedule) = &mut self.state.dual_loss {
@@ -343,6 +344,7 @@ impl Trainer {
             optimizer,
             EpochSummary {
                 mean_loss,
+                mean_components,
                 microbatches: batch_count,
                 optimizer_steps,
             },
@@ -356,6 +358,7 @@ fn flush_events<B: AutodiffBackend>(
     deferred: &mut Vec<DeferredDiagnostic<B>>,
     events: &mut Vec<StepEvent>,
     loss_sum: &mut f64,
+    component_sums: &mut BTreeMap<String, f64>,
 ) -> Result<(), EngineError> {
     if !deferred.is_empty() {
         let values = Tensor::cat(
@@ -382,6 +385,11 @@ fn flush_events<B: AutodiffBackend>(
             events[event_index]
                 .components
                 .insert(component.into(), value);
+        }
+    }
+    for event in events.iter() {
+        for (name, value) in &event.components {
+            *component_sums.entry(name.clone()).or_default() += f64::from(*value);
         }
     }
     run.append_events(events).map_err(EngineError::io)?;

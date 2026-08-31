@@ -22,6 +22,10 @@ pub struct MetricTarget {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DetectionMetrics {
+    #[serde(default)]
+    pub precision: f32,
+    #[serde(default)]
+    pub recall: f32,
     pub map_50_95: f32,
     pub map_50: f32,
     pub per_class_support: BTreeMap<usize, usize>,
@@ -45,6 +49,8 @@ pub fn evaluate(predictions: &[MetricPrediction], targets: &[MetricTarget]) -> D
     }
     if classes.is_empty() {
         return DetectionMetrics {
+            precision: 0.0,
+            recall: 0.0,
             map_50_95: 0.0,
             map_50: 0.0,
             per_class_support: support,
@@ -52,7 +58,13 @@ pub fn evaluate(predictions: &[MetricPrediction], targets: &[MetricTarget]) -> D
     }
     let thresholds: Vec<f32> = (0..10).map(|index| 0.5 + index as f32 * 0.05).collect();
     let mut sums = vec![0.0; thresholds.len()];
+    let mut precision = 0.0;
+    let mut recall = 0.0;
     for class in &classes {
+        let (class_precision, class_recall) =
+            best_precision_recall(precision_recall_curve(*class, 0.5, predictions, targets));
+        precision += class_precision;
+        recall += class_recall;
         for (index, threshold) in thresholds.iter().enumerate() {
             sums[index] += average_precision(*class, *threshold, predictions, targets);
         }
@@ -61,6 +73,8 @@ pub fn evaluate(predictions: &[MetricPrediction], targets: &[MetricTarget]) -> D
         *value /= classes.len() as f32;
     }
     DetectionMetrics {
+        precision: precision / classes.len() as f32,
+        recall: recall / classes.len() as f32,
         map_50: sums[0],
         map_50_95: sums.iter().sum::<f32>() / sums.len() as f32,
         per_class_support: support,
@@ -73,13 +87,35 @@ fn average_precision(
     predictions: &[MetricPrediction],
     targets: &[MetricTarget],
 ) -> f32 {
+    let (precision, recall) = precision_recall_curve(class, threshold, predictions, targets);
+    // COCO-style 101-point interpolated precision.
+    (0..=100)
+        .map(|point| {
+            let threshold = point as f32 / 100.0;
+            recall
+                .iter()
+                .zip(&precision)
+                .filter(|(recall, _)| **recall >= threshold)
+                .map(|(_, precision)| *precision)
+                .fold(0.0, f32::max)
+        })
+        .sum::<f32>()
+        / 101.0
+}
+
+fn precision_recall_curve(
+    class: usize,
+    threshold: f32,
+    predictions: &[MetricPrediction],
+    targets: &[MetricTarget],
+) -> (Vec<f32>, Vec<f32>) {
     let truth: Vec<_> = targets
         .iter()
         .filter(|target| target.class_id == class)
         .collect();
     let positive_count = truth.iter().filter(|target| !target.crowd).count();
     if positive_count == 0 {
-        return 0.0;
+        return (Vec::new(), Vec::new());
     }
     let mut candidates: Vec<_> = predictions
         .iter()
@@ -131,19 +167,24 @@ fn average_precision(
         precision.push(tp / (tp + fp).max(1e-9));
         recall.push(tp / positive_count as f32);
     }
-    // COCO-style 101-point interpolated precision.
-    (0..=100)
-        .map(|point| {
-            let threshold = point as f32 / 100.0;
-            recall
-                .iter()
-                .zip(&precision)
-                .filter(|(recall, _)| **recall >= threshold)
-                .map(|(_, precision)| *precision)
-                .fold(0.0, f32::max)
-        })
-        .sum::<f32>()
-        / 101.0
+    (precision, recall)
+}
+
+fn best_precision_recall(curve: (Vec<f32>, Vec<f32>)) -> (f32, f32) {
+    curve
+        .0
+        .into_iter()
+        .zip(curve.1)
+        .max_by(
+            |(left_precision, left_recall), (right_precision, right_recall)| {
+                let left =
+                    2.0 * left_precision * left_recall / (left_precision + left_recall).max(1e-9);
+                let right = 2.0 * right_precision * right_recall
+                    / (right_precision + right_recall).max(1e-9);
+                left.total_cmp(&right)
+            },
+        )
+        .unwrap_or((0.0, 0.0))
 }
 
 #[cfg(test)]
@@ -168,5 +209,6 @@ mod tests {
             }],
         );
         assert!((metrics.map_50_95 - 1.0).abs() < 1e-6);
+        assert_eq!((metrics.precision, metrics.recall), (1.0, 1.0));
     }
 }

@@ -5,6 +5,8 @@ use boquilens::export::{
     CheckpointState, ExternalDataPolicy, OnnxExportOptions, OnnxPrecision, OnnxProfile, export_onnx,
 };
 #[cfg(feature = "training")]
+use boquilens::training::automatic_worker_count;
+#[cfg(feature = "training")]
 use boquilens::training::runtime::{
     TrainingRequest, export as export_training, train as train_native, validate as validate_native,
 };
@@ -72,7 +74,7 @@ struct TrainArgs {
     #[arg(long, default_value_t = 1)]
     accumulation: usize,
     /// CPU preprocessing workers.
-    #[arg(long, default_value_t = 4)]
+    #[arg(long, default_value_t = automatic_worker_count())]
     workers: usize,
     /// Number of prepared CPU batches retained ahead of the active batch.
     #[arg(long, default_value_t = 2)]
@@ -103,6 +105,15 @@ struct TrainArgs {
     /// Maximum predictions retained per validation image.
     #[arg(long)]
     max_detections: Option<usize>,
+    /// Skip validation during training. Useful for throughput benchmarks.
+    #[arg(long)]
+    no_val: bool,
+    /// Skip final best.bpk and last.bpk inference exports.
+    #[arg(long)]
+    no_export: bool,
+    /// Save a resumable `last` checkpoint every N epochs; improvements and the final epoch always save.
+    #[arg(long, default_value_t = 10)]
+    save_period: usize,
 }
 
 #[cfg(feature = "training")]
@@ -293,8 +304,25 @@ fn main() -> boquilens::Result<()> {
                 val_confidence: args.val_confidence,
                 val_iou: args.val_iou,
                 max_detections: args.max_detections,
+                validation_enabled: !args.no_val,
+                export_artifacts: !args.no_export,
+                checkpoint_interval: args.save_period,
             })?;
             eprintln!("Training run: {}", run.display());
+            let best = run.join("exports/best.bpk");
+            if best.exists() {
+                eprintln!("Best model: {}", best.display());
+                eprintln!("Last model: {}", run.join("exports/last.bpk").display());
+            } else if !args.dry_run {
+                eprintln!(
+                    "Best checkpoint: {}",
+                    run.join("checkpoints/best").display()
+                );
+                eprintln!(
+                    "Last checkpoint: {}",
+                    run.join("checkpoints/last").display()
+                );
+            }
             Ok(())
         }
         #[cfg(feature = "training")]
@@ -306,21 +334,27 @@ fn main() -> boquilens::Result<()> {
                 (&summary.box_metrics, &summary.mask_metrics)
             {
                 println!(
-                    "{} {} images: box mAP50-95 {:.2}%, mAP50 {:.2}%; mask mAP50-95 {:.2}%, mAP50 {:.2}%",
+                    "{} {} images: box P {:.2}%, R {:.2}%, mAP50 {:.2}%, mAP50-95 {:.2}%; mask P {:.2}%, R {:.2}%, mAP50 {:.2}%, mAP50-95 {:.2}%",
                     summary.model,
                     summary.images,
-                    box_metrics.map_50_95 * 100.0,
+                    box_metrics.precision * 100.0,
+                    box_metrics.recall * 100.0,
                     box_metrics.map_50 * 100.0,
-                    mask_metrics.map_50_95 * 100.0,
+                    box_metrics.map_50_95 * 100.0,
+                    mask_metrics.precision * 100.0,
+                    mask_metrics.recall * 100.0,
                     mask_metrics.map_50 * 100.0,
+                    mask_metrics.map_50_95 * 100.0,
                 );
             } else if let Some(metrics) = &summary.box_metrics {
                 println!(
-                    "{} {} images: box mAP50-95 {:.2}%, mAP50 {:.2}%",
+                    "{} {} images: box P {:.2}%, R {:.2}%, mAP50 {:.2}%, mAP50-95 {:.2}%",
                     summary.model,
                     summary.images,
-                    metrics.map_50_95 * 100.0,
+                    metrics.precision * 100.0,
+                    metrics.recall * 100.0,
                     metrics.map_50 * 100.0,
+                    metrics.map_50_95 * 100.0,
                 );
             } else {
                 println!(

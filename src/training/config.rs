@@ -5,6 +5,21 @@ use serde::{Deserialize, Serialize};
 use crate::ModelId;
 use crate::data::augmentation::AugmentationConfig;
 
+/// Conservative automatic preprocessing parallelism for interactive training.
+///
+/// Half the logical CPUs leaves room for the WGPU driver and filesystem work; the cap avoids
+/// multiplying decoded-image memory on high-core-count workstations.
+pub fn automatic_worker_count() -> usize {
+    let logical_cpus = std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(2);
+    recommended_worker_count(logical_cpus)
+}
+
+fn recommended_worker_count(logical_cpus: usize) -> usize {
+    logical_cpus.max(1).div_ceil(2).clamp(1, 8)
+}
+
 /// Task represented by a trainable model graph.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -150,7 +165,11 @@ pub struct TrainingConfig {
     pub weight_decay: f64,
     pub warmup_steps: u64,
     pub gradient_clip: f64,
+    #[serde(default = "validation_enabled_by_default")]
+    pub validation_enabled: bool,
     pub validation_interval: usize,
+    #[serde(default = "default_checkpoint_interval")]
+    pub checkpoint_interval: usize,
     pub patience: usize,
     #[serde(default)]
     pub validation: ValidationConfig,
@@ -168,7 +187,7 @@ impl TrainingConfig {
             epochs: 300,
             batch_size: 8,
             accumulation: 1,
-            workers: 4,
+            workers: automatic_worker_count(),
             prefetch: 2,
             seed: 0,
             optimizer: OptimizerKind::Sgd,
@@ -179,7 +198,9 @@ impl TrainingConfig {
             weight_decay: 5e-4,
             warmup_steps: 0,
             gradient_clip: 10.0,
+            validation_enabled: true,
             validation_interval: 1,
+            checkpoint_interval: 10,
             patience: 50,
             validation: ValidationConfig::default(),
             augmentation: AugmentationConfig {
@@ -196,9 +217,13 @@ impl TrainingConfig {
                 "epochs, batch_size, and accumulation must be greater than zero",
             ));
         }
-        if self.prefetch == 0 || self.validation_interval == 0 {
+        if self.workers == 0
+            || self.prefetch == 0
+            || self.validation_interval == 0
+            || self.checkpoint_interval == 0
+        {
             return Err(ConfigError::new(
-                "prefetch and validation_interval must be greater than zero",
+                "workers, prefetch, validation_interval, and checkpoint_interval must be greater than zero",
             ));
         }
         if !self.initial_lr.is_finite() || self.initial_lr <= 0.0 {
@@ -234,6 +259,14 @@ impl TrainingConfig {
     }
 }
 
+const fn validation_enabled_by_default() -> bool {
+    true
+}
+
+const fn default_checkpoint_interval() -> usize {
+    10
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfigError(String);
 
@@ -267,5 +300,14 @@ mod tests {
     fn nano_and_tiny_default_to_official_416_canvas() {
         let spec = ModelSpec::new(ModelId::YoloxNano, vec!["object".into()], None).unwrap();
         assert_eq!(spec.input_size, [416, 416]);
+    }
+
+    #[test]
+    fn preprocessing_workers_scale_conservatively_with_cpu_count() {
+        assert_eq!(recommended_worker_count(1), 1);
+        assert_eq!(recommended_worker_count(8), 4);
+        assert_eq!(recommended_worker_count(16), 8);
+        assert_eq!(recommended_worker_count(32), 8);
+        assert_eq!(recommended_worker_count(128), 8);
     }
 }

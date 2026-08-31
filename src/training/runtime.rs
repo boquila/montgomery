@@ -62,10 +62,34 @@ use crate::{
             sample::ImageMeta,
         },
         engine::{EpochBatchSource, TrainableTask},
+        report::ResultsRow,
     },
 };
 
 type TrainBackend = Autodiff<Wgpu>;
+
+impl<T> EpochBatchSource<T> for VecDeque<T> {
+    fn batch_count(&self) -> usize {
+        self.len()
+    }
+
+    fn next_batch(&mut self) -> Result<Option<T>, String> {
+        Ok(self.pop_front())
+    }
+}
+
+impl<T, S> EpochBatchSource<T> for Box<S>
+where
+    S: EpochBatchSource<T> + ?Sized,
+{
+    fn batch_count(&self) -> usize {
+        (**self).batch_count()
+    }
+
+    fn next_batch(&mut self) -> Result<Option<T>, String> {
+        (**self).next_batch()
+    }
+}
 
 fn prefetch_sample_capacity(batch_size: usize, prefetch: usize) -> usize {
     batch_size.saturating_mul(prefetch).max(1)
@@ -412,6 +436,7 @@ impl<'a> VisionEpochFormatter<'a> {
         epoch: u64,
         task: crate::training::TaskKind,
         loader: VisionSampleLoader<'a>,
+        training: bool,
     ) -> Result<Self, Box<dyn Error + Send + Sync>> {
         let capacity = prefetch_sample_capacity(config.batch_size, config.prefetch);
         let worker_count = config.workers.max(1).min(capacity);
@@ -430,7 +455,7 @@ impl<'a> VisionEpochFormatter<'a> {
             config,
             images,
             pipeline: AugmentationPipeline::for_epoch(
-                config.augmentation.resolve(task, true)?,
+                config.augmentation.resolve(task, training)?,
                 epoch as usize,
                 config.epochs,
             )?,
@@ -580,6 +605,7 @@ impl<'a, B: Backend> DetectionBatchSource<'a, B> {
         device: &'a B::Device,
         epoch: u64,
         loader: VisionSampleLoader<'a>,
+        training: bool,
     ) -> Result<Self, Box<dyn Error + Send + Sync>> {
         Ok(Self {
             formatter: VisionEpochFormatter::new(
@@ -588,6 +614,7 @@ impl<'a, B: Backend> DetectionBatchSource<'a, B> {
                 epoch,
                 crate::training::TaskKind::Detect,
                 loader,
+                training,
             )?,
             device,
         })
@@ -621,6 +648,7 @@ impl<'a, B: Backend> SegmentationBatchSource<'a, B> {
         device: &'a B::Device,
         epoch: u64,
         loader: VisionSampleLoader<'a>,
+        training: bool,
     ) -> Result<Self, Box<dyn Error + Send + Sync>> {
         Ok(Self {
             formatter: VisionEpochFormatter::new(
@@ -629,6 +657,7 @@ impl<'a, B: Backend> SegmentationBatchSource<'a, B> {
                 epoch,
                 crate::training::TaskKind::Segment,
                 loader,
+                training,
             )?,
             device,
         })
@@ -760,6 +789,9 @@ pub struct TrainingRequest {
     pub val_confidence: Option<f32>,
     pub val_iou: Option<f32>,
     pub max_detections: Option<usize>,
+    pub validation_enabled: bool,
+    pub export_artifacts: bool,
+    pub checkpoint_interval: usize,
 }
 
 pub fn train(request: TrainingRequest) -> Result<PathBuf, Box<dyn Error + Send + Sync>> {
@@ -842,7 +874,15 @@ fn train_inner(request: TrainingRequest) -> Result<PathBuf, Box<dyn Error + Send
             config.validation.max_detections = value;
         }
     }
+    config.validation_enabled = request.validation_enabled;
+    config.checkpoint_interval = request.checkpoint_interval;
     config.validate()?;
+    if config.validation_enabled && dataset.val_images.is_empty() {
+        return Err(
+            "dataset manifest has no validation images; add a validation split or pass --no-val"
+                .into(),
+        );
+    }
     let (device, adapter) = crate::default_wgpu_device();
     TrainBackend::seed(&device, config.seed);
     eprintln!("Training adapter: {adapter}");
@@ -862,6 +902,7 @@ fn train_inner(request: TrainingRequest) -> Result<PathBuf, Box<dyn Error + Send
         trainer
     };
     let classes = config.model.num_classes;
+    let model_id = config.model.architecture;
 
     macro_rules! pretrained {
         ($target:expr, $official:expr, $projection:expr) => {{
@@ -907,9 +948,25 @@ fn train_inner(request: TrainingRequest) -> Result<PathBuf, Box<dyn Error + Send
                         true,
                     )
                 },
-                request.dry_run,
-                request.resume.as_ref(),
-                &device,
+                |model| {
+                    validate_classification_loaded(
+                        model,
+                        ClassificationBatchSource::new(
+                            &config,
+                            &dataset,
+                            &dataset.val_images,
+                            &device,
+                            0,
+                            false,
+                        )?,
+                        model_id,
+                    )
+                },
+                RunTaskOptions {
+                    dry_run: request.dry_run,
+                    resume: request.resume.as_ref(),
+                    device: &device,
+                },
             )
         }};
     }
@@ -926,6 +983,7 @@ fn train_inner(request: TrainingRequest) -> Result<PathBuf, Box<dyn Error + Send
                     &device,
                     epoch,
                     loader.clone(),
+                    true,
                 )?,
                 |epoch| {
                     DetectionBatchSource::new(
@@ -934,11 +992,51 @@ fn train_inner(request: TrainingRequest) -> Result<PathBuf, Box<dyn Error + Send
                         &device,
                         epoch,
                         loader.clone(),
+                        true,
                     )
                 },
-                request.dry_run,
-                request.resume.as_ref(),
-                &device,
+                |model| {
+                    if matches!(
+                        model_id,
+                        ModelId::YoloxNano
+                            | ModelId::YoloxTiny
+                            | ModelId::YoloxS
+                            | ModelId::YoloxM
+                            | ModelId::YoloxL
+                            | ModelId::YoloxX
+                    ) {
+                        validate_detection_loaded(
+                            model,
+                            VecDeque::from(build_yolox_validation_batches(
+                                &config,
+                                &dataset,
+                                &dataset.val_images,
+                                &device,
+                            )?),
+                            model_id,
+                            &config.validation,
+                        )
+                    } else {
+                        validate_detection_loaded(
+                            model,
+                            DetectionBatchSource::new(
+                                &config,
+                                &dataset.val_images,
+                                &device,
+                                0,
+                                VisionSampleLoader::new(&dataset, &dataset.val_images, false)?,
+                                false,
+                            )?,
+                            model_id,
+                            &config.validation,
+                        )
+                    }
+                },
+                RunTaskOptions {
+                    dry_run: request.dry_run,
+                    resume: request.resume.as_ref(),
+                    device: &device,
+                },
             )
         }};
     }
@@ -955,6 +1053,7 @@ fn train_inner(request: TrainingRequest) -> Result<PathBuf, Box<dyn Error + Send
                     &device,
                     epoch,
                     loader.clone(),
+                    true,
                 )?,
                 |epoch| {
                     SegmentationBatchSource::new(
@@ -963,11 +1062,29 @@ fn train_inner(request: TrainingRequest) -> Result<PathBuf, Box<dyn Error + Send
                         &device,
                         epoch,
                         loader.clone(),
+                        true,
                     )
                 },
-                request.dry_run,
-                request.resume.as_ref(),
-                &device,
+                |model| {
+                    validate_segmentation_loaded(
+                        model,
+                        SegmentationBatchSource::new(
+                            &config,
+                            &dataset.val_images,
+                            &device,
+                            0,
+                            VisionSampleLoader::new(&dataset, &dataset.val_images, false)?,
+                            false,
+                        )?,
+                        model_id,
+                        &config.validation,
+                    )
+                },
+                RunTaskOptions {
+                    dry_run: request.dry_run,
+                    resume: request.resume.as_ref(),
+                    device: &device,
+                },
             )
         }};
     }
@@ -1238,24 +1355,101 @@ fn train_inner(request: TrainingRequest) -> Result<PathBuf, Box<dyn Error + Send
             ReplacedProjection::Yolo26Segment
         ),
     }?;
+    if !request.dry_run && request.export_artifacts {
+        export_run_artifacts(&run)?;
+    }
+    if !request.dry_run {
+        write_run_summary(&run)?;
+    }
     Ok(run)
 }
 
-fn run_task<M, F, S>(
+fn write_run_summary(run: &std::path::Path) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let best = crate::training::checkpoint::load(run.join("checkpoints/best"))?;
+    let last = crate::training::checkpoint::load(run.join("checkpoints/last"))?;
+    let summary = serde_json::json!({
+        "format": "boquilens-training-summary-v1",
+        "epochs_completed": last.state.epoch,
+        "best_epoch": best.state.best_epoch,
+        "best_fitness": best.state.best_fitness,
+        "results": "results.csv",
+        "plot": "results.svg",
+        "best_checkpoint": "checkpoints/best",
+        "last_checkpoint": "checkpoints/last",
+        "best_weights": run.join("exports/best.bpk").exists().then_some("exports/best.bpk"),
+        "last_weights": run.join("exports/last.bpk").exists().then_some("exports/last.bpk"),
+    });
+    std::fs::write(
+        run.join("summary.json"),
+        serde_json::to_vec_pretty(&summary)?,
+    )?;
+    Ok(())
+}
+
+fn export_run_artifacts(run: &std::path::Path) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let exports = run.join("exports");
+    let best_manifest = crate::training::checkpoint::load(run.join("checkpoints/best"))?;
+    let last_manifest = crate::training::checkpoint::load(run.join("checkpoints/last"))?;
+    let shared_ema = best_manifest
+        .payloads
+        .get("ema.bin")
+        .is_some_and(|hash| last_manifest.payloads.get("ema.bin") == Some(hash));
+    for name in ["best", "last"] {
+        let output = exports.join(format!("{name}.bpk"));
+        let temporary = exports.join(format!(".{name}.tmp-{}.bpk", std::process::id()));
+        if temporary.exists() {
+            std::fs::remove_file(&temporary)?;
+        }
+        if name == "last" && shared_ema {
+            let best = exports.join("best.bpk");
+            if std::fs::hard_link(&best, &temporary).is_err() {
+                std::fs::copy(best, &temporary)?;
+            }
+        } else {
+            export_inner(run.join("checkpoints").join(name), temporary.clone())?;
+        }
+        let previous = exports.join(format!(".{name}.bpk.previous-{}", std::process::id()));
+        if previous.exists() {
+            std::fs::remove_file(&previous)?;
+        }
+        if output.exists() {
+            std::fs::rename(&output, &previous)?;
+        }
+        if let Err(error) = std::fs::rename(&temporary, &output) {
+            if previous.exists() {
+                let _ = std::fs::rename(&previous, &output);
+            }
+            return Err(error.into());
+        }
+        if previous.exists() {
+            std::fs::remove_file(previous)?;
+        }
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+struct RunTaskOptions<'a> {
+    dry_run: bool,
+    resume: Option<&'a PathBuf>,
+    device: &'a burn::tensor::Device<TrainBackend>,
+}
+
+fn run_task<M, F, S, V>(
     model: M,
     trainer: Trainer,
     mut batches: S,
     rebuild_batches: F,
-    dry_run: bool,
-    resume: Option<&PathBuf>,
-    device: &burn::tensor::Device<TrainBackend>,
+    validator: V,
+    options: RunTaskOptions<'_>,
 ) -> Result<PathBuf, Box<dyn Error + Send + Sync>>
 where
     M: TrainableTask<TrainBackend> + Clone,
     F: FnMut(u64) -> Result<S, Box<dyn Error + Send + Sync>>,
     S: EpochBatchSource<M::Batch>,
+    V: FnMut(M::InnerModule) -> Result<ValidationSummary, Box<dyn Error + Send + Sync>>,
 {
-    if dry_run {
+    if options.dry_run {
         let batch = batches
             .next_batch()?
             .ok_or("dry-run batch source produced no batches")?;
@@ -1295,8 +1489,8 @@ where
             trainer,
             batches,
             rebuild_batches,
-            resume,
-            device,
+            options,
+            validator,
             (
                 crate::training::optimizer::selective_adamw::<TrainBackend, M>(
                     weight_decay,
@@ -1310,8 +1504,8 @@ where
             trainer,
             batches,
             rebuild_batches,
-            resume,
-            device,
+            options,
+            validator,
             (
                 SgdConfig::new()
                     .with_momentum(Some(
@@ -1330,13 +1524,13 @@ where
     }
 }
 
-fn run_task_with_optimizer<M, O, F, S>(
+fn run_task_with_optimizer<M, O, F, S, V>(
     mut model: M,
     mut trainer: Trainer,
     mut batches: S,
     mut rebuild_batches: F,
-    resume: Option<&PathBuf>,
-    device: &burn::tensor::Device<TrainBackend>,
+    options: RunTaskOptions<'_>,
+    mut validator: V,
     optimizer: (O, bool),
 ) -> Result<PathBuf, Box<dyn Error + Send + Sync>>
 where
@@ -1344,20 +1538,27 @@ where
     O: Optimizer<M, TrainBackend>,
     F: FnMut(u64) -> Result<S, Box<dyn Error + Send + Sync>>,
     S: EpochBatchSource<M::Batch>,
+    V: FnMut(M::InnerModule) -> Result<ValidationSummary, Box<dyn Error + Send + Sync>>,
 {
     let (mut optimizer, external_weight_decay) = optimizer;
     let profile_training = std::env::var_os("BOQUILENS_PROFILE_TRAINING").is_some();
     let mut ema_model = model.clone();
     let mut ema_state = crate::training::ema::EmaState::new(0.9999)?;
     ema_state.updates = trainer.state.ema_updates;
-    if let Some(path) = resume {
+    if let Some(path) = options.resume {
         let model_bytes = std::fs::read(path.join("model.bin"))?;
         let optimizer_bytes = std::fs::read(path.join("optimizer.bin"))?;
-        model = model.load_record(decode_record::<TrainBackend, _>(model_bytes, device)?);
-        optimizer =
-            optimizer.load_record(decode_record::<TrainBackend, _>(optimizer_bytes, device)?);
+        model = model.load_record(decode_record::<TrainBackend, _>(
+            model_bytes,
+            options.device,
+        )?);
+        optimizer = optimizer.load_record(decode_record::<TrainBackend, _>(
+            optimizer_bytes,
+            options.device,
+        )?);
         let ema_bytes = std::fs::read(path.join("ema.bin"))?;
-        ema_model = ema_model.load_record(decode_record::<TrainBackend, _>(ema_bytes, device)?);
+        ema_model =
+            ema_model.load_record(decode_record::<TrainBackend, _>(ema_bytes, options.device)?);
     }
     let mut pending_checkpoint: Option<PendingCheckpoint> = None;
     while trainer.state.epoch < trainer.config.epochs {
@@ -1379,65 +1580,142 @@ where
         model = result.0;
         optimizer = result.1;
         trainer.state.ema_updates = ema_state.updates;
-        let improved = trainer
-            .state
-            .observe_fitness(-f64::from(result.2.mean_loss));
-        let checkpoint_started = Instant::now();
-        let model_record = model.clone().into_record();
-        let ema_record = ema_model.clone().into_record();
-        let optimizer_record = optimizer.to_record();
-        // Burn records download each tensor before bincode can serialize it. Model, EMA, and
-        // optimizer records are independent immutable snapshots, so issuing their downloads in
-        // parallel avoids three fully serialized GPU-to-host readback passes.
-        let (model_bytes, ema_bytes, optimizer_bytes) =
-            std::thread::scope(|scope| -> Result<_, Box<dyn Error + Send + Sync>> {
-                let model = scope.spawn(move || encode_record::<TrainBackend, _>(model_record));
-                let ema = scope.spawn(move || encode_record::<TrainBackend, _>(ema_record));
-                let optimizer =
-                    scope.spawn(move || encode_record::<TrainBackend, _>(optimizer_record));
-                let model_bytes = model
-                    .join()
-                    .map_err(|_| "model checkpoint encoder panicked")??;
-                let ema_bytes = ema
-                    .join()
-                    .map_err(|_| "EMA checkpoint encoder panicked")??;
-                let optimizer_bytes = optimizer
-                    .join()
-                    .map_err(|_| "optimizer checkpoint encoder panicked")??;
-                Ok((model_bytes, ema_bytes, optimizer_bytes))
-            })?;
-        let encoded_at = Instant::now();
-        let manifest = CheckpointManifest::new(
-            trainer.config.clone(),
-            trainer.state.clone(),
-            trainer.scheduler.clone(),
-        );
-        let payload_sizes = [model_bytes.len(), ema_bytes.len(), optimizer_bytes.len()];
-        pending_checkpoint = Some(spawn_epoch_publication(
-            trainer.run.checkpoints.clone(),
-            trainer.state.epoch,
-            manifest,
-            vec![
-                ("model.bin", model_bytes),
-                ("ema.bin", ema_bytes),
-                ("optimizer.bin", optimizer_bytes),
-            ],
-            improved,
-        ));
-        if profile_training {
-            eprintln!(
-                "checkpoint-profile epoch={} encode_ms={:.3} publication=async model_mb={:.2} ema_mb={:.2} optimizer_mb={:.2}",
+        let validation_due = trainer.config.validation_enabled
+            && (trainer
+                .state
+                .epoch
+                .is_multiple_of(trainer.config.validation_interval)
+                || trainer.state.epoch == trainer.config.epochs);
+        let validation = if validation_due {
+            Some(validator(ema_model.valid())?)
+        } else {
+            None
+        };
+        if let Some(summary) = &validation {
+            trainer
+                .run
+                .append_validation(trainer.state.epoch, summary)?;
+        }
+        let candidate_fitness = validation.as_ref().map(validation_fitness).or_else(|| {
+            (!trainer.config.validation_enabled && trainer.state.epoch == trainer.config.epochs)
+                .then_some(-f64::from(result.2.mean_loss))
+        });
+        let improved =
+            candidate_fitness.is_some_and(|fitness| trainer.state.observe_fitness(fitness));
+        let box_metrics = validation
+            .as_ref()
+            .and_then(|summary| summary.box_metrics.as_ref());
+        let mask_metrics = validation
+            .as_ref()
+            .and_then(|summary| summary.mask_metrics.as_ref());
+        trainer.run.append_results(&ResultsRow {
+            epoch: trainer.state.epoch,
+            train_loss: result.2.mean_loss,
+            train_components: result.2.mean_components.clone(),
+            box_precision: box_metrics.map(|metrics| metrics.precision),
+            box_recall: box_metrics.map(|metrics| metrics.recall),
+            box_map50: box_metrics.map(|metrics| metrics.map_50),
+            box_map50_95: box_metrics.map(|metrics| metrics.map_50_95),
+            mask_precision: mask_metrics.map(|metrics| metrics.precision),
+            mask_recall: mask_metrics.map(|metrics| metrics.recall),
+            mask_map50: mask_metrics.map(|metrics| metrics.map_50),
+            mask_map50_95: mask_metrics.map(|metrics| metrics.map_50_95),
+            top1_accuracy: validation
+                .as_ref()
+                .and_then(|summary| summary.top1_accuracy),
+            top5_accuracy: validation
+                .as_ref()
+                .and_then(|summary| summary.top5_accuracy),
+            val_loss: validation.as_ref().and_then(|summary| summary.mean_loss),
+            fitness: candidate_fitness,
+            learning_rate: trainer.scheduler.current_lr(),
+        })?;
+        let stopping = validation.is_some()
+            && trainer.config.patience > 0
+            && trainer.state.patience_counter >= trainer.config.patience;
+        let checkpoint_due = improved
+            || stopping
+            || trainer.state.epoch == trainer.config.epochs
+            || trainer
+                .state
+                .epoch
+                .is_multiple_of(trainer.config.checkpoint_interval);
+        if checkpoint_due {
+            let checkpoint_started = Instant::now();
+            let model_record = model.clone().into_record();
+            let ema_record = ema_model.clone().into_record();
+            let optimizer_record = optimizer.to_record();
+            // Burn records download each tensor before bincode can serialize it. Model, EMA, and
+            // optimizer records are independent immutable snapshots, so issuing their downloads
+            // in parallel avoids three fully serialized GPU-to-host readback passes.
+            let (model_bytes, ema_bytes, optimizer_bytes) =
+                std::thread::scope(|scope| -> Result<_, Box<dyn Error + Send + Sync>> {
+                    let model = scope.spawn(move || encode_record::<TrainBackend, _>(model_record));
+                    let ema = scope.spawn(move || encode_record::<TrainBackend, _>(ema_record));
+                    let optimizer =
+                        scope.spawn(move || encode_record::<TrainBackend, _>(optimizer_record));
+                    let model_bytes = model
+                        .join()
+                        .map_err(|_| "model checkpoint encoder panicked")??;
+                    let ema_bytes = ema
+                        .join()
+                        .map_err(|_| "EMA checkpoint encoder panicked")??;
+                    let optimizer_bytes = optimizer
+                        .join()
+                        .map_err(|_| "optimizer checkpoint encoder panicked")??;
+                    Ok((model_bytes, ema_bytes, optimizer_bytes))
+                })?;
+            let encoded_at = Instant::now();
+            let manifest = CheckpointManifest::new(
+                trainer.config.clone(),
+                trainer.state.clone(),
+                trainer.scheduler.clone(),
+            );
+            let payload_sizes = [model_bytes.len(), ema_bytes.len(), optimizer_bytes.len()];
+            pending_checkpoint = Some(spawn_epoch_publication(
+                trainer.run.checkpoints.clone(),
                 trainer.state.epoch,
-                encoded_at.duration_since(checkpoint_started).as_secs_f64() * 1_000.0,
-                payload_sizes[0] as f64 / (1024.0 * 1024.0),
-                payload_sizes[1] as f64 / (1024.0 * 1024.0),
-                payload_sizes[2] as f64 / (1024.0 * 1024.0),
+                manifest,
+                vec![
+                    ("model.bin", model_bytes),
+                    ("ema.bin", ema_bytes),
+                    ("optimizer.bin", optimizer_bytes),
+                ],
+                improved,
+            ));
+            if profile_training {
+                eprintln!(
+                    "checkpoint-profile epoch={} encode_ms={:.3} publication=async model_mb={:.2} ema_mb={:.2} optimizer_mb={:.2}",
+                    trainer.state.epoch,
+                    encoded_at.duration_since(checkpoint_started).as_secs_f64() * 1_000.0,
+                    payload_sizes[0] as f64 / (1024.0 * 1024.0),
+                    payload_sizes[1] as f64 / (1024.0 * 1024.0),
+                    payload_sizes[2] as f64 / (1024.0 * 1024.0),
+                );
+            }
+        } else if profile_training {
+            eprintln!("checkpoint-profile epoch={} skipped", trainer.state.epoch);
+        }
+        if let Some(validation) = &validation {
+            eprintln!(
+                "epoch {}: loss {:.6}, fitness {:.6}",
+                trainer.state.epoch,
+                result.2.mean_loss,
+                validation_fitness(validation),
+            );
+        } else {
+            eprintln!(
+                "epoch {}: loss {:.6}",
+                trainer.state.epoch, result.2.mean_loss
             );
         }
-        eprintln!(
-            "epoch {}: loss {:.6}",
-            trainer.state.epoch, result.2.mean_loss
-        );
+        if stopping {
+            eprintln!(
+                "early stopping after {} validation epochs without improvement",
+                trainer.state.patience_counter
+            );
+            break;
+        }
         if trainer.state.epoch < trainer.config.epochs {
             batches = rebuild_batches(trainer.state.epoch as u64)?;
             if batches.batch_count() == 0 {
@@ -1451,70 +1729,19 @@ where
     Ok(trainer.run.root)
 }
 
-fn build_classification_batches<B: Backend>(
-    config: &TrainingConfig,
-    dataset: &crate::training::data::ResolvedDataset,
-    images: &[PathBuf],
-    device: &burn::tensor::Device<B>,
-    epoch: u64,
-    training: bool,
-) -> Result<Vec<ClassificationBatch<B>>, Box<dyn Error + Send + Sync>> {
-    let pipeline = ClassificationPipeline::new(
-        config
-            .augmentation
-            .resolve(crate::training::TaskKind::Classify, training)?,
-    )?;
-    let order = crate::training::data::loader::epoch_permutation(images.len(), config.seed, epoch);
-    let indexed = order.into_iter().enumerate().collect::<Vec<_>>();
-    let workers = config.workers.max(1).min(indexed.len().max(1));
-    let chunk_size = indexed.len().div_ceil(workers);
-    let mut prepared =
-        std::thread::scope(|scope| -> Result<Vec<_>, Box<dyn Error + Send + Sync>> {
-            let handles = indexed
-                .chunks(chunk_size.max(1))
-                .map(|chunk| {
-                    let pipeline = pipeline.clone();
-                    scope.spawn(move || {
-                        chunk
-                            .iter()
-                            .map(|&(logical_position, index)| {
-                                prepare_classification_sample(
-                                    config,
-                                    dataset,
-                                    images,
-                                    &pipeline,
-                                    epoch,
-                                    logical_position,
-                                    index,
-                                )
-                            })
-                            .collect::<Result<Vec<_>, _>>()
-                    })
-                })
-                .collect::<Vec<_>>();
-            let mut output = Vec::with_capacity(indexed.len());
-            for handle in handles {
-                let chunk = handle.join().map_err(|_| {
-                    Box::<dyn Error + Send + Sync>::from("classification data worker panicked")
-                })??;
-                output.extend(chunk);
-            }
-            Ok(output)
-        })?;
-    prepared.sort_unstable_by_key(|sample| sample.0);
-    let (formatted, metadata): (Vec<_>, Vec<_>) = prepared
-        .into_iter()
-        .map(|(_, sample, metadata)| (sample, metadata))
-        .unzip();
-    let mut batches = Vec::new();
-    for start in (0..formatted.len()).step_by(config.batch_size) {
-        let end = (start + config.batch_size).min(formatted.len());
-        batches.push(
-            FormattedClassificationBatch::collate(&formatted[start..end])?
-                .into_device(metadata[start..end].to_vec(), device)?,
-        );
+fn validation_fitness(summary: &ValidationSummary) -> f64 {
+    if let Some(top1) = summary.top1_accuracy {
+        return f64::from(top1);
     }
-    Ok(batches)
+    match (&summary.box_metrics, &summary.mask_metrics) {
+        (Some(box_metrics), Some(mask_metrics)) => {
+            f64::from((box_metrics.map_50_95 + mask_metrics.map_50_95) * 0.5)
+        }
+        (Some(box_metrics), None) => f64::from(box_metrics.map_50_95),
+        _ => summary
+            .mean_loss
+            .map_or(f64::NEG_INFINITY, |loss| -f64::from(loss)),
+    }
 }
 
 fn prepare_classification_sample(
@@ -1571,86 +1798,6 @@ fn prepare_classification_sample(
         crowd: Vec::new(),
     };
     Ok((logical_position, sample, metadata))
-}
-
-fn build_detection_batches<B: Backend>(
-    config: &TrainingConfig,
-    dataset: &crate::training::data::ResolvedDataset,
-    images: &[PathBuf],
-    device: &burn::tensor::Device<B>,
-    epoch: u64,
-    training: bool,
-) -> Result<Vec<DetectionBatch<B>>, Box<dyn Error + Send + Sync>> {
-    let pipeline = AugmentationPipeline::for_epoch(
-        config
-            .augmentation
-            .resolve(crate::training::TaskKind::Detect, training)?,
-        epoch as usize,
-        config.epochs,
-    )?;
-    let source_samples = load_vision_samples(dataset, images, training)?;
-    let crowd_flags = source_samples
-        .iter()
-        .map(|sample| {
-            sample
-                .targets
-                .iter()
-                .map(|target| target.crowd)
-                .collect::<Vec<_>>()
-        })
-        .collect::<Vec<_>>();
-    let mut samples = Vec::with_capacity(source_samples.len());
-    for (index, sample) in source_samples.into_iter().enumerate() {
-        samples.push(AugSample::from_vision(
-            sample,
-            index,
-            config.augmentation.imgsz,
-            false,
-        )?);
-    }
-    let order = crate::training::data::loader::epoch_permutation(images.len(), config.seed, epoch);
-    let mut provider =
-        crate::training::data::loader::DeterministicPartnerPool::whole_dataset(samples.clone());
-    let mut formatted = Vec::<FormattedDetectionSample>::with_capacity(order.len());
-    let mut metadata = Vec::<ImageMeta>::with_capacity(order.len());
-    for (logical_position, index) in order.into_iter().enumerate() {
-        let path_text = images[index].to_string_lossy().into_owned();
-        let (sample, _) = pipeline.apply(
-            samples[index].clone(),
-            &mut provider,
-            SeedKey {
-                run_seed: config.seed,
-                epoch,
-                logical_position: logical_position as u64,
-                sample_index: index as u64,
-                rank: 0,
-                path: &path_text,
-            },
-        )?;
-        let [_, canvas_height, canvas_width] = sample.image_shape;
-        let geometry = &sample.geometry;
-        metadata.push(ImageMeta {
-            image_id: path_text,
-            source_size: [
-                geometry.original_shape[1] as u32,
-                geometry.original_shape[0] as u32,
-            ],
-            canvas_size: [canvas_width as u32, canvas_height as u32],
-            scale: geometry.ratio,
-            pad: geometry.pad,
-            crowd: crowd_flags[index].clone(),
-        });
-        formatted.push(sample);
-    }
-    let mut batches = Vec::new();
-    for start in (0..formatted.len()).step_by(config.batch_size) {
-        let end = (start + config.batch_size).min(formatted.len());
-        batches.push(
-            FormattedDetectionBatch::collate(&formatted[start..end])?
-                .into_device(metadata[start..end].to_vec(), device)?,
-        );
-    }
-    Ok(batches)
 }
 
 fn build_yolox_validation_batches<B: Backend>(
@@ -1727,87 +1874,6 @@ fn build_yolox_validation_batches<B: Backend>(
             FormattedDetectionBatch::collate(&formatted[start..end])?
                 .into_device(metadata[start..end].to_vec(), device)?,
         );
-    }
-    Ok(batches)
-}
-
-fn build_segmentation_batches<B: Backend>(
-    config: &TrainingConfig,
-    dataset: &crate::training::data::ResolvedDataset,
-    images: &[PathBuf],
-    device: &burn::tensor::Device<B>,
-    epoch: u64,
-    training: bool,
-) -> Result<Vec<SegmentationBatch<B>>, Box<dyn Error + Send + Sync>> {
-    let pipeline = AugmentationPipeline::for_epoch(
-        config
-            .augmentation
-            .resolve(crate::training::TaskKind::Segment, training)?,
-        epoch as usize,
-        config.epochs,
-    )?;
-    let source_samples = load_vision_samples(dataset, images, training)?;
-    let crowd_flags = source_samples
-        .iter()
-        .map(|sample| {
-            sample
-                .targets
-                .iter()
-                .map(|target| target.crowd)
-                .collect::<Vec<_>>()
-        })
-        .collect::<Vec<_>>();
-    let mut samples = Vec::with_capacity(source_samples.len());
-    for (index, sample) in source_samples.into_iter().enumerate() {
-        samples.push(AugSample::from_vision(
-            sample,
-            index,
-            config.augmentation.imgsz,
-            false,
-        )?);
-    }
-    let order = crate::training::data::loader::epoch_permutation(images.len(), config.seed, epoch);
-    let mut provider =
-        crate::training::data::loader::DeterministicPartnerPool::whole_dataset(samples.clone());
-    let mut formatted = Vec::<FormattedDetectionSample>::with_capacity(order.len());
-    let mut metadata = Vec::<ImageMeta>::with_capacity(order.len());
-    for (logical_position, index) in order.into_iter().enumerate() {
-        let path_text = images[index].to_string_lossy().into_owned();
-        let (sample, _) = pipeline.apply(
-            samples[index].clone(),
-            &mut provider,
-            SeedKey {
-                run_seed: config.seed,
-                epoch,
-                logical_position: logical_position as u64,
-                sample_index: index as u64,
-                rank: 0,
-                path: &path_text,
-            },
-        )?;
-        let [_, canvas_height, canvas_width] = sample.image_shape;
-        let geometry = &sample.geometry;
-        metadata.push(ImageMeta {
-            image_id: path_text,
-            source_size: [
-                geometry.original_shape[1] as u32,
-                geometry.original_shape[0] as u32,
-            ],
-            canvas_size: [canvas_width as u32, canvas_height as u32],
-            scale: geometry.ratio,
-            pad: geometry.pad,
-            crowd: crowd_flags[index].clone(),
-        });
-        formatted.push(sample);
-    }
-    let mut batches = Vec::new();
-    for start in (0..formatted.len()).step_by(config.batch_size) {
-        let end = (start + config.batch_size).min(formatted.len());
-        batches.push(segmentation_into_device(
-            &formatted[start..end],
-            metadata[start..end].to_vec(),
-            device,
-        )?);
     }
     Ok(batches)
 }
@@ -1918,7 +1984,7 @@ fn validate_inner(checkpoint: PathBuf) -> Result<ValidationSummary, Box<dyn Erro
         .or_else(|_| std::fs::read(checkpoint.join("model.bin")))?;
     let classes = manifest.config.model.num_classes;
     if manifest.config.model.task == crate::training::TaskKind::Detect {
-        let batches = if matches!(
+        let batches: Box<dyn EpochBatchSource<DetectionBatch<Wgpu>> + '_> = if matches!(
             manifest.config.model.architecture,
             ModelId::YoloxNano
                 | ModelId::YoloxTiny
@@ -1927,21 +1993,21 @@ fn validate_inner(checkpoint: PathBuf) -> Result<ValidationSummary, Box<dyn Erro
                 | ModelId::YoloxL
                 | ModelId::YoloxX
         ) {
-            build_yolox_validation_batches(
+            Box::new(VecDeque::from(build_yolox_validation_batches(
                 &manifest.config,
                 &dataset,
                 &dataset.val_images,
                 &device,
-            )?
+            )?))
         } else {
-            build_detection_batches(
+            Box::new(DetectionBatchSource::new(
                 &manifest.config,
-                &dataset,
                 &dataset.val_images,
                 &device,
                 manifest.state.epoch as u64,
+                VisionSampleLoader::new(&dataset, &dataset.val_images, false)?,
                 false,
-            )?
+            )?)
         };
         macro_rules! run_detect {
             ($model:expr) => {{
@@ -1951,6 +2017,7 @@ fn validate_inner(checkpoint: PathBuf) -> Result<ValidationSummary, Box<dyn Erro
                     batches,
                     manifest.config.model.architecture,
                     &manifest.config.validation,
+                    &device,
                 )
             }};
         }
@@ -2016,12 +2083,12 @@ fn validate_inner(checkpoint: PathBuf) -> Result<ValidationSummary, Box<dyn Erro
         };
     }
     if manifest.config.model.task == crate::training::TaskKind::Segment {
-        let batches = build_segmentation_batches(
+        let batches = SegmentationBatchSource::new(
             &manifest.config,
-            &dataset,
             &dataset.val_images,
             &device,
             manifest.state.epoch as u64,
+            VisionSampleLoader::new(&dataset, &dataset.val_images, false)?,
             false,
         )?;
         macro_rules! run_segment {
@@ -2032,6 +2099,7 @@ fn validate_inner(checkpoint: PathBuf) -> Result<ValidationSummary, Box<dyn Erro
                     batches,
                     manifest.config.model.architecture,
                     &manifest.config.validation,
+                    &device,
                 )
             }};
         }
@@ -2087,7 +2155,7 @@ fn validate_inner(checkpoint: PathBuf) -> Result<ValidationSummary, Box<dyn Erro
     if manifest.config.model.task != crate::training::TaskKind::Classify {
         return Err("checkpoint task is not supported by native validation".into());
     }
-    let batches = build_classification_batches(
+    let batches = ClassificationBatchSource::new(
         &manifest.config,
         &dataset,
         &dataset.val_images,
@@ -2098,7 +2166,13 @@ fn validate_inner(checkpoint: PathBuf) -> Result<ValidationSummary, Box<dyn Erro
     macro_rules! run {
         ($config:expr) => {{
             let model = $config.init_with_classes(classes, &device);
-            validate_classification_model(model, bytes, batches, manifest.config.model.architecture)
+            validate_classification_model(
+                model,
+                bytes,
+                batches,
+                manifest.config.model.architecture,
+                &device,
+            )
         }};
     }
     match manifest.config.model.architecture {
@@ -2121,22 +2195,38 @@ fn validate_inner(checkpoint: PathBuf) -> Result<ValidationSummary, Box<dyn Erro
     }
 }
 
-fn validate_classification_model<M>(
+fn validate_classification_model<M, S>(
     model: M,
     bytes: Vec<u8>,
-    batches: Vec<ClassificationBatch<Wgpu>>,
+    batches: S,
+    model_id: ModelId,
+    device: &burn::tensor::Device<Wgpu>,
+) -> Result<ValidationSummary, Box<dyn Error + Send + Sync>>
+where
+    M: burn::module::Module<Wgpu> + ClassificationForward,
+    S: EpochBatchSource<ClassificationBatch<Wgpu>>,
+{
+    let model = model.load_record(decode_record::<Wgpu, _>(bytes, device)?);
+    validate_classification_loaded(model, batches, model_id)
+}
+
+fn validate_classification_loaded<M, S>(
+    model: M,
+    mut batches: S,
     model_id: ModelId,
 ) -> Result<ValidationSummary, Box<dyn Error + Send + Sync>>
 where
     M: burn::module::Module<Wgpu> + ClassificationForward,
+    S: EpochBatchSource<ClassificationBatch<Wgpu>>,
 {
-    let device = batches[0].images.device();
-    let model = model.load_record(decode_record::<Wgpu, _>(bytes, &device)?);
     let mut loss = 0.0_f64;
     let mut top1 = 0;
     let mut top5 = 0;
     let mut count = 0;
-    for batch in batches {
+    while let Some(batch) = batches
+        .next_batch()
+        .map_err(Box::<dyn Error + Send + Sync>::from)?
+    {
         let logits_data = model.classification_logits(batch.images).into_data();
         let classes_data = batch.classes.into_data();
         let [batch_size, class_count] = logits_data.shape.dims::<2>();
@@ -2320,22 +2410,39 @@ end_to_end_detection_forward!(
     crate::models::yolo26::Yolo26X<Wgpu>,
 );
 
-fn validate_detection_model<M>(
+fn validate_detection_model<M, S>(
     model: M,
     bytes: Vec<u8>,
-    batches: Vec<DetectionBatch<Wgpu>>,
+    batches: S,
+    model_id: ModelId,
+    validation: &crate::training::config::ValidationConfig,
+    device: &burn::tensor::Device<Wgpu>,
+) -> Result<ValidationSummary, Box<dyn Error + Send + Sync>>
+where
+    M: burn::module::Module<Wgpu> + DetectionForward,
+    S: EpochBatchSource<DetectionBatch<Wgpu>>,
+{
+    let model = model.load_record(decode_record::<Wgpu, _>(bytes, device)?);
+    validate_detection_loaded(model, batches, model_id, validation)
+}
+
+fn validate_detection_loaded<M, S>(
+    model: M,
+    mut batches: S,
     model_id: ModelId,
     validation: &crate::training::config::ValidationConfig,
 ) -> Result<ValidationSummary, Box<dyn Error + Send + Sync>>
 where
     M: burn::module::Module<Wgpu> + DetectionForward,
+    S: EpochBatchSource<DetectionBatch<Wgpu>>,
 {
-    let device = batches[0].images.device();
-    let model = model.load_record(decode_record::<Wgpu, _>(bytes, &device)?);
     let mut predictions = Vec::new();
     let mut targets = Vec::new();
     let mut image_count = 0;
-    for batch in batches {
+    while let Some(batch) = batches
+        .next_batch()
+        .map_err(Box::<dyn Error + Send + Sync>::from)?
+    {
         let batch_size = batch.images.dims()[0];
         let grouped = model.validation_detections(batch.images, validation);
         if grouped.len() != batch.metadata.len() {
@@ -2466,24 +2573,41 @@ end_to_end_segmentation_forward!(
     crate::models::yolo26::Yolo26SegX<Wgpu>,
 );
 
-fn validate_segmentation_model<M>(
+fn validate_segmentation_model<M, S>(
     model: M,
     bytes: Vec<u8>,
-    batches: Vec<SegmentationBatch<Wgpu>>,
+    batches: S,
+    model_id: ModelId,
+    validation: &crate::training::config::ValidationConfig,
+    device: &burn::tensor::Device<Wgpu>,
+) -> Result<ValidationSummary, Box<dyn Error + Send + Sync>>
+where
+    M: Module<Wgpu> + SegmentationForward,
+    S: EpochBatchSource<SegmentationBatch<Wgpu>>,
+{
+    let model = model.load_record(decode_record::<Wgpu, _>(bytes, device)?);
+    validate_segmentation_loaded(model, batches, model_id, validation)
+}
+
+fn validate_segmentation_loaded<M, S>(
+    model: M,
+    mut batches: S,
     model_id: ModelId,
     validation: &crate::training::config::ValidationConfig,
 ) -> Result<ValidationSummary, Box<dyn Error + Send + Sync>>
 where
     M: Module<Wgpu> + SegmentationForward,
+    S: EpochBatchSource<SegmentationBatch<Wgpu>>,
 {
-    let device = batches[0].detection.images.device();
-    let model = model.load_record(decode_record::<Wgpu, _>(bytes, &device)?);
     let mut box_predictions = Vec::new();
     let mut box_targets = Vec::new();
-    let mut mask_predictions = Vec::new();
-    let mut mask_targets = Vec::new();
+    let mut mask_evaluator =
+        crate::training::metrics::segmentation::SegmentationEvaluator::default();
     let mut image_count = 0;
-    for batch in batches {
+    while let Some(batch) = batches
+        .next_batch()
+        .map_err(Box::<dyn Error + Send + Sync>::from)?
+    {
         let [batch_size, _, image_height, image_width] = batch.detection.images.dims();
         let [mask_batch, mask_count, mask_height, mask_width] = batch.masks.dims();
         if mask_batch != batch_size
@@ -2498,6 +2622,8 @@ where
         let masks_data = batch.masks.into_data();
         let masks = masks_data.as_slice::<f32>()?;
         for (image, metadata) in batch.detection.metadata.iter().enumerate() {
+            let mut image_mask_predictions = Vec::new();
+            let mut image_mask_targets = Vec::new();
             let input = batch.detection.images.clone().slice([
                 image..image + 1,
                 0..3,
@@ -2536,7 +2662,7 @@ where
                     confidence: candidate.bbox.confidence,
                     bbox,
                 });
-                mask_predictions.push(
+                image_mask_predictions.push(
                     crate::training::metrics::segmentation::MetricMaskPrediction {
                         image_id: metadata.image_id.clone(),
                         class_id: candidate.class_id,
@@ -2569,13 +2695,14 @@ where
                     bbox,
                     crowd: metadata.crowd.get(target).copied().unwrap_or(false),
                 });
-                mask_targets.push(crate::training::metrics::segmentation::MetricMaskTarget {
+                image_mask_targets.push(crate::training::metrics::segmentation::MetricMaskTarget {
                     image_id: metadata.image_id.clone(),
                     class_id: item.class_id,
                     mask,
                     crowd: metadata.crowd.get(target).copied().unwrap_or(false),
                 });
             }
+            mask_evaluator.update(&image_mask_predictions, &image_mask_targets);
         }
         image_count += batch_size;
     }
@@ -2590,10 +2717,7 @@ where
             &box_predictions,
             &box_targets,
         )),
-        mask_metrics: Some(crate::training::metrics::segmentation::evaluate(
-            &mask_predictions,
-            &mask_targets,
-        )),
+        mask_metrics: Some(mask_evaluator.finish()),
     })
 }
 

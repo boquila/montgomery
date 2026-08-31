@@ -149,12 +149,22 @@ Native training is experimental, WGPU-only, and disabled by default. Always use 
 
 ```console
 cargo run --locked --release --features training -- train --model yolo26n --data dataset.yaml --weights target/yolo26n-state.pt --epochs 100
-cargo run --locked --release --features training -- val --checkpoint runs/detect/train-.../checkpoints/last --json
-cargo run --locked --release --features training -- export --checkpoint runs/detect/train-.../checkpoints/last --output target/custom-yolo26n.bpk
 ```
 
-Training, validation, resume, and export workflows are implemented and smoke-tested. Convergence
-and reference-quality parity are not yet established.
+Each run contains:
+
+- `results.csv`, `results.svg`, and `validation.jsonl` with losses, precision, recall, mAP, accuracy,
+  fitness, and learning rate as applicable.
+- `exports/best.bpk` and `exports/last.bpk`, ready for `predict`.
+- `checkpoints/best` and `checkpoints/last`, the only two full resumable states retained.
+
+Validation selects `best` automatically. `--save-period` controls crash-recovery frequency without
+keeping epoch archives; preprocessing workers are chosen from available CPU parallelism unless
+`--workers` is set. Use `--no-val --no-export` only for throughput measurements.
+
+Training, validation, resume, and export are smoke-tested. Full COCO convergence can be reproduced
+with `uv run --locked tools/bench_full_convergence.py --download`; quality parity is not claimed
+until those long runs complete.
 
 The reproducible RTX 5080 comparison covers 30 matched Ultralytics workloads across tasks, families,
 scales, batches, resolutions, and ten-epoch smoke runs. Native wins 22 of 30 workloads and 11 of 12

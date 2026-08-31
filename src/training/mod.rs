@@ -21,5 +21,5 @@ pub mod runtime;
 pub mod scheduler;
 pub mod state;
 
-pub use config::{ModelSpec, TaskKind, TrainingConfig};
+pub use config::{ModelSpec, TaskKind, TrainingConfig, automatic_worker_count};
 pub use engine::{TrainableTask, Trainer};

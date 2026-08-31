@@ -28,6 +28,9 @@ def main() -> None:
     parser.add_argument("--imgsz", type=int, required=True)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--val", action="store_true")
+    parser.add_argument("--plots", action="store_true")
+    parser.add_argument("--save-period", type=int, default=1)
     args = parser.parse_args()
 
     if not torch.cuda.is_available():
@@ -60,10 +63,10 @@ def main() -> None:
         erasing=0.4,
         fliplr=0.5,
         scale=0.5,
-        val=False,
+        val=args.val,
         save=True,
-        save_period=1,
-        plots=False,
+        save_period=args.save_period,
+        plots=args.plots,
         project=project,
         name=args.name,
         exist_ok=True,

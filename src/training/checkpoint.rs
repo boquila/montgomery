@@ -64,6 +64,20 @@ fn publish_epoch_checkpoint(
     if improved {
         replace_atomic_from_saved(checkpoints.join("best"), &epoch_path, &saved_manifest)?;
     }
+    cleanup_epoch_snapshots(checkpoints)?;
+    Ok(())
+}
+
+fn cleanup_epoch_snapshots(checkpoints: &Path) -> Result<(), CheckpointError> {
+    for entry in fs::read_dir(checkpoints).map_err(CheckpointError::io)? {
+        let entry = entry.map_err(CheckpointError::io)?;
+        let name = entry.file_name();
+        if entry.file_type().map_err(CheckpointError::io)?.is_dir()
+            && name.to_string_lossy().starts_with("epoch-")
+        {
+            fs::remove_dir_all(entry.path()).map_err(CheckpointError::io)?;
+        }
+    }
     Ok(())
 }
 
@@ -418,6 +432,7 @@ mod tests {
         .unwrap();
         assert_eq!(fs::read(root.join("last/model.bin")).unwrap(), b"first");
         assert_eq!(fs::read(root.join("best/model.bin")).unwrap(), b"first");
+        assert!(!root.join("epoch-0001").exists());
 
         let obstruction = root.join(format!(".last.incoming-{}", std::process::id()));
         fs::create_dir(&obstruction).unwrap();
