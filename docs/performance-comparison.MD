@@ -1,9 +1,10 @@
 # Native training performance
 
 boquilens native training is competitive today, but not uniformly faster. On the tested RTX 5080,
-it wins all **12 smallest-variant family/task comparisons**, including every tested classification model and
-the detection-only YOLOv3-Tiny-U, YOLOv10n, and YOLO12n models. YOLOv8n segmentation is **1.86×
-faster** than Ultralytics; YOLO26n detection and segmentation are now just ahead at batch 2.
+it wins **22 of 30** comparisons and **11 of 12** smallest-variant family/task comparisons,
+including every tested classification model and the detection-only YOLOv3-Tiny-U, YOLOv10n, and
+YOLO12n models. YOLOv8n segmentation is **2.00× faster** than Ultralytics. YOLO26n detection is
+ahead at batch 2; segmentation is effectively tied but 0.7% behind in this run.
 
 ![Median wall time for the nine family and task comparisons](assets/family-task-overview.png)
 
@@ -13,23 +14,23 @@ These are medians of complete training commands. A speedup above `1.00×` favors
 
 | Model | Task | boquilens | Ultralytics | Native speedup |
 | --- | --- | ---: | ---: | ---: |
-| YOLOv8n | Classify | 3.34 s | 12.79 s | **3.83×** |
-| YOLOv8n | Detect | 5.73 s | 12.22 s | **2.13×** |
-| YOLOv8n | Segment | 7.52 s | 13.98 s | **1.86×** |
-| YOLO11n | Classify | 5.27 s | 14.36 s | **2.73×** |
-| YOLO11n | Detect | 9.65 s | 14.71 s | **1.52×** |
-| YOLO11n | Segment | 10.89 s | 16.15 s | **1.48×** |
-| YOLO26n | Classify | 5.09 s | 13.40 s | **2.63×** |
-| YOLO26n | Detect | 13.42 s | 14.07 s | **1.05×** |
-| YOLO26n | Segment | 15.77 s | 16.03 s | **1.02×** |
+| YOLOv8n | Classify | 3.51 s | 14.34 s | **4.09×** |
+| YOLOv8n | Detect | 5.53 s | 12.72 s | **2.30×** |
+| YOLOv8n | Segment | 6.76 s | 13.49 s | **2.00×** |
+| YOLO11n | Classify | 4.73 s | 12.52 s | **2.65×** |
+| YOLO11n | Detect | 8.61 s | 13.48 s | **1.57×** |
+| YOLO11n | Segment | 10.14 s | 14.08 s | **1.39×** |
+| YOLO26n | Classify | 4.70 s | 12.80 s | **2.72×** |
+| YOLO26n | Detect | 14.19 s | 15.32 s | **1.08×** |
+| YOLO26n | Segment | 16.84 s | 16.73 s | 0.99× |
 
 The detect-only families use the same dataset and settings:
 
 | Model | boquilens | Ultralytics | Native speedup |
 | --- | ---: | ---: | ---: |
-| YOLOv3-Tiny-U | 4.52 s | 11.87 s | **2.63×** |
-| YOLOv10n | 11.49 s | 13.92 s | **1.21×** |
-| YOLO12n | 12.09 s | 14.17 s | **1.17×** |
+| YOLOv3-Tiny-U | 4.01 s | 12.37 s | **3.09×** |
+| YOLOv10n | 13.73 s | 14.78 s | **1.08×** |
+| YOLO12n | 14.52 s | 14.70 s | **1.01×** |
 
 ![Speedup heatmap for model families and tasks](assets/task-speedup-heatmap.png)
 
@@ -42,7 +43,7 @@ and detached one-to-one semantic targets are evaluated once.
 
 Vectorizing the mask loss reduced the same 48-step YOLOv8n-seg command from **98.08 s to 9.64 s**.
 The runtime and checkpoint work described below reduced the current full-command median again to
-**7.52 s**, which is **1.86× faster** than Ultralytics' 13.98 s median.
+**6.76 s**, which is **2.00× faster** than Ultralytics' 13.49 s median.
 
 ![YOLOv8n segmentation before and after vectorizing the mask loss](assets/segmentation-before-after.png)
 
@@ -56,29 +57,31 @@ Burn/WGPU's grouped-convolution backward falls through a generic path. The light
 exact channelwise 3×3 stencil only while building an autodiff graph; normal inference and stored
 parameters are unchanged. Forward values and weight gradients are tested against grouped
 convolution. Together with flattened role-separated AdamW updates, this cut YOLO26n detection from
-23.76 s to 13.42 s and YOLO11n segmentation from 17.38 s to 10.89 s.
+23.76 s to 14.19 s and YOLO11n segmentation from 17.38 s to 10.14 s.
 
 Full resumable checkpoints still contain the model, EMA, and optimizer in FP32. Their independent
-immutable snapshots are now downloaded and encoded concurrently instead of making three serial
-GPU-to-host passes. AdamW moment tensors are stored as two flat parameter-role groups rather than
-one record per tensor. Resume and step-for-step optimizer parity are tested.
+immutable snapshots are downloaded and encoded concurrently instead of making three serial
+GPU-to-host passes, and hashing plus atomic file publication overlap the next epoch on a bounded
+worker. Assignment targets stay on the host instead of being uploaded and immediately downloaded
+each step. AdamW moment tensors are stored as two flat parameter-role groups rather than one record
+per tensor. Resume, atomic-publication, and step-for-step optimizer parity are tested.
 
 ## Scale comparison
 
-YOLO26 classification stays ahead through medium. Detection wins at nano and small but is 13%
-slower at medium. Segmentation remains the largest scale-dependent gap.
+YOLO26 classification stays ahead through medium. Detection wins at nano and small and is 1.6%
+slower at medium. Segmentation wins narrowly at small but remains the largest medium-scale gap.
 
 | Model | Task | boquilens | Ultralytics | Native speedup |
 | --- | --- | ---: | ---: | ---: |
-| YOLO26n | Classify | 5.09 s | 13.40 s | **2.63×** |
-| YOLO26n | Detect | 13.42 s | 14.07 s | **1.05×** |
-| YOLO26n | Segment | 15.77 s | 16.03 s | **1.02×** |
-| YOLO26s | Classify | 4.94 s | 13.30 s | **2.69×** |
-| YOLO26s | Detect | 12.95 s | 15.44 s | **1.19×** |
-| YOLO26s | Segment | 19.54 s | 17.65 s | 0.90× |
-| YOLO26m | Classify | 8.69 s | 14.89 s | **1.71×** |
-| YOLO26m | Detect | 19.50 s | 17.22 s | 0.88× |
-| YOLO26m | Segment | 25.91 s | 19.31 s | 0.75× |
+| YOLO26n | Classify | 4.70 s | 12.80 s | **2.72×** |
+| YOLO26n | Detect | 14.19 s | 15.32 s | **1.08×** |
+| YOLO26n | Segment | 16.84 s | 16.73 s | 0.99× |
+| YOLO26s | Classify | 5.11 s | 13.21 s | **2.58×** |
+| YOLO26s | Detect | 14.48 s | 15.86 s | **1.10×** |
+| YOLO26s | Segment | 17.69 s | 17.94 s | **1.01×** |
+| YOLO26m | Classify | 7.51 s | 14.19 s | **1.89×** |
+| YOLO26m | Detect | 17.82 s | 17.55 s | 0.98× |
+| YOLO26m | Segment | 24.47 s | 19.59 s | 0.80× |
 
 ![YOLO26 scale comparison](assets/model-scale.png)
 
@@ -89,15 +92,15 @@ batch 1 exposes fixed WGPU dispatch and synchronization costs.
 
 | Task | Batch | boquilens | Ultralytics | Native speedup |
 | --- | ---: | ---: | ---: | ---: |
-| Classify | 1 | 7.22 s | 14.32 s | **1.98×** |
-| Classify | 2 | 5.09 s | 13.40 s | **2.63×** |
-| Classify | 4 | 3.29 s | 13.11 s | **3.98×** |
-| Detect | 1 | 24.14 s | 19.12 s | 0.79× |
-| Detect | 2 | 13.42 s | 14.07 s | **1.05×** |
-| Detect | 4 | 9.45 s | 13.61 s | **1.44×** |
-| Segment | 1 | 29.09 s | 23.96 s | 0.82× |
-| Segment | 2 | 15.77 s | 16.03 s | **1.02×** |
-| Segment | 4 | 12.03 s | 14.92 s | **1.24×** |
+| Classify | 1 | 7.84 s | 14.18 s | **1.81×** |
+| Classify | 2 | 4.70 s | 12.80 s | **2.72×** |
+| Classify | 4 | 3.02 s | 12.24 s | **4.05×** |
+| Detect | 1 | 22.97 s | 18.77 s | 0.82× |
+| Detect | 2 | 14.19 s | 15.32 s | **1.08×** |
+| Detect | 4 | 8.69 s | 13.22 s | **1.52×** |
+| Segment | 1 | 28.55 s | 23.78 s | 0.83× |
+| Segment | 2 | 16.84 s | 16.73 s | 0.99× |
+| Segment | 4 | 11.31 s | 14.33 s | **1.27×** |
 
 ![Batch-size scaling](assets/batch-scaling.png)
 
@@ -107,10 +110,10 @@ This sweep uses YOLO26n detection, batch 2, and three epochs.
 
 | Image size | boquilens | Ultralytics | Native speedup |
 | ---: | ---: | ---: | ---: |
-| 64 px | 14.89 s | 15.24 s | **1.02×** |
-| 128 px | 14.38 s | 15.34 s | **1.07×** |
-| 320 px | 13.42 s | 14.07 s | **1.05×** |
-| 640 px | 18.84 s | 15.96 s | 0.85× |
+| 64 px | 14.18 s | 15.15 s | **1.07×** |
+| 128 px | 13.42 s | 14.82 s | **1.10×** |
+| 320 px | 14.19 s | 15.32 s | **1.08×** |
+| 640 px | 17.55 s | 15.20 s | 0.87× |
 
 ![YOLO26n detection resolution scaling](assets/resolution-scaling.png)
 
@@ -124,9 +127,9 @@ too small to measure real model quality.
 
 | Task | boquilens | Ultralytics | Native speedup |
 | --- | ---: | ---: | ---: |
-| Classify | 17.41 s | 24.17 s | **1.39×** |
-| Detect | 40.75 s | 31.21 s | 0.77× |
-| Segment | 53.26 s | 35.96 s | 0.68× |
+| Classify | 16.21 s | 23.54 s | **1.45×** |
+| Detect | 43.07 s | 32.10 s | 0.75× |
+| Segment | 52.12 s | 35.95 s | 0.69× |
 
 ![Normalized loss over ten epochs](assets/convergence-normalized.png)
 
