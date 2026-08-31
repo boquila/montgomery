@@ -30,6 +30,11 @@ def main() -> None:
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--segmentation-repeats", type=int, default=2)
     parser.add_argument("--scenario", action="append", default=[])
+    parser.add_argument(
+        "--native-binary",
+        type=Path,
+        help="benchmark an existing native executable; skips the default release build",
+    )
     parser.add_argument("--skip-build", action="store_true")
     parser.add_argument("--skip-prime", action="store_true")
     parser.add_argument("--keep-runs", action="store_true")
@@ -40,7 +45,7 @@ def main() -> None:
     output = args.output.resolve()
     results = output / "results.json"
     charts = output / "charts"
-    if not args.skip_build:
+    if not args.skip_build and args.native_binary is None:
         subprocess.run(
             ["cargo", "build", "--locked", "--release", "--features", "training"],
             cwd=ROOT,
@@ -59,6 +64,8 @@ def main() -> None:
     ]
     for scenario in args.scenario:
         command.extend(("--scenario", scenario))
+    if args.native_binary is not None:
+        command.extend(("--native-binary", str(args.native_binary.resolve())))
     for enabled, flag in (
         (args.skip_prime, "--skip-prime"),
         (args.keep_runs, "--keep-runs"),

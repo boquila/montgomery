@@ -50,6 +50,7 @@ def repository_metadata() -> dict[str, Any]:
         metadata["revision"] = None
         metadata["dirty"] = None
     if NATIVE.is_file():
+        metadata["native_binary"] = str(NATIVE)
         digest = hashlib.sha256()
         with NATIVE.open("rb") as binary:
             for chunk in iter(lambda: binary.read(1024 * 1024), b""):
@@ -365,11 +366,21 @@ def main() -> None:
         help="repeats for the substantially slower segmentation cells",
     )
     parser.add_argument("--scenario", action="append", default=[])
+    parser.add_argument(
+        "--native-binary",
+        type=Path,
+        help="benchmark this native executable instead of target/release/boquilens",
+    )
     parser.add_argument("--skip-prime", action="store_true")
     parser.add_argument("--keep-runs", action="store_true")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--list", action="store_true")
     args = parser.parse_args()
+    if args.native_binary is not None:
+        global NATIVE
+        NATIVE = args.native_binary.resolve()
+    if not NATIVE.is_file():
+        parser.error(f"native executable does not exist: {NATIVE}")
     if args.list:
         for scenario in SCENARIOS:
             print(scenario.id)
