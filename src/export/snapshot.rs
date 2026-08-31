@@ -58,9 +58,9 @@ pub(crate) fn write_snapshot(
     let mut store = SafetensorsStore::from_file(path)
         .with_to_adapter(BurnToPyTorchAdapter)
         .skip_enum_variants(true)
-        .metadata("boquilens.schema", "onnx-parameter-snapshot-v1")
-        .metadata("boquilens.model_id", spec.model_id.as_str())
-        .metadata("boquilens.key_map_version", spec.key_map_version);
+        .metadata("montgomery.schema", "onnx-parameter-snapshot-v1")
+        .metadata("montgomery.model_id", spec.model_id.as_str())
+        .metadata("montgomery.key_map_version", spec.key_map_version);
     for (from, to) in reverse_rules(spec) {
         store = store.with_key_remapping(from, to);
     }
@@ -441,7 +441,7 @@ fn save_segment(
 
 fn save_reference<M: Module<Flex> + ModuleSnapshot<Flex>>(module: &M, path: &Path) -> Result<()> {
     let mut store =
-        SafetensorsStore::from_file(path).metadata("boquilens.schema", "onnx-burn-reference-v1");
+        SafetensorsStore::from_file(path).metadata("montgomery.schema", "onnx-burn-reference-v1");
     module
         .save_into(&mut store)
         .map_err(|error| format!("Burn reference serialization failed: {error}").into())

@@ -1,7 +1,7 @@
-boquilens
-Copyright 2026 boquilens contributors
+Montgomery
+Copyright 2026 Montgomery contributors
 
-boquilens is distributed under the GNU Affero General Public License v3.0 (LICENSE).
+Montgomery is distributed under the GNU Affero General Public License v3.0 (LICENSE).
 
 The native YOLOX Burn model implementation in src/models/yolox was initially adapted from
 tracel-ai/models/yolox-burn at revision ec1b9e42e6692ef2b95f85c4ba783e07cd3d19af.
@@ -26,13 +26,13 @@ instance-segmentation and -cls ImageNet-1k classification variants), YOLO12 (n/s
 (n/s/m/l/x, plus the -seg COCO instance-segmentation and -cls ImageNet-1k classification
 variants), and YOLO26 (n/s/m/l/x, plus the -seg COCO instance-segmentation and -cls ImageNet-1k
 classification variants) architectures and official checkpoints. They were authored as native Burn
-code; boquilens does not bundle Ultralytics Python code or model weights.
+code; Montgomery does not bundle Ultralytics Python code or model weights.
 tools/export_ultralytics_state.py and the per-model export_*_fixtures.py scripts use an installed
 Ultralytics package at conversion time to extract tensor state from a checkpoint.
 Ultralytics states that its software, architectures, and trained model weights are offered under
 AGPL-3.0 by default, with separate commercial licensing available:
 https://www.ultralytics.com/license
-Because boquilens is AGPL-3.0, checkpoints and the derived native artifacts may be redistributed
+Because Montgomery is AGPL-3.0, checkpoints and the derived native artifacts may be redistributed
 under the same license. Users supplying or publishing an Ultralytics checkpoint remain responsible
 for satisfying the license applicable to that model and their use case.
 
@@ -46,7 +46,7 @@ of the Ultralytics data augmentation pipeline at commit
 https://github.com/ultralytics/ultralytics
 Ultralytics is distributed under AGPL-3.0. The adapted implementation is modified for native Rust
 data containers, deterministic worker-independent random streams, and record/replay diagnostics.
-Ultralytics does not endorse boquilens.
+Ultralytics does not endorse Montgomery.
 
 The development-only tools/onnx exporter reconstructs Ultralytics-family graphs from the pinned
 sibling Ultralytics checkout at revision 461196cf09175b64c9b9bd8babebf081c0540520 and reconstructs
@@ -59,9 +59,9 @@ Apache-2.0 provenance. ONNX export does not relicense user datasets or checkpoin
 
 The development-only training fixture exporters run the same pinned Ultralytics source and the
 official YOLOX 0.1.1rc0 source to record loss/gradient/optimizer parity evidence. Generated fixtures
-are not distributed with boquilens; Ultralytics-derived fixtures inherit AGPL-3.0 and official
+are not distributed with Montgomery; Ultralytics-derived fixtures inherit AGPL-3.0 and official
 YOLOX-derived fixtures retain Apache-2.0 provenance.
 
 The classification RandAugment policy structure and RandomErasing/RandomResizedCrop behavior are
 adapted from torchvision, distributed under the BSD 3-Clause License. The applicable license text
-is included in LICENSE-TORCHVISION. PyTorch and torchvision do not endorse boquilens.
+is included in LICENSE-TORCHVISION. PyTorch and torchvision do not endorse Montgomery.

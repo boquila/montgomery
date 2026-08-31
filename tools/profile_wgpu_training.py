@@ -22,7 +22,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_BINARY = ROOT / "target" / "release" / ("boquilens.exe" if os.name == "nt" else "boquilens")
+DEFAULT_BINARY = ROOT / "target" / "release" / ("montgomery.exe" if os.name == "nt" else "montgomery")
 
 
 @dataclass(frozen=True)
@@ -79,7 +79,7 @@ def main() -> None:
                 ]
                 environment = os.environ.copy()
                 environment["CUBECL_WGPU_MAX_TASKS"] = str(tasks_max)
-                environment["BOQUILENS_PROFILE_TRAINING"] = "1"
+                environment["MONTGOMERY_PROFILE_TRAINING"] = "1"
                 started = time.perf_counter()
                 completed = subprocess.run(
                     command, cwd=ROOT, env=environment, text=True, encoding="utf-8",
@@ -108,7 +108,7 @@ def main() -> None:
                     raise SystemExit(completed.returncode)
 
     payload = {
-        "format": "boquilens-wgpu-training-profile-v1",
+        "format": "montgomery-wgpu-training-profile-v1",
         "binary": str(args.binary),
         "results": results,
     }

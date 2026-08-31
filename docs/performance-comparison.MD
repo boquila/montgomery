@@ -1,6 +1,6 @@
 # Native training performance
 
-boquilens native training is competitive today, but not uniformly faster. On the tested RTX 5080,
+Montgomery native training is competitive today, but not uniformly faster. On the tested RTX 5080,
 it wins **22 of 30** comparisons and **11 of 12** smallest-variant family/task comparisons,
 including every tested classification model and the detection-only YOLOv3-Tiny-U, YOLOv10n, and
 YOLO12n models. YOLOv8n segmentation is **2.00× faster** than Ultralytics. YOLO26n detection is
@@ -10,9 +10,9 @@ ahead at batch 2; segmentation is effectively tied but 0.7% behind in this run.
 
 ## At a glance
 
-These are medians of complete training commands. A speedup above `1.00×` favors boquilens.
+These are medians of complete training commands. A speedup above `1.00×` favors Montgomery.
 
-| Model | Task | boquilens | Ultralytics | Native speedup |
+| Model | Task | Montgomery | Ultralytics | Native speedup |
 | --- | --- | ---: | ---: | ---: |
 | YOLOv8n | Classify | 3.51 s | 14.34 s | **4.09×** |
 | YOLOv8n | Detect | 5.53 s | 12.72 s | **2.30×** |
@@ -26,7 +26,7 @@ These are medians of complete training commands. A speedup above `1.00×` favors
 
 The detect-only families use the same dataset and settings:
 
-| Model | boquilens | Ultralytics | Native speedup |
+| Model | Montgomery | Ultralytics | Native speedup |
 | --- | ---: | ---: | ---: |
 | YOLOv3-Tiny-U | 4.01 s | 12.37 s | **3.09×** |
 | YOLOv10n | 13.73 s | 14.78 s | **1.08×** |
@@ -71,7 +71,7 @@ per tensor. Resume, atomic-publication, and step-for-step optimizer parity are t
 YOLO26 classification stays ahead through medium. Detection wins at nano and small and is 1.6%
 slower at medium. Segmentation wins narrowly at small but remains the largest medium-scale gap.
 
-| Model | Task | boquilens | Ultralytics | Native speedup |
+| Model | Task | Montgomery | Ultralytics | Native speedup |
 | --- | --- | ---: | ---: | ---: |
 | YOLO26n | Classify | 4.70 s | 12.80 s | **2.72×** |
 | YOLO26n | Detect | 14.19 s | 15.32 s | **1.08×** |
@@ -90,7 +90,7 @@ slower at medium. Segmentation wins narrowly at small but remains the largest me
 The batch sweep uses YOLO26n and changes only batch size. Native wins all three tasks at batch 4;
 batch 1 exposes fixed WGPU dispatch and synchronization costs.
 
-| Task | Batch | boquilens | Ultralytics | Native speedup |
+| Task | Batch | Montgomery | Ultralytics | Native speedup |
 | --- | ---: | ---: | ---: | ---: |
 | Classify | 1 | 7.84 s | 14.18 s | **1.81×** |
 | Classify | 2 | 4.70 s | 12.80 s | **2.72×** |
@@ -108,7 +108,7 @@ batch 1 exposes fixed WGPU dispatch and synchronization costs.
 
 This sweep uses YOLO26n detection, batch 2, and three epochs.
 
-| Image size | boquilens | Ultralytics | Native speedup |
+| Image size | Montgomery | Ultralytics | Native speedup |
 | ---: | ---: | ---: | ---: |
 | 64 px | 14.18 s | 15.15 s | **1.07×** |
 | 128 px | 13.42 s | 14.82 s | **1.10×** |
@@ -125,7 +125,7 @@ small jobs. Native wins through 320 px; 640 px still exposes backend work to do.
 The longer runs exercise checkpointing, scheduling, loss reduction, and validation. They are still
 too small to measure real model quality.
 
-| Task | boquilens | Ultralytics | Native speedup |
+| Task | Montgomery | Ultralytics | Native speedup |
 | --- | ---: | ---: | ---: |
 | Classify | 16.21 s | 23.54 s | **1.45×** |
 | Detect | 43.07 s | 32.10 s | 0.75× |
@@ -139,7 +139,7 @@ equal optimization dynamics.
 
 Post-training validation is outside the timed region:
 
-| Task | boquilens | Ultralytics | Interpretation |
+| Task | Montgomery | Ultralytics | Interpretation |
 | --- | --- | --- | --- |
 | Classify | top-1 41.7%, top-5 58.3% | top-1 41.7%, top-5 91.7% | 12 validation images; not quality evidence |
 | Detect | mAP50 0.0, mAP50-95 0.0 | mAP50 0.0, mAP50-95 0.0 | 4 validation images; the run is too short |
@@ -165,7 +165,7 @@ Per-trial values, medians, environment metadata, and captured commands are prese
 ## Methodology
 
 - Hardware: NVIDIA GeForce RTX 5080; native Burn/WGPU used Vulkan driver 610.47.
-- Software: boquilens/Burn release build versus Ultralytics 8.4.117 and PyTorch 2.11 CUDA 13.0.
+- Software: Montgomery/Burn release build versus Ultralytics 8.4.117 and PyTorch 2.11 CUDA 13.0.
 - Timing: external wall clock around the complete command, including startup, model loading,
   training, and checkpoint writes. Validation is excluded and recorded separately.
 - Precision: FP32 for both implementations.
@@ -196,7 +196,7 @@ preparing the upstream checkpoints:
 uv run --locked tools/benchmark_training.py --publish
 ```
 
-It builds boquilens in release mode, prepares deterministic datasets, primes WGPU, runs the matrix,
+It builds Montgomery in release mode, prepares deterministic datasets, primes WGPU, runs the matrix,
 validates the ten-epoch checkpoints, renders every chart, and publishes JSON and images under
 `docs/assets/`.
 

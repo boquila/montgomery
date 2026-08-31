@@ -55,7 +55,7 @@ def _require_modules() -> dict[str, str]:
         raise PreflightError(
             f"missing locked ONNX export packages: {joined}. Install explicitly with:\n"
             f"  uv pip sync --python {sys.executable} tools/onnx/requirements.lock.txt\n"
-            "No packages were installed and no network request was made by boquilens."
+            "No packages were installed and no network request was made by Montgomery."
         )
     mismatched = [
         f"{name}={versions[name]} (expected {expected})"

@@ -29,7 +29,7 @@ def load_manifest(path: Path) -> tuple[dict, Path]:
     manifest_path = path.resolve(strict=True)
     workdir = manifest_path.parent
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if manifest.get("schema") != "boquilens-onnx-export-input-v1":
+    if manifest.get("schema") != "montgomery-onnx-export-input-v1":
         raise RuntimeError(f"unsupported or missing manifest schema: {manifest.get('schema')!r}")
     for field in ("weights_file", "output_file", "sidecar_file"):
         relative = Path(manifest[field])
@@ -55,8 +55,8 @@ def main() -> int:
     parser.add_argument("--manifest", type=Path)
     args = parser.parse_args()
 
-    if os.environ.get("BOQUILENS_ONNX_NO_NETWORK") != "1":
-        raise RuntimeError("export subprocess must set BOQUILENS_ONNX_NO_NETWORK=1")
+    if os.environ.get("MONTGOMERY_ONNX_NO_NETWORK") != "1":
+        raise RuntimeError("export subprocess must set MONTGOMERY_ONNX_NO_NETWORK=1")
     if args.preflight:
         if not args.family or not args.ultralytics_repo or not args.yolox_repo:
             parser.error("--preflight requires --family, --ultralytics-repo, and --yolox-repo")
@@ -89,6 +89,6 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except (PreflightError, RuntimeError, OSError, ValueError) as error:
         print(f"ONNX export failed: {error}", file=sys.stderr)
-        if os.environ.get("BOQUILENS_ONNX_TRACEBACK") == "1":
+        if os.environ.get("MONTGOMERY_ONNX_TRACEBACK") == "1":
             traceback.print_exc()
         raise SystemExit(1)

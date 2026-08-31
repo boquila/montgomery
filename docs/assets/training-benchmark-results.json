@@ -1,5 +1,5 @@
 {
-  "schema": "boquilens-training-comparison-v1",
+  "schema": "montgomery-training-comparison-v1",
   "created_utc": "2026-08-31T14:24:58Z",
   "methodology": {
     "timer": "external process wall clock",
@@ -24,7 +24,7 @@
   "source": {
     "revision": "5843de13ce361e43b4cb8b7d34cdd4ba9f8b1e58",
     "dirty": false,
-    "native_binary": "C:\\Users\\boqui\\boquila\\research\\yoloburn\\boquilens\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+    "native_binary": "C:\\Users\\boqui\\boquila\\research\\yoloburn\\montgomery\\target\\performance-comparison\\montgomery-no-target-upload.exe",
     "native_binary_sha256": "f336fb4605eaed5d069aaa90e5e5a13f422e04e210b1ea22683e634f1bf9fa3d"
   },
   "scenarios": [
@@ -46,7 +46,7 @@
             "wall_seconds": 3.1320879000704736,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolov8n-cls",
@@ -76,7 +76,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "ceb837cf94ae312fd5487e37040bab861f7f9a1591b84e28edcf67ad42420a27",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -104,7 +104,7 @@
             "wall_seconds": 3.5656553000444546,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolov8n-cls",
@@ -134,7 +134,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "ceb837cf94ae312fd5487e37040bab861f7f9a1591b84e28edcf67ad42420a27",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -162,7 +162,7 @@
             "wall_seconds": 3.5060215000994503,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolov8n-cls",
@@ -192,7 +192,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "ceb837cf94ae312fd5487e37040bab861f7f9a1591b84e28edcf67ad42420a27",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -365,7 +365,7 @@
         "wall_seconds": 6.735803099931218,
         "internal_seconds": null,
         "command": [
-          "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+          "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
           "train",
           "--model",
           "yolov8n-cls",
@@ -395,7 +395,7 @@
           "backend": "burn-wgpu",
           "crate_version": "0.1.0",
           "dataset_fingerprint": "ceb837cf94ae312fd5487e37040bab861f7f9a1591b84e28edcf67ad42420a27",
-          "format": "boquilens-training-run-v1",
+          "format": "montgomery-training-run-v1",
           "references": {
             "ultralytics": {
               "commit": "461196cf0",
@@ -454,7 +454,7 @@
             "wall_seconds": 5.576984800049104,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolov8n",
@@ -484,7 +484,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -512,7 +512,7 @@
             "wall_seconds": 5.382633200031705,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolov8n",
@@ -542,7 +542,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -570,7 +570,7 @@
             "wall_seconds": 5.525560999987647,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolov8n",
@@ -600,7 +600,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -773,7 +773,7 @@
         "wall_seconds": 5.789902499993332,
         "internal_seconds": null,
         "command": [
-          "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+          "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
           "train",
           "--model",
           "yolov8n",
@@ -803,7 +803,7 @@
           "backend": "burn-wgpu",
           "crate_version": "0.1.0",
           "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-          "format": "boquilens-training-run-v1",
+          "format": "montgomery-training-run-v1",
           "references": {
             "ultralytics": {
               "commit": "461196cf0",
@@ -862,7 +862,7 @@
             "wall_seconds": 6.811591500067152,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolov8n-seg",
@@ -892,7 +892,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5b530fbf8ca589b41572aeb31a7ef1d0408217062d61a43fca5399d56666d1b1",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -920,7 +920,7 @@
             "wall_seconds": 6.713956299936399,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolov8n-seg",
@@ -950,7 +950,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5b530fbf8ca589b41572aeb31a7ef1d0408217062d61a43fca5399d56666d1b1",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -1076,7 +1076,7 @@
         "wall_seconds": 6.9750694000395015,
         "internal_seconds": null,
         "command": [
-          "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+          "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
           "train",
           "--model",
           "yolov8n-seg",
@@ -1106,7 +1106,7 @@
           "backend": "burn-wgpu",
           "crate_version": "0.1.0",
           "dataset_fingerprint": "5b530fbf8ca589b41572aeb31a7ef1d0408217062d61a43fca5399d56666d1b1",
-          "format": "boquilens-training-run-v1",
+          "format": "montgomery-training-run-v1",
           "references": {
             "ultralytics": {
               "commit": "461196cf0",
@@ -1165,7 +1165,7 @@
             "wall_seconds": 4.72769500000868,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo11n-cls",
@@ -1195,7 +1195,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "ceb837cf94ae312fd5487e37040bab861f7f9a1591b84e28edcf67ad42420a27",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -1223,7 +1223,7 @@
             "wall_seconds": 5.016732199932449,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo11n-cls",
@@ -1253,7 +1253,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "ceb837cf94ae312fd5487e37040bab861f7f9a1591b84e28edcf67ad42420a27",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -1281,7 +1281,7 @@
             "wall_seconds": 4.7197542999638245,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo11n-cls",
@@ -1311,7 +1311,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "ceb837cf94ae312fd5487e37040bab861f7f9a1591b84e28edcf67ad42420a27",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -1484,7 +1484,7 @@
         "wall_seconds": 8.480190900037996,
         "internal_seconds": null,
         "command": [
-          "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+          "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
           "train",
           "--model",
           "yolo11n-cls",
@@ -1514,7 +1514,7 @@
           "backend": "burn-wgpu",
           "crate_version": "0.1.0",
           "dataset_fingerprint": "ceb837cf94ae312fd5487e37040bab861f7f9a1591b84e28edcf67ad42420a27",
-          "format": "boquilens-training-run-v1",
+          "format": "montgomery-training-run-v1",
           "references": {
             "ultralytics": {
               "commit": "461196cf0",
@@ -1573,7 +1573,7 @@
             "wall_seconds": 8.139164600055665,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo11n",
@@ -1603,7 +1603,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -1631,7 +1631,7 @@
             "wall_seconds": 8.606901700026356,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo11n",
@@ -1661,7 +1661,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -1689,7 +1689,7 @@
             "wall_seconds": 8.769451499916613,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo11n",
@@ -1719,7 +1719,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -1892,7 +1892,7 @@
         "wall_seconds": 8.635047500021756,
         "internal_seconds": null,
         "command": [
-          "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+          "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
           "train",
           "--model",
           "yolo11n",
@@ -1922,7 +1922,7 @@
           "backend": "burn-wgpu",
           "crate_version": "0.1.0",
           "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-          "format": "boquilens-training-run-v1",
+          "format": "montgomery-training-run-v1",
           "references": {
             "ultralytics": {
               "commit": "461196cf0",
@@ -1981,7 +1981,7 @@
             "wall_seconds": 10.191241499967873,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo11n-seg",
@@ -2011,7 +2011,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5b530fbf8ca589b41572aeb31a7ef1d0408217062d61a43fca5399d56666d1b1",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -2039,7 +2039,7 @@
             "wall_seconds": 10.090136599959806,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo11n-seg",
@@ -2069,7 +2069,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5b530fbf8ca589b41572aeb31a7ef1d0408217062d61a43fca5399d56666d1b1",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -2195,7 +2195,7 @@
         "wall_seconds": 9.588581999996677,
         "internal_seconds": null,
         "command": [
-          "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+          "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
           "train",
           "--model",
           "yolo11n-seg",
@@ -2225,7 +2225,7 @@
           "backend": "burn-wgpu",
           "crate_version": "0.1.0",
           "dataset_fingerprint": "5b530fbf8ca589b41572aeb31a7ef1d0408217062d61a43fca5399d56666d1b1",
-          "format": "boquilens-training-run-v1",
+          "format": "montgomery-training-run-v1",
           "references": {
             "ultralytics": {
               "commit": "461196cf0",
@@ -2284,7 +2284,7 @@
             "wall_seconds": 4.8251168000278994,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26n-cls",
@@ -2314,7 +2314,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "ceb837cf94ae312fd5487e37040bab861f7f9a1591b84e28edcf67ad42420a27",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -2342,7 +2342,7 @@
             "wall_seconds": 4.450776999932714,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26n-cls",
@@ -2372,7 +2372,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "ceb837cf94ae312fd5487e37040bab861f7f9a1591b84e28edcf67ad42420a27",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -2400,7 +2400,7 @@
             "wall_seconds": 4.697808100027032,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26n-cls",
@@ -2430,7 +2430,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "ceb837cf94ae312fd5487e37040bab861f7f9a1591b84e28edcf67ad42420a27",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -2603,7 +2603,7 @@
         "wall_seconds": 4.652806899975985,
         "internal_seconds": null,
         "command": [
-          "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+          "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
           "train",
           "--model",
           "yolo26n-cls",
@@ -2633,7 +2633,7 @@
           "backend": "burn-wgpu",
           "crate_version": "0.1.0",
           "dataset_fingerprint": "ceb837cf94ae312fd5487e37040bab861f7f9a1591b84e28edcf67ad42420a27",
-          "format": "boquilens-training-run-v1",
+          "format": "montgomery-training-run-v1",
           "references": {
             "ultralytics": {
               "commit": "461196cf0",
@@ -2692,7 +2692,7 @@
             "wall_seconds": 13.355091899982654,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26n",
@@ -2722,7 +2722,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -2750,7 +2750,7 @@
             "wall_seconds": 14.187357099959627,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26n",
@@ -2780,7 +2780,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -2808,7 +2808,7 @@
             "wall_seconds": 14.206354200025089,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26n",
@@ -2838,7 +2838,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -3011,7 +3011,7 @@
         "wall_seconds": 13.751717500039376,
         "internal_seconds": null,
         "command": [
-          "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+          "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
           "train",
           "--model",
           "yolo26n",
@@ -3041,7 +3041,7 @@
           "backend": "burn-wgpu",
           "crate_version": "0.1.0",
           "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-          "format": "boquilens-training-run-v1",
+          "format": "montgomery-training-run-v1",
           "references": {
             "ultralytics": {
               "commit": "461196cf0",
@@ -3100,7 +3100,7 @@
             "wall_seconds": 16.469124299939722,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26n-seg",
@@ -3130,7 +3130,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5b530fbf8ca589b41572aeb31a7ef1d0408217062d61a43fca5399d56666d1b1",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -3158,7 +3158,7 @@
             "wall_seconds": 17.210044299950823,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26n-seg",
@@ -3188,7 +3188,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5b530fbf8ca589b41572aeb31a7ef1d0408217062d61a43fca5399d56666d1b1",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -3314,7 +3314,7 @@
         "wall_seconds": 17.62583050003741,
         "internal_seconds": null,
         "command": [
-          "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+          "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
           "train",
           "--model",
           "yolo26n-seg",
@@ -3344,7 +3344,7 @@
           "backend": "burn-wgpu",
           "crate_version": "0.1.0",
           "dataset_fingerprint": "5b530fbf8ca589b41572aeb31a7ef1d0408217062d61a43fca5399d56666d1b1",
-          "format": "boquilens-training-run-v1",
+          "format": "montgomery-training-run-v1",
           "references": {
             "ultralytics": {
               "commit": "461196cf0",
@@ -3403,7 +3403,7 @@
             "wall_seconds": 3.9669510000385344,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolov3-tinyu",
@@ -3433,7 +3433,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -3461,7 +3461,7 @@
             "wall_seconds": 4.04331340000499,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolov3-tinyu",
@@ -3491,7 +3491,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -3519,7 +3519,7 @@
             "wall_seconds": 4.007340300013311,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolov3-tinyu",
@@ -3549,7 +3549,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -3722,7 +3722,7 @@
         "wall_seconds": 5.177102799993008,
         "internal_seconds": null,
         "command": [
-          "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+          "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
           "train",
           "--model",
           "yolov3-tinyu",
@@ -3752,7 +3752,7 @@
           "backend": "burn-wgpu",
           "crate_version": "0.1.0",
           "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-          "format": "boquilens-training-run-v1",
+          "format": "montgomery-training-run-v1",
           "references": {
             "ultralytics": {
               "commit": "461196cf0",
@@ -3811,7 +3811,7 @@
             "wall_seconds": 13.770351100014523,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolov10n",
@@ -3841,7 +3841,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -3869,7 +3869,7 @@
             "wall_seconds": 13.269719200092368,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolov10n",
@@ -3899,7 +3899,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -3927,7 +3927,7 @@
             "wall_seconds": 13.734135999926366,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolov10n",
@@ -3957,7 +3957,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -4130,7 +4130,7 @@
         "wall_seconds": 14.074645499931648,
         "internal_seconds": null,
         "command": [
-          "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+          "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
           "train",
           "--model",
           "yolov10n",
@@ -4160,7 +4160,7 @@
           "backend": "burn-wgpu",
           "crate_version": "0.1.0",
           "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-          "format": "boquilens-training-run-v1",
+          "format": "montgomery-training-run-v1",
           "references": {
             "ultralytics": {
               "commit": "461196cf0",
@@ -4219,7 +4219,7 @@
             "wall_seconds": 14.516579799936153,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo12n",
@@ -4249,7 +4249,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -4277,7 +4277,7 @@
             "wall_seconds": 13.27733700000681,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo12n",
@@ -4307,7 +4307,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -4335,7 +4335,7 @@
             "wall_seconds": 14.574530299985781,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo12n",
@@ -4365,7 +4365,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -4538,7 +4538,7 @@
         "wall_seconds": 15.938229800085537,
         "internal_seconds": null,
         "command": [
-          "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+          "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
           "train",
           "--model",
           "yolo12n",
@@ -4568,7 +4568,7 @@
           "backend": "burn-wgpu",
           "crate_version": "0.1.0",
           "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-          "format": "boquilens-training-run-v1",
+          "format": "montgomery-training-run-v1",
           "references": {
             "ultralytics": {
               "commit": "461196cf0",
@@ -4627,7 +4627,7 @@
             "wall_seconds": 5.114493199973367,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26s-cls",
@@ -4657,7 +4657,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "ceb837cf94ae312fd5487e37040bab861f7f9a1591b84e28edcf67ad42420a27",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -4685,7 +4685,7 @@
             "wall_seconds": 5.219238599995151,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26s-cls",
@@ -4715,7 +4715,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "ceb837cf94ae312fd5487e37040bab861f7f9a1591b84e28edcf67ad42420a27",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -4743,7 +4743,7 @@
             "wall_seconds": 5.042761399992742,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26s-cls",
@@ -4773,7 +4773,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "ceb837cf94ae312fd5487e37040bab861f7f9a1591b84e28edcf67ad42420a27",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -4946,7 +4946,7 @@
         "wall_seconds": 6.780438299989328,
         "internal_seconds": null,
         "command": [
-          "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+          "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
           "train",
           "--model",
           "yolo26s-cls",
@@ -4976,7 +4976,7 @@
           "backend": "burn-wgpu",
           "crate_version": "0.1.0",
           "dataset_fingerprint": "ceb837cf94ae312fd5487e37040bab861f7f9a1591b84e28edcf67ad42420a27",
-          "format": "boquilens-training-run-v1",
+          "format": "montgomery-training-run-v1",
           "references": {
             "ultralytics": {
               "commit": "461196cf0",
@@ -5035,7 +5035,7 @@
             "wall_seconds": 14.665687100030482,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26s",
@@ -5065,7 +5065,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -5093,7 +5093,7 @@
             "wall_seconds": 13.987817200017162,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26s",
@@ -5123,7 +5123,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -5151,7 +5151,7 @@
             "wall_seconds": 14.477618400007486,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26s",
@@ -5181,7 +5181,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -5354,7 +5354,7 @@
         "wall_seconds": 16.340400899993256,
         "internal_seconds": null,
         "command": [
-          "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+          "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
           "train",
           "--model",
           "yolo26s",
@@ -5384,7 +5384,7 @@
           "backend": "burn-wgpu",
           "crate_version": "0.1.0",
           "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-          "format": "boquilens-training-run-v1",
+          "format": "montgomery-training-run-v1",
           "references": {
             "ultralytics": {
               "commit": "461196cf0",
@@ -5443,7 +5443,7 @@
             "wall_seconds": 17.623711499967612,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26s-seg",
@@ -5473,7 +5473,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5b530fbf8ca589b41572aeb31a7ef1d0408217062d61a43fca5399d56666d1b1",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -5501,7 +5501,7 @@
             "wall_seconds": 17.75537299993448,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26s-seg",
@@ -5531,7 +5531,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5b530fbf8ca589b41572aeb31a7ef1d0408217062d61a43fca5399d56666d1b1",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -5657,7 +5657,7 @@
         "wall_seconds": 18.985044799977913,
         "internal_seconds": null,
         "command": [
-          "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+          "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
           "train",
           "--model",
           "yolo26s-seg",
@@ -5687,7 +5687,7 @@
           "backend": "burn-wgpu",
           "crate_version": "0.1.0",
           "dataset_fingerprint": "5b530fbf8ca589b41572aeb31a7ef1d0408217062d61a43fca5399d56666d1b1",
-          "format": "boquilens-training-run-v1",
+          "format": "montgomery-training-run-v1",
           "references": {
             "ultralytics": {
               "commit": "461196cf0",
@@ -5746,7 +5746,7 @@
             "wall_seconds": 7.510527399950661,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26m-cls",
@@ -5776,7 +5776,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "ceb837cf94ae312fd5487e37040bab861f7f9a1591b84e28edcf67ad42420a27",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -5804,7 +5804,7 @@
             "wall_seconds": 7.6512719000456855,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26m-cls",
@@ -5834,7 +5834,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "ceb837cf94ae312fd5487e37040bab861f7f9a1591b84e28edcf67ad42420a27",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -5862,7 +5862,7 @@
             "wall_seconds": 7.494049700093456,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26m-cls",
@@ -5892,7 +5892,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "ceb837cf94ae312fd5487e37040bab861f7f9a1591b84e28edcf67ad42420a27",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -6065,7 +6065,7 @@
         "wall_seconds": 8.621095399954356,
         "internal_seconds": null,
         "command": [
-          "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+          "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
           "train",
           "--model",
           "yolo26m-cls",
@@ -6095,7 +6095,7 @@
           "backend": "burn-wgpu",
           "crate_version": "0.1.0",
           "dataset_fingerprint": "ceb837cf94ae312fd5487e37040bab861f7f9a1591b84e28edcf67ad42420a27",
-          "format": "boquilens-training-run-v1",
+          "format": "montgomery-training-run-v1",
           "references": {
             "ultralytics": {
               "commit": "461196cf0",
@@ -6154,7 +6154,7 @@
             "wall_seconds": 17.146954700001515,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26m",
@@ -6184,7 +6184,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -6212,7 +6212,7 @@
             "wall_seconds": 17.821111500030383,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26m",
@@ -6242,7 +6242,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -6270,7 +6270,7 @@
             "wall_seconds": 17.905656899907626,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26m",
@@ -6300,7 +6300,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -6473,7 +6473,7 @@
         "wall_seconds": 19.13754499994684,
         "internal_seconds": null,
         "command": [
-          "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+          "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
           "train",
           "--model",
           "yolo26m",
@@ -6503,7 +6503,7 @@
           "backend": "burn-wgpu",
           "crate_version": "0.1.0",
           "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-          "format": "boquilens-training-run-v1",
+          "format": "montgomery-training-run-v1",
           "references": {
             "ultralytics": {
               "commit": "461196cf0",
@@ -6562,7 +6562,7 @@
             "wall_seconds": 24.528836300014518,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26m-seg",
@@ -6592,7 +6592,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5b530fbf8ca589b41572aeb31a7ef1d0408217062d61a43fca5399d56666d1b1",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -6620,7 +6620,7 @@
             "wall_seconds": 24.41878110007383,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26m-seg",
@@ -6650,7 +6650,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5b530fbf8ca589b41572aeb31a7ef1d0408217062d61a43fca5399d56666d1b1",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -6776,7 +6776,7 @@
         "wall_seconds": 25.09225620003417,
         "internal_seconds": null,
         "command": [
-          "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+          "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
           "train",
           "--model",
           "yolo26m-seg",
@@ -6806,7 +6806,7 @@
           "backend": "burn-wgpu",
           "crate_version": "0.1.0",
           "dataset_fingerprint": "5b530fbf8ca589b41572aeb31a7ef1d0408217062d61a43fca5399d56666d1b1",
-          "format": "boquilens-training-run-v1",
+          "format": "montgomery-training-run-v1",
           "references": {
             "ultralytics": {
               "commit": "461196cf0",
@@ -6865,7 +6865,7 @@
             "wall_seconds": 7.843233100022189,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26n-cls",
@@ -6895,7 +6895,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "ceb837cf94ae312fd5487e37040bab861f7f9a1591b84e28edcf67ad42420a27",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -6923,7 +6923,7 @@
             "wall_seconds": 8.701216600020416,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26n-cls",
@@ -6953,7 +6953,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "ceb837cf94ae312fd5487e37040bab861f7f9a1591b84e28edcf67ad42420a27",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -6981,7 +6981,7 @@
             "wall_seconds": 7.84305280004628,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26n-cls",
@@ -7011,7 +7011,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "ceb837cf94ae312fd5487e37040bab861f7f9a1591b84e28edcf67ad42420a27",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -7184,7 +7184,7 @@
         "wall_seconds": 10.692780499928631,
         "internal_seconds": null,
         "command": [
-          "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+          "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
           "train",
           "--model",
           "yolo26n-cls",
@@ -7214,7 +7214,7 @@
           "backend": "burn-wgpu",
           "crate_version": "0.1.0",
           "dataset_fingerprint": "ceb837cf94ae312fd5487e37040bab861f7f9a1591b84e28edcf67ad42420a27",
-          "format": "boquilens-training-run-v1",
+          "format": "montgomery-training-run-v1",
           "references": {
             "ultralytics": {
               "commit": "461196cf0",
@@ -7273,7 +7273,7 @@
             "wall_seconds": 3.1224346000235528,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26n-cls",
@@ -7303,7 +7303,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "ceb837cf94ae312fd5487e37040bab861f7f9a1591b84e28edcf67ad42420a27",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -7331,7 +7331,7 @@
             "wall_seconds": 3.021110099973157,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26n-cls",
@@ -7361,7 +7361,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "ceb837cf94ae312fd5487e37040bab861f7f9a1591b84e28edcf67ad42420a27",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -7389,7 +7389,7 @@
             "wall_seconds": 2.706886600004509,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26n-cls",
@@ -7419,7 +7419,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "ceb837cf94ae312fd5487e37040bab861f7f9a1591b84e28edcf67ad42420a27",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -7592,7 +7592,7 @@
         "wall_seconds": 3.591772999963723,
         "internal_seconds": null,
         "command": [
-          "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+          "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
           "train",
           "--model",
           "yolo26n-cls",
@@ -7622,7 +7622,7 @@
           "backend": "burn-wgpu",
           "crate_version": "0.1.0",
           "dataset_fingerprint": "ceb837cf94ae312fd5487e37040bab861f7f9a1591b84e28edcf67ad42420a27",
-          "format": "boquilens-training-run-v1",
+          "format": "montgomery-training-run-v1",
           "references": {
             "ultralytics": {
               "commit": "461196cf0",
@@ -7681,7 +7681,7 @@
             "wall_seconds": 23.39308759989217,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26n",
@@ -7711,7 +7711,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -7739,7 +7739,7 @@
             "wall_seconds": 22.210238799918443,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26n",
@@ -7769,7 +7769,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -7797,7 +7797,7 @@
             "wall_seconds": 22.969472200027667,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26n",
@@ -7827,7 +7827,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -8000,7 +8000,7 @@
         "wall_seconds": 22.65120169997681,
         "internal_seconds": null,
         "command": [
-          "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+          "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
           "train",
           "--model",
           "yolo26n",
@@ -8030,7 +8030,7 @@
           "backend": "burn-wgpu",
           "crate_version": "0.1.0",
           "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-          "format": "boquilens-training-run-v1",
+          "format": "montgomery-training-run-v1",
           "references": {
             "ultralytics": {
               "commit": "461196cf0",
@@ -8089,7 +8089,7 @@
             "wall_seconds": 8.58994969993364,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26n",
@@ -8119,7 +8119,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -8147,7 +8147,7 @@
             "wall_seconds": 8.689332799986005,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26n",
@@ -8177,7 +8177,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -8205,7 +8205,7 @@
             "wall_seconds": 8.995755900046788,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26n",
@@ -8235,7 +8235,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -8408,7 +8408,7 @@
         "wall_seconds": 8.76991079992149,
         "internal_seconds": null,
         "command": [
-          "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+          "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
           "train",
           "--model",
           "yolo26n",
@@ -8438,7 +8438,7 @@
           "backend": "burn-wgpu",
           "crate_version": "0.1.0",
           "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-          "format": "boquilens-training-run-v1",
+          "format": "montgomery-training-run-v1",
           "references": {
             "ultralytics": {
               "commit": "461196cf0",
@@ -8497,7 +8497,7 @@
             "wall_seconds": 28.516351400059648,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26n-seg",
@@ -8527,7 +8527,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5b530fbf8ca589b41572aeb31a7ef1d0408217062d61a43fca5399d56666d1b1",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -8555,7 +8555,7 @@
             "wall_seconds": 28.575147800031118,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26n-seg",
@@ -8585,7 +8585,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5b530fbf8ca589b41572aeb31a7ef1d0408217062d61a43fca5399d56666d1b1",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -8711,7 +8711,7 @@
         "wall_seconds": 29.185734100057743,
         "internal_seconds": null,
         "command": [
-          "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+          "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
           "train",
           "--model",
           "yolo26n-seg",
@@ -8741,7 +8741,7 @@
           "backend": "burn-wgpu",
           "crate_version": "0.1.0",
           "dataset_fingerprint": "5b530fbf8ca589b41572aeb31a7ef1d0408217062d61a43fca5399d56666d1b1",
-          "format": "boquilens-training-run-v1",
+          "format": "montgomery-training-run-v1",
           "references": {
             "ultralytics": {
               "commit": "461196cf0",
@@ -8800,7 +8800,7 @@
             "wall_seconds": 11.22894780000206,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26n-seg",
@@ -8830,7 +8830,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5b530fbf8ca589b41572aeb31a7ef1d0408217062d61a43fca5399d56666d1b1",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -8858,7 +8858,7 @@
             "wall_seconds": 11.390296599944122,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26n-seg",
@@ -8888,7 +8888,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5b530fbf8ca589b41572aeb31a7ef1d0408217062d61a43fca5399d56666d1b1",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -9014,7 +9014,7 @@
         "wall_seconds": 11.176874900003895,
         "internal_seconds": null,
         "command": [
-          "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+          "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
           "train",
           "--model",
           "yolo26n-seg",
@@ -9044,7 +9044,7 @@
           "backend": "burn-wgpu",
           "crate_version": "0.1.0",
           "dataset_fingerprint": "5b530fbf8ca589b41572aeb31a7ef1d0408217062d61a43fca5399d56666d1b1",
-          "format": "boquilens-training-run-v1",
+          "format": "montgomery-training-run-v1",
           "references": {
             "ultralytics": {
               "commit": "461196cf0",
@@ -9103,7 +9103,7 @@
             "wall_seconds": 14.17600529990159,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26n",
@@ -9133,7 +9133,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -9161,7 +9161,7 @@
             "wall_seconds": 13.7674467000179,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26n",
@@ -9191,7 +9191,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -9219,7 +9219,7 @@
             "wall_seconds": 14.187866099993698,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26n",
@@ -9249,7 +9249,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -9422,7 +9422,7 @@
         "wall_seconds": 16.211154300021008,
         "internal_seconds": null,
         "command": [
-          "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+          "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
           "train",
           "--model",
           "yolo26n",
@@ -9452,7 +9452,7 @@
           "backend": "burn-wgpu",
           "crate_version": "0.1.0",
           "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-          "format": "boquilens-training-run-v1",
+          "format": "montgomery-training-run-v1",
           "references": {
             "ultralytics": {
               "commit": "461196cf0",
@@ -9511,7 +9511,7 @@
             "wall_seconds": 13.742098600021563,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26n",
@@ -9541,7 +9541,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -9569,7 +9569,7 @@
             "wall_seconds": 13.417475900030695,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26n",
@@ -9599,7 +9599,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -9627,7 +9627,7 @@
             "wall_seconds": 12.87795220001135,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26n",
@@ -9657,7 +9657,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -9830,7 +9830,7 @@
         "wall_seconds": 14.98589060001541,
         "internal_seconds": null,
         "command": [
-          "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+          "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
           "train",
           "--model",
           "yolo26n",
@@ -9860,7 +9860,7 @@
           "backend": "burn-wgpu",
           "crate_version": "0.1.0",
           "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-          "format": "boquilens-training-run-v1",
+          "format": "montgomery-training-run-v1",
           "references": {
             "ultralytics": {
               "commit": "461196cf0",
@@ -9919,7 +9919,7 @@
             "wall_seconds": 18.206500199972652,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26n",
@@ -9949,7 +9949,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -9977,7 +9977,7 @@
             "wall_seconds": 17.549233700032346,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26n",
@@ -10007,7 +10007,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -10035,7 +10035,7 @@
             "wall_seconds": 17.37428250000812,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26n",
@@ -10065,7 +10065,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -10238,7 +10238,7 @@
         "wall_seconds": 18.1832688000286,
         "internal_seconds": null,
         "command": [
-          "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+          "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
           "train",
           "--model",
           "yolo26n",
@@ -10268,7 +10268,7 @@
           "backend": "burn-wgpu",
           "crate_version": "0.1.0",
           "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-          "format": "boquilens-training-run-v1",
+          "format": "montgomery-training-run-v1",
           "references": {
             "ultralytics": {
               "commit": "461196cf0",
@@ -10327,7 +10327,7 @@
             "wall_seconds": 16.829859499935992,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26n-cls",
@@ -10357,7 +10357,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "ceb837cf94ae312fd5487e37040bab861f7f9a1591b84e28edcf67ad42420a27",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -10403,7 +10403,7 @@
             "wall_seconds": 15.345289800083265,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26n-cls",
@@ -10433,7 +10433,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "ceb837cf94ae312fd5487e37040bab861f7f9a1591b84e28edcf67ad42420a27",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -10468,7 +10468,7 @@
             "wall_seconds": 16.206130500067957,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26n-cls",
@@ -10498,7 +10498,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "ceb837cf94ae312fd5487e37040bab861f7f9a1591b84e28edcf67ad42420a27",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -10710,7 +10710,7 @@
         "wall_seconds": 15.453353099990636,
         "internal_seconds": null,
         "command": [
-          "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+          "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
           "train",
           "--model",
           "yolo26n-cls",
@@ -10740,7 +10740,7 @@
           "backend": "burn-wgpu",
           "crate_version": "0.1.0",
           "dataset_fingerprint": "ceb837cf94ae312fd5487e37040bab861f7f9a1591b84e28edcf67ad42420a27",
-          "format": "boquilens-training-run-v1",
+          "format": "montgomery-training-run-v1",
           "references": {
             "ultralytics": {
               "commit": "461196cf0",
@@ -10806,7 +10806,7 @@
             "wall_seconds": 43.85766059998423,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26n",
@@ -10836,7 +10836,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -10891,7 +10891,7 @@
             "wall_seconds": 43.068137200083584,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26n",
@@ -10921,7 +10921,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -10956,7 +10956,7 @@
             "wall_seconds": 41.64415569999255,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26n",
@@ -10986,7 +10986,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -11200,7 +11200,7 @@
         "wall_seconds": 41.7828607999254,
         "internal_seconds": null,
         "command": [
-          "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+          "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
           "train",
           "--model",
           "yolo26n",
@@ -11230,7 +11230,7 @@
           "backend": "burn-wgpu",
           "crate_version": "0.1.0",
           "dataset_fingerprint": "5a084f5f8453245f3179a8be8267ede4aeee972e60f48706eefa4241c8305f0a",
-          "format": "boquilens-training-run-v1",
+          "format": "montgomery-training-run-v1",
           "references": {
             "ultralytics": {
               "commit": "461196cf0",
@@ -11296,7 +11296,7 @@
             "wall_seconds": 52.69912240002304,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26n-seg",
@@ -11326,7 +11326,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5b530fbf8ca589b41572aeb31a7ef1d0408217062d61a43fca5399d56666d1b1",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -11393,7 +11393,7 @@
             "wall_seconds": 51.54035209992435,
             "internal_seconds": null,
             "command": [
-              "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+              "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
               "train",
               "--model",
               "yolo26n-seg",
@@ -11423,7 +11423,7 @@
               "backend": "burn-wgpu",
               "crate_version": "0.1.0",
               "dataset_fingerprint": "5b530fbf8ca589b41572aeb31a7ef1d0408217062d61a43fca5399d56666d1b1",
-              "format": "boquilens-training-run-v1",
+              "format": "montgomery-training-run-v1",
               "references": {
                 "ultralytics": {
                   "commit": "461196cf0",
@@ -11587,7 +11587,7 @@
         "wall_seconds": 52.23077629995532,
         "internal_seconds": null,
         "command": [
-          "<repo>\\target\\performance-comparison\\boquilens-no-target-upload.exe",
+          "<repo>\\target\\performance-comparison\\montgomery-no-target-upload.exe",
           "train",
           "--model",
           "yolo26n-seg",
@@ -11617,7 +11617,7 @@
           "backend": "burn-wgpu",
           "crate_version": "0.1.0",
           "dataset_fingerprint": "5b530fbf8ca589b41572aeb31a7ef1d0408217062d61a43fca5399d56666d1b1",
-          "format": "boquilens-training-run-v1",
+          "format": "montgomery-training-run-v1",
           "references": {
             "ultralytics": {
               "commit": "461196cf0",

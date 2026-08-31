@@ -270,7 +270,7 @@ def main() -> None:
         "head_decoded": captured["head_decoded"],
     }
     fixture = {
-        "format": "boquilens-yolox-golden-v1",
+        "format": "montgomery-yolox-golden-v1",
         "model": args.model,
         "checkpoint_sha256": file_sha256(args.checkpoint),
         "input_sha256": file_sha256(input_path),

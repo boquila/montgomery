@@ -1,6 +1,6 @@
 #![cfg(feature = "training")]
 
-use boquilens::training::{
+use montgomery::training::{
     TaskKind,
     data::augmentation::{
         AugmentationConfig, AugmentationTrace, TRACE_SCHEMA_VERSION, ULTRALYTICS_SOURCE_COMMIT,

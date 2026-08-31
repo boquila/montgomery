@@ -63,7 +63,7 @@ def main() -> None:
         timing_axis = None
     figure.patch.set_facecolor("#ffffff")
     axis.set_facecolor("#f8fafc")
-    plot_loss(axis, epochs, losses, "boquilens / Burn", "#7c3aed")
+    plot_loss(axis, epochs, losses, "Montgomery / Burn", "#33da72")
     if args.compare:
         plot_loss(axis, compare_epochs, compare_losses, "Ultralytics / PyTorch", "#0284c7")
         axis.legend(frameon=False, fontsize=11)
@@ -84,9 +84,9 @@ def main() -> None:
     if timing_axis is not None:
         if args.native_seconds is None or args.compare_seconds is None:
             raise ValueError("comparison plots require both timing arguments")
-        labels = ["boquilens\nBurn/WGPU", "Ultralytics\nPyTorch/CUDA"]
+        labels = ["Montgomery\nBurn/WGPU", "Ultralytics\nPyTorch/CUDA"]
         timings = [args.native_seconds, args.compare_seconds]
-        bars = timing_axis.bar(labels, timings, color=["#7c3aed", "#0284c7"], width=0.62)
+        bars = timing_axis.bar(labels, timings, color=["#33da72", "#0284c7"], width=0.62)
         timing_axis.set_facecolor("#f8fafc")
         timing_axis.set_title("Measured command time", fontsize=15, fontweight="bold", pad=14)
         timing_axis.set_ylabel("Seconds · lower is better", fontsize=11)

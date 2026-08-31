@@ -1,4 +1,4 @@
-# boquilens agent guide
+# Montgomery agent guide
 
 This directory is the active Rust/Burn object-detection crate. Work from this directory unless a
 task explicitly targets the sibling vendored projects.
@@ -72,8 +72,8 @@ Stable YOLOX inference uses the same native Burnpack workflow as every other fam
 `yolox-nano|tiny|s|m|l|x` name):
 
 ```console
-cargo run --release -- pack-weights --model yolox-nano --input target/yolox_nano.pth --output target/yolox-nano-coco-official-v0.1.1rc0-boquilens-v1.bpk
-cargo run --release -- predict --model yolox-nano --weights target/yolox-nano-coco-official-v0.1.1rc0-boquilens-v1.bpk --source assets/dog_bike_man.jpg
+cargo run --release -- pack-weights --model yolox-nano --input target/yolox_nano.pth --output target/yolox-nano-coco-official-v0.1.1rc0-montgomery-v1.bpk
+cargo run --release -- predict --model yolox-nano --weights target/yolox-nano-coco-official-v0.1.1rc0-montgomery-v1.bpk --source assets/dog_bike_man.jpg
 ```
 
 Ultralytics-family models require a tensor-only state and then a native artifact. The complete
@@ -85,20 +85,20 @@ families):
 
 ```console
 uv run --locked tools/export_ultralytics_state.py yolov10n.pt target/yolov10n-state.pt
-cargo run --release -- pack-weights --model yolov10n --input target/yolov10n-state.pt --output target/yolov10n-coco-ultralytics-v8.4-boquilens-v1.bpk
-cargo run --release -- predict --model yolov10n --weights target/yolov10n-coco-ultralytics-v8.4-boquilens-v1.bpk --source assets/dog_bike_man.jpg
+cargo run --release -- pack-weights --model yolov10n --input target/yolov10n-state.pt --output target/yolov10n-coco-ultralytics-v8.4-montgomery-v1.bpk
+cargo run --release -- predict --model yolov10n --weights target/yolov10n-coco-ultralytics-v8.4-montgomery-v1.bpk --source assets/dog_bike_man.jpg
 
 uv run --locked tools/export_ultralytics_state.py yolo11n.pt target/yolo11n-state.pt
-cargo run --release -- pack-weights --model yolo11n --input target/yolo11n-state.pt --output target/yolo11n-coco-ultralytics-v8.4-boquilens-v1.bpk
-cargo run --release -- predict --model yolo11n --weights target/yolo11n-coco-ultralytics-v8.4-boquilens-v1.bpk --source assets/dog_bike_man.jpg
+cargo run --release -- pack-weights --model yolo11n --input target/yolo11n-state.pt --output target/yolo11n-coco-ultralytics-v8.4-montgomery-v1.bpk
+cargo run --release -- predict --model yolo11n --weights target/yolo11n-coco-ultralytics-v8.4-montgomery-v1.bpk --source assets/dog_bike_man.jpg
 
 uv run --locked tools/export_ultralytics_state.py yolo26n.pt target/yolo26n-state.pt
-cargo run --release -- pack-weights --model yolo26n --input target/yolo26n-state.pt --output target/yolo26n-coco-ultralytics-v8.4-boquilens-v1.bpk
-cargo run --release -- predict --model yolo26n --weights target/yolo26n-coco-ultralytics-v8.4-boquilens-v1.bpk --source assets/dog_bike_man.jpg
+cargo run --release -- pack-weights --model yolo26n --input target/yolo26n-state.pt --output target/yolo26n-coco-ultralytics-v8.4-montgomery-v1.bpk
+cargo run --release -- predict --model yolo26n --weights target/yolo26n-coco-ultralytics-v8.4-montgomery-v1.bpk --source assets/dog_bike_man.jpg
 
 uv run --locked tools/export_ultralytics_state.py yolo11n-seg.pt target/yolo11n-seg-state.pt
-cargo run --release -- pack-weights --model yolo11n-seg --input target/yolo11n-seg-state.pt --output target/yolo11n-seg-coco-ultralytics-v8.4-boquilens-v1.bpk
-cargo run --release -- predict --model yolo11n-seg --weights target/yolo11n-seg-coco-ultralytics-v8.4-boquilens-v1.bpk --source assets/dog_bike_man.jpg --masks
+cargo run --release -- pack-weights --model yolo11n-seg --input target/yolo11n-seg-state.pt --output target/yolo11n-seg-coco-ultralytics-v8.4-montgomery-v1.bpk
+cargo run --release -- predict --model yolo11n-seg --weights target/yolo11n-seg-coco-ultralytics-v8.4-montgomery-v1.bpk --source assets/dog_bike_man.jpg --masks
 ```
 
 Python/PyTorch is a development-time conversion dependency only. Normal inference is Rust/Burn.
@@ -152,7 +152,7 @@ and graphics API on stderr):
 
 ```console
 cargo test --locked --release --features gpu measures_single_inference_latency_gpu -- --ignored --nocapture --test-threads 1
-cargo run --locked --release --features gpu -- predict --model yolo26n --device gpu --weights target/yolo26n-coco-ultralytics-v8.4-boquilens-v1.bpk --source assets/dog_bike_man.jpg
+cargo run --locked --release --features gpu -- predict --model yolo26n --device gpu --weights target/yolo26n-coco-ultralytics-v8.4-montgomery-v1.bpk --source assets/dog_bike_man.jpg
 ```
 
 When touching the runtime or a backend boundary, also spot-check GPU/CPU parity by diffing
@@ -236,7 +236,7 @@ belong under `target/` and must not be committed.
   constants). The 1000-way softmax is preprocessing-rounding sensitive: near-tied classes can swap
   adjacent ranks between PIL and the Rust resize even though each probability moves by <1%, so the
   end-to-end classification tests compare the top-5 class set plus per-class probabilities (3e-2)
-  instead of rank order. Ultralytics fed boquilens' canvas reproduces boquilens' probabilities
+  instead of rank order. Ultralytics fed Montgomery's canvas reproduces Montgomery's probabilities
   exactly — the golden fixtures pin the graph at 2e-4 on the shared canvas.
 - YOLO11's SPPF input projection keeps its SiLU activation even though current Ultralytics source
   constructs it `act=False`: the official checkpoints predate that refactor and the pickled modules
@@ -277,13 +277,13 @@ belong under `target/` and must not be committed.
 - Training detection/segmentation augmentation stays HWC BGR `u8` until Format; default Format
   emits CHW RGB `u8`, while classification converts to RGB before torchvision-compatible policy
   transforms and emits normalized CHW `f32` after RandomErasing. Native seed output is a stable
-  boquilens contract; cross-language parity uses injected parameters/traces, not equal seed values.
+  Montgomery contract; cross-language parity uses injected parameters/traces, not equal seed values.
 - Keep `ModelId` and CLI model names synchronized when adding a model.
 - Preserve the explicit stable/experimental distinction in user-facing docs.
 
 ## Licensing boundary
 
-boquilens is AGPL-3.0 (decided 2026-08). The YOLOX path is a derivative of Apache-2.0 code and uses
+Montgomery is AGPL-3.0 (decided 2026-08). The YOLOX path is a derivative of Apache-2.0 code and uses
 the Apache-2.0 option; YOLOX and its official weights are Apache-2.0. Ultralytics architectures and
 official trained weights are AGPL-3.0 by default, so they are license-compatible with the project.
 Artifacts derived from them inherit AGPL-3.0. Keep provenance and license statements current in

@@ -389,28 +389,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "boquilens"
-version = "0.1.0"
-dependencies = [
- "burn",
- "burn-cpu",
- "burn-flex",
- "burn-store",
- "burn-wgpu",
- "ciborium",
- "clap",
- "fast_image_resize",
- "image",
- "itertools 0.14.0",
- "rand 0.9.5",
- "rand_chacha",
- "serde",
- "serde_json",
- "serde_yaml",
- "sha2 0.10.9",
-]
-
-[[package]]
 name = "built"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3379,6 +3357,28 @@ name = "moddef"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4a0b3262dc837d2513fe2ef31ff8461352ef932dcca31ba0c0abe33547cf6b9b"
+
+[[package]]
+name = "montgomery"
+version = "0.1.0"
+dependencies = [
+ "burn",
+ "burn-cpu",
+ "burn-flex",
+ "burn-store",
+ "burn-wgpu",
+ "ciborium",
+ "clap",
+ "fast_image_resize",
+ "image",
+ "itertools 0.14.0",
+ "rand 0.9.5",
+ "rand_chacha",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2 0.10.9",
+]
 
 [[package]]
 name = "moxcms"

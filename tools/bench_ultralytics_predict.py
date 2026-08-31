@@ -2,7 +2,7 @@
 
 Complements bench_ultralytics_cpu.py (forward-only) with the full product path: the timed call
 includes Ultralytics' preprocessing (letterbox), model forward, NMS, and result assembly — the
-same scope as boquilens' CLI `predict` (which additionally decodes, annotates, and writes a PNG).
+same scope as Montgomery's CLI `predict` (which additionally decodes, annotates, and writes a PNG).
 The model is loaded and warmed up outside the timed region. Run from the repository root:
 
     uv run --locked tools\\bench_ultralytics_predict.py target\\yolo11n.pt assets\\dog_bike_man.jpg

@@ -83,7 +83,7 @@ def main() -> None:
         )
 
     fixture = {
-        "format": "boquilens-ultralytics-e2e-seg-v1",
+        "format": "montgomery-ultralytics-e2e-seg-v1",
         "model": args.model,
         "source_image": str(args.image),
         "image_size": [source_width, source_height],

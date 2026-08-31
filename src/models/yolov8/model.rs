@@ -87,7 +87,7 @@ impl<B: Backend> Yolov8N<B> {
         self.load_from(&mut store).map(|_| ())
     }
 
-    /// Load boquilens' versioned, half-precision native Burnpack artifact.
+    /// Load Montgomery's versioned, half-precision native Burnpack artifact.
     #[cfg(feature = "pretrained")]
     pub fn load_burnpack_weights(&mut self, path: impl Into<PathBuf>) -> Result<(), BurnpackError> {
         let mut store = BurnpackStore::from_file(path.into())
@@ -101,12 +101,12 @@ impl<B: Backend> Yolov8N<B> {
     pub fn save_burnpack_weights(&self, path: impl Into<PathBuf>) -> Result<(), BurnpackError> {
         let mut store = BurnpackStore::from_file(path.into())
             .metadata(
-                "boquilens.artifact-format",
+                "montgomery.artifact-format",
                 weights::artifact_format("yolov8n"),
             )
-            .metadata("boquilens.model", "yolov8n")
-            .metadata("boquilens.classes", "coco-80")
-            .metadata("boquilens.precision", "f16")
+            .metadata("montgomery.model", "yolov8n")
+            .metadata("montgomery.classes", "coco-80")
+            .metadata("montgomery.precision", "f16")
             .with_to_adapter(HalfPrecisionAdapter::new());
         self.save_into(&mut store)
     }
@@ -160,7 +160,7 @@ impl<B: Backend> Yolov8S<B> {
         self.load_from(&mut store).map(|_| ())
     }
 
-    /// Load boquilens' versioned, half-precision native Burnpack artifact.
+    /// Load Montgomery's versioned, half-precision native Burnpack artifact.
     #[cfg(feature = "pretrained")]
     pub fn load_burnpack_weights(&mut self, path: impl Into<PathBuf>) -> Result<(), BurnpackError> {
         let mut store = BurnpackStore::from_file(path.into())
@@ -174,12 +174,12 @@ impl<B: Backend> Yolov8S<B> {
     pub fn save_burnpack_weights(&self, path: impl Into<PathBuf>) -> Result<(), BurnpackError> {
         let mut store = BurnpackStore::from_file(path.into())
             .metadata(
-                "boquilens.artifact-format",
+                "montgomery.artifact-format",
                 weights::artifact_format("yolov8s"),
             )
-            .metadata("boquilens.model", "yolov8s")
-            .metadata("boquilens.classes", "coco-80")
-            .metadata("boquilens.precision", "f16")
+            .metadata("montgomery.model", "yolov8s")
+            .metadata("montgomery.classes", "coco-80")
+            .metadata("montgomery.precision", "f16")
             .with_to_adapter(HalfPrecisionAdapter::new());
         self.save_into(&mut store)
     }
@@ -233,7 +233,7 @@ impl<B: Backend> Yolov8M<B> {
         self.load_from(&mut store).map(|_| ())
     }
 
-    /// Load boquilens' versioned, half-precision native Burnpack artifact.
+    /// Load Montgomery's versioned, half-precision native Burnpack artifact.
     #[cfg(feature = "pretrained")]
     pub fn load_burnpack_weights(&mut self, path: impl Into<PathBuf>) -> Result<(), BurnpackError> {
         let mut store = BurnpackStore::from_file(path.into())
@@ -247,12 +247,12 @@ impl<B: Backend> Yolov8M<B> {
     pub fn save_burnpack_weights(&self, path: impl Into<PathBuf>) -> Result<(), BurnpackError> {
         let mut store = BurnpackStore::from_file(path.into())
             .metadata(
-                "boquilens.artifact-format",
+                "montgomery.artifact-format",
                 weights::artifact_format("yolov8m"),
             )
-            .metadata("boquilens.model", "yolov8m")
-            .metadata("boquilens.classes", "coco-80")
-            .metadata("boquilens.precision", "f16")
+            .metadata("montgomery.model", "yolov8m")
+            .metadata("montgomery.classes", "coco-80")
+            .metadata("montgomery.precision", "f16")
             .with_to_adapter(HalfPrecisionAdapter::new());
         self.save_into(&mut store)
     }
@@ -306,7 +306,7 @@ impl<B: Backend> Yolov8L<B> {
         self.load_from(&mut store).map(|_| ())
     }
 
-    /// Load boquilens' versioned, half-precision native Burnpack artifact.
+    /// Load Montgomery's versioned, half-precision native Burnpack artifact.
     #[cfg(feature = "pretrained")]
     pub fn load_burnpack_weights(&mut self, path: impl Into<PathBuf>) -> Result<(), BurnpackError> {
         let mut store = BurnpackStore::from_file(path.into())
@@ -320,12 +320,12 @@ impl<B: Backend> Yolov8L<B> {
     pub fn save_burnpack_weights(&self, path: impl Into<PathBuf>) -> Result<(), BurnpackError> {
         let mut store = BurnpackStore::from_file(path.into())
             .metadata(
-                "boquilens.artifact-format",
+                "montgomery.artifact-format",
                 weights::artifact_format("yolov8l"),
             )
-            .metadata("boquilens.model", "yolov8l")
-            .metadata("boquilens.classes", "coco-80")
-            .metadata("boquilens.precision", "f16")
+            .metadata("montgomery.model", "yolov8l")
+            .metadata("montgomery.classes", "coco-80")
+            .metadata("montgomery.precision", "f16")
             .with_to_adapter(HalfPrecisionAdapter::new());
         self.save_into(&mut store)
     }
@@ -379,7 +379,7 @@ impl<B: Backend> Yolov8X<B> {
         self.load_from(&mut store).map(|_| ())
     }
 
-    /// Load boquilens' versioned, half-precision native Burnpack artifact.
+    /// Load Montgomery's versioned, half-precision native Burnpack artifact.
     #[cfg(feature = "pretrained")]
     pub fn load_burnpack_weights(&mut self, path: impl Into<PathBuf>) -> Result<(), BurnpackError> {
         let mut store = BurnpackStore::from_file(path.into())
@@ -393,12 +393,12 @@ impl<B: Backend> Yolov8X<B> {
     pub fn save_burnpack_weights(&self, path: impl Into<PathBuf>) -> Result<(), BurnpackError> {
         let mut store = BurnpackStore::from_file(path.into())
             .metadata(
-                "boquilens.artifact-format",
+                "montgomery.artifact-format",
                 weights::artifact_format("yolov8x"),
             )
-            .metadata("boquilens.model", "yolov8x")
-            .metadata("boquilens.classes", "coco-80")
-            .metadata("boquilens.precision", "f16")
+            .metadata("montgomery.model", "yolov8x")
+            .metadata("montgomery.classes", "coco-80")
+            .metadata("montgomery.precision", "f16")
             .with_to_adapter(HalfPrecisionAdapter::new());
         self.save_into(&mut store)
     }
@@ -531,7 +531,7 @@ impl<B: Backend> Yolov8SegN<B> {
         self.load_from(&mut store).map(|_| ())
     }
 
-    /// Load boquilens' versioned, half-precision native Burnpack artifact.
+    /// Load Montgomery's versioned, half-precision native Burnpack artifact.
     #[cfg(feature = "pretrained")]
     pub fn load_burnpack_weights(&mut self, path: impl Into<PathBuf>) -> Result<(), BurnpackError> {
         let mut store = BurnpackStore::from_file(path.into())
@@ -545,12 +545,12 @@ impl<B: Backend> Yolov8SegN<B> {
     pub fn save_burnpack_weights(&self, path: impl Into<PathBuf>) -> Result<(), BurnpackError> {
         let mut store = BurnpackStore::from_file(path.into())
             .metadata(
-                "boquilens.artifact-format",
+                "montgomery.artifact-format",
                 weights::artifact_format("yolov8n-seg"),
             )
-            .metadata("boquilens.model", "yolov8n-seg")
-            .metadata("boquilens.classes", "coco-80")
-            .metadata("boquilens.precision", "f16")
+            .metadata("montgomery.model", "yolov8n-seg")
+            .metadata("montgomery.classes", "coco-80")
+            .metadata("montgomery.precision", "f16")
             .with_to_adapter(HalfPrecisionAdapter::new());
         self.save_into(&mut store)
     }
@@ -604,7 +604,7 @@ impl<B: Backend> Yolov8SegS<B> {
         self.load_from(&mut store).map(|_| ())
     }
 
-    /// Load boquilens' versioned, half-precision native Burnpack artifact.
+    /// Load Montgomery's versioned, half-precision native Burnpack artifact.
     #[cfg(feature = "pretrained")]
     pub fn load_burnpack_weights(&mut self, path: impl Into<PathBuf>) -> Result<(), BurnpackError> {
         let mut store = BurnpackStore::from_file(path.into())
@@ -618,12 +618,12 @@ impl<B: Backend> Yolov8SegS<B> {
     pub fn save_burnpack_weights(&self, path: impl Into<PathBuf>) -> Result<(), BurnpackError> {
         let mut store = BurnpackStore::from_file(path.into())
             .metadata(
-                "boquilens.artifact-format",
+                "montgomery.artifact-format",
                 weights::artifact_format("yolov8s-seg"),
             )
-            .metadata("boquilens.model", "yolov8s-seg")
-            .metadata("boquilens.classes", "coco-80")
-            .metadata("boquilens.precision", "f16")
+            .metadata("montgomery.model", "yolov8s-seg")
+            .metadata("montgomery.classes", "coco-80")
+            .metadata("montgomery.precision", "f16")
             .with_to_adapter(HalfPrecisionAdapter::new());
         self.save_into(&mut store)
     }
@@ -677,7 +677,7 @@ impl<B: Backend> Yolov8SegM<B> {
         self.load_from(&mut store).map(|_| ())
     }
 
-    /// Load boquilens' versioned, half-precision native Burnpack artifact.
+    /// Load Montgomery's versioned, half-precision native Burnpack artifact.
     #[cfg(feature = "pretrained")]
     pub fn load_burnpack_weights(&mut self, path: impl Into<PathBuf>) -> Result<(), BurnpackError> {
         let mut store = BurnpackStore::from_file(path.into())
@@ -691,12 +691,12 @@ impl<B: Backend> Yolov8SegM<B> {
     pub fn save_burnpack_weights(&self, path: impl Into<PathBuf>) -> Result<(), BurnpackError> {
         let mut store = BurnpackStore::from_file(path.into())
             .metadata(
-                "boquilens.artifact-format",
+                "montgomery.artifact-format",
                 weights::artifact_format("yolov8m-seg"),
             )
-            .metadata("boquilens.model", "yolov8m-seg")
-            .metadata("boquilens.classes", "coco-80")
-            .metadata("boquilens.precision", "f16")
+            .metadata("montgomery.model", "yolov8m-seg")
+            .metadata("montgomery.classes", "coco-80")
+            .metadata("montgomery.precision", "f16")
             .with_to_adapter(HalfPrecisionAdapter::new());
         self.save_into(&mut store)
     }
@@ -750,7 +750,7 @@ impl<B: Backend> Yolov8SegL<B> {
         self.load_from(&mut store).map(|_| ())
     }
 
-    /// Load boquilens' versioned, half-precision native Burnpack artifact.
+    /// Load Montgomery's versioned, half-precision native Burnpack artifact.
     #[cfg(feature = "pretrained")]
     pub fn load_burnpack_weights(&mut self, path: impl Into<PathBuf>) -> Result<(), BurnpackError> {
         let mut store = BurnpackStore::from_file(path.into())
@@ -764,12 +764,12 @@ impl<B: Backend> Yolov8SegL<B> {
     pub fn save_burnpack_weights(&self, path: impl Into<PathBuf>) -> Result<(), BurnpackError> {
         let mut store = BurnpackStore::from_file(path.into())
             .metadata(
-                "boquilens.artifact-format",
+                "montgomery.artifact-format",
                 weights::artifact_format("yolov8l-seg"),
             )
-            .metadata("boquilens.model", "yolov8l-seg")
-            .metadata("boquilens.classes", "coco-80")
-            .metadata("boquilens.precision", "f16")
+            .metadata("montgomery.model", "yolov8l-seg")
+            .metadata("montgomery.classes", "coco-80")
+            .metadata("montgomery.precision", "f16")
             .with_to_adapter(HalfPrecisionAdapter::new());
         self.save_into(&mut store)
     }
@@ -823,7 +823,7 @@ impl<B: Backend> Yolov8SegX<B> {
         self.load_from(&mut store).map(|_| ())
     }
 
-    /// Load boquilens' versioned, half-precision native Burnpack artifact.
+    /// Load Montgomery's versioned, half-precision native Burnpack artifact.
     #[cfg(feature = "pretrained")]
     pub fn load_burnpack_weights(&mut self, path: impl Into<PathBuf>) -> Result<(), BurnpackError> {
         let mut store = BurnpackStore::from_file(path.into())
@@ -837,12 +837,12 @@ impl<B: Backend> Yolov8SegX<B> {
     pub fn save_burnpack_weights(&self, path: impl Into<PathBuf>) -> Result<(), BurnpackError> {
         let mut store = BurnpackStore::from_file(path.into())
             .metadata(
-                "boquilens.artifact-format",
+                "montgomery.artifact-format",
                 weights::artifact_format("yolov8x-seg"),
             )
-            .metadata("boquilens.model", "yolov8x-seg")
-            .metadata("boquilens.classes", "coco-80")
-            .metadata("boquilens.precision", "f16")
+            .metadata("montgomery.model", "yolov8x-seg")
+            .metadata("montgomery.classes", "coco-80")
+            .metadata("montgomery.precision", "f16")
             .with_to_adapter(HalfPrecisionAdapter::new());
         self.save_into(&mut store)
     }
@@ -1032,7 +1032,7 @@ mod tests {
             #[ignore]
             fn $fn_name() {
                 let checkpoint = std::path::PathBuf::from(format!(
-                    "target/{}-coco-ultralytics-v8.4-boquilens-v1.bpk",
+                    "target/{}-coco-ultralytics-v8.4-montgomery-v1.bpk",
                     $id
                 ));
                 let fixture: GoldenFixture = serde_json::from_slice(
@@ -1044,7 +1044,7 @@ mod tests {
                     }),
                 )
                 .unwrap();
-                assert_eq!(fixture.format, "boquilens-ultralytics-golden-v1");
+                assert_eq!(fixture.format, "montgomery-ultralytics-golden-v1");
                 assert_eq!(fixture.model, $id);
 
                 let worker = std::thread::Builder::new()
@@ -1072,7 +1072,7 @@ mod tests {
             #[ignore]
             fn $fn_name() {
                 let checkpoint = std::path::PathBuf::from(format!(
-                    "target/{}-coco-ultralytics-v8.4-boquilens-v1.bpk",
+                    "target/{}-coco-ultralytics-v8.4-montgomery-v1.bpk",
                     $id
                 ));
                 assert!(
@@ -1207,7 +1207,7 @@ mod tests {
             #[ignore]
             fn $fn_name() {
                 let checkpoint = std::path::PathBuf::from(format!(
-                    "target/{}-coco-ultralytics-v8.4-boquilens-v1.bpk",
+                    "target/{}-coco-ultralytics-v8.4-montgomery-v1.bpk",
                     $id
                 ));
                 assert!(
@@ -1375,7 +1375,7 @@ mod tests {
             #[ignore]
             fn $fn_name() {
                 let checkpoint = std::path::PathBuf::from(format!(
-                    "target/{}-coco-ultralytics-v8.4-boquilens-v1.bpk",
+                    "target/{}-coco-ultralytics-v8.4-montgomery-v1.bpk",
                     $id
                 ));
                 let fixture: GoldenFixture = serde_json::from_slice(
@@ -1387,7 +1387,7 @@ mod tests {
                     }),
                 )
                 .unwrap();
-                assert_eq!(fixture.format, "boquilens-ultralytics-golden-v1");
+                assert_eq!(fixture.format, "montgomery-ultralytics-golden-v1");
                 assert_eq!(fixture.model, $id);
 
                 let worker = std::thread::Builder::new()
@@ -1415,7 +1415,7 @@ mod tests {
             #[ignore]
             fn $fn_name() {
                 let checkpoint = std::path::PathBuf::from(format!(
-                    "target/{}-coco-ultralytics-v8.4-boquilens-v1.bpk",
+                    "target/{}-coco-ultralytics-v8.4-montgomery-v1.bpk",
                     $id
                 ));
                 assert!(
@@ -1554,7 +1554,7 @@ mod tests {
             #[ignore]
             fn $fn_name() {
                 let checkpoint = std::path::PathBuf::from(format!(
-                    "target/{}-coco-ultralytics-v8.4-boquilens-v1.bpk",
+                    "target/{}-coco-ultralytics-v8.4-montgomery-v1.bpk",
                     $id
                 ));
                 assert!(

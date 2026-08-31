@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::ModelId;
 
-pub const EXPORT_SPEC_VERSION: &str = "boquilens-export-spec-v1";
+pub const EXPORT_SPEC_VERSION: &str = "montgomery-export-spec-v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -532,7 +532,7 @@ impl ExportSpec {
             outputs,
             graph_config,
             graph_source,
-            key_map_version: "boquilens-pytorch-v1",
+            key_map_version: "montgomery-pytorch-v1",
             license,
             nms: matches!(
                 family,

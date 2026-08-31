@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap, TwoSlopeNorm
 
 
-NATIVE = "#7c3aed"
+NATIVE = "#33da72"
 ULTRA = "#0284c7"
 GRID = "#dbe3ee"
 TEXT = "#172033"
@@ -65,7 +65,7 @@ def family_task_overview(entries: dict[str, dict], output: Path) -> None:
     ultra = [median(entries[scenario_id], "ultralytics") for scenario_id in ids]
     y = list(range(len(ids)))
     figure, axis = plt.subplots(figsize=(12, 7.5))
-    axis.barh([value + 0.19 for value in y], native, height=0.36, color=NATIVE, label="boquilens / Burn-WGPU")
+    axis.barh([value + 0.19 for value in y], native, height=0.36, color=NATIVE, label="Montgomery / Burn-WGPU")
     axis.barh([value - 0.19 for value in y], ultra, height=0.36, color=ULTRA, label="Ultralytics / PyTorch-CUDA")
     axis.set_yticks(y, labels)
     axis.invert_yaxis()
@@ -89,14 +89,14 @@ def speedup_heatmap(entries: dict[str, dict], output: Path) -> None:
     image = axis.imshow(values, cmap=cmap, norm=TwoSlopeNorm(vmin=-3, vcenter=0, vmax=3), aspect="auto")
     axis.set_xticks(range(3), [task.title() for task in TASKS])
     axis.set_yticks(range(3), [family.replace("yolov", "YOLOv").replace("yolo", "YOLO") for family in FAMILIES])
-    axis.set_title("Native speedup over Ultralytics", loc="left", fontsize=20, fontweight="bold", pad=18)
+    axis.set_title("Montgomery speedup over Ultralytics", loc="left", fontsize=20, fontweight="bold", pad=18)
     for row in range(3):
         for column in range(3):
             if math.isfinite(values[row][column]):
                 speedup = 2 ** values[row][column]
                 axis.text(column, row, f"{speedup:.2f}×", ha="center", va="center", fontsize=14, fontweight="bold")
     colorbar = figure.colorbar(image, ax=axis, fraction=0.045, pad=0.04)
-    colorbar.set_label("log2(Ultralytics time / native time) · green favors native")
+    colorbar.set_label("log2(Ultralytics time / Montgomery time) · green favors Montgomery")
     finish(figure, output / "task-speedup-heatmap.png")
 
 
@@ -120,7 +120,7 @@ def axis_scaling(entries: dict[str, dict], output: Path, axis_kind: str) -> None
         present = [(value, entries.get(scenario_id(task, value))) for value in x_values]
         present = [(value, entry) for value, entry in present if entry]
         xs = [value for value, _ in present]
-        axis.plot(xs, [median(entry, "native") for _, entry in present], marker="o", linewidth=2.5, color=NATIVE, label="boquilens")
+        axis.plot(xs, [median(entry, "native") for _, entry in present], marker="o", linewidth=2.5, color=NATIVE, label="Montgomery")
         axis.plot(xs, [median(entry, "ultralytics") for _, entry in present], marker="o", linewidth=2.5, color=ULTRA, label="Ultralytics")
         axis.set_title(task.title(), fontweight="bold")
         axis.set_xlabel(xlabel)
@@ -138,7 +138,7 @@ def resolution_scaling(entries: dict[str, dict], output: Path) -> None:
     present = [(value, entry) for value, entry in present if entry]
     figure, axis = plt.subplots(figsize=(9, 5.5))
     xs = [value for value, _ in present]
-    axis.plot(xs, [median(entry, "native") for _, entry in present], marker="o", linewidth=3, color=NATIVE, label="boquilens")
+    axis.plot(xs, [median(entry, "native") for _, entry in present], marker="o", linewidth=3, color=NATIVE, label="Montgomery")
     axis.plot(xs, [median(entry, "ultralytics") for _, entry in present], marker="o", linewidth=3, color=ULTRA, label="Ultralytics")
     axis.set_title("YOLO26n detection resolution scaling", loc="left", fontsize=20, fontweight="bold")
     axis.set_xlabel("Square training canvas (pixels)")
@@ -189,7 +189,7 @@ def convergence(entries: dict[str, dict], output: Path) -> None:
             axis.set_visible(False)
             continue
         found = True
-        for framework, color, label in (("native", NATIVE, "boquilens"), ("ultralytics", ULTRA, "Ultralytics")):
+        for framework, color, label in (("native", NATIVE, "Montgomery"), ("ultralytics", ULTRA, "Ultralytics")):
             curve = entry["trials"][framework][0]["loss_curve"]
             normalized = [value / curve[0] for value in curve]
             axis.plot(range(1, len(curve) + 1), normalized, marker="o", linewidth=2.5, color=color, label=label)
@@ -216,7 +216,7 @@ def first_vs_warm(entries: dict[str, dict], output: Path) -> None:
     warm = [median(entry, "native") for entry in selected]
     x = list(range(len(selected)))
     figure, axis = plt.subplots(figsize=(13, 6))
-    axis.bar([value - 0.2 for value in x], first, width=0.4, color="#a78bfa", label="first suite run")
+    axis.bar([value - 0.2 for value in x], first, width=0.4, color="#a7f3c2", label="first suite run")
     axis.bar([value + 0.2 for value in x], warm, width=0.4, color=NATIVE, label="warm median")
     axis.set_xticks(x, labels, rotation=40, ha="right")
     axis.set_ylabel("Seconds")
@@ -240,7 +240,7 @@ def effective_throughput(entries: dict[str, dict], output: Path) -> None:
         ultra.append(image_epochs / median(entry, "ultralytics"))
     x = list(range(len(ids)))
     figure, axis = plt.subplots(figsize=(13, 6))
-    axis.bar([value - 0.2 for value in x], native, width=0.4, color=NATIVE, label="boquilens")
+    axis.bar([value - 0.2 for value in x], native, width=0.4, color=NATIVE, label="Montgomery")
     axis.bar([value + 0.2 for value in x], ultra, width=0.4, color=ULTRA, label="Ultralytics")
     axis.set_xticks(x, labels, rotation=40, ha="right")
     axis.set_ylabel("Training image-epochs / wall second")
@@ -259,10 +259,10 @@ def optimization_before_after(
     baseline = median(baseline_entries[scenario_id], "native")
     optimized = median(entries[scenario_id], "native")
     ultralytics = median(entries[scenario_id], "ultralytics")
-    labels = ["native before\nvectorization", "native after\nvectorization", "Ultralytics"]
+    labels = ["Montgomery before\nvectorization", "Montgomery after\nvectorization", "Ultralytics"]
     values = [baseline, optimized, ultralytics]
     figure, axis = plt.subplots(figsize=(9, 5.8))
-    bars = axis.bar(labels, values, color=["#c4b5fd", NATIVE, ULTRA], width=0.62)
+    bars = axis.bar(labels, values, color=["#bdf6d1", NATIVE, ULTRA], width=0.62)
     axis.bar_label(bars, labels=[f"{value:.2f}s" for value in values], padding=5, fontsize=12)
     axis.set_ylabel("External command wall time (seconds)")
     figure.suptitle(

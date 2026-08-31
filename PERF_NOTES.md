@@ -4,7 +4,7 @@ Date: 2026-08-28. Machine: AMD Ryzen 9 9950X3D (16C/32T), 32 GB RAM, Windows 11,
 x86_64-pc-windows-msvc, Burn 0.21.0-pre.4, PyTorch 2.13.0+cpu / Ultralytics 8.4.131 (conversion
 environment, now managed by uv). All latency numbers are median / minimum of 10 timed runs after 3 warmups, measured
 sequentially (`--test-threads 1`), single image, batch 1, on zeros `[1, 3, 640, 640]` unless noted.
-Motivating mystery: boquilens Flex CPU inference measured ~5-7.5x slower than the official
+Motivating mystery: Montgomery Flex CPU inference measured ~5-7.5x slower than the official
 Ultralytics/PyTorch CPU runtime (README table).
 
 ## 1. Methodology audit — the 5-7.5x comparison is apples-to-apples
@@ -12,7 +12,7 @@ Ultralytics/PyTorch CPU runtime (README table).
 Compared `src/models/yolo11/model.rs:798-852` / `src/models/yolov10/model.rs:690-744` /
 `src/models/yolo26/model.rs:630-678` (`latency_test!`) against `tools/bench_ultralytics_cpu.py`.
 
-| Aspect | boquilens `latency_test!` | `bench_ultralytics_cpu.py` | Comparable? |
+| Aspect | Montgomery `latency_test!` | `bench_ultralytics_cpu.py` | Comparable? |
 | --- | --- | --- | --- |
 | Input | `Tensor::zeros([1,3,640,640])` (model.rs:821) | `torch.zeros(1,3,640,640)` (py:28) | Yes — identical |
 | Preprocessing / letterbox | Excluded (zeros input) | Excluded (raw `model(input)`) | Yes — neither counts it |
@@ -44,7 +44,7 @@ Run-to-run drift (full 17-variant harness, default features): README run vs this
 `burn-flex` default features **already include `simd` (macerator runtime-dispatched
 AVX2/AVX-512/SSE element kernels) and `rayon`** (burn-flex Cargo.toml features `default =
 ["std", "simd", "rayon"]`). The only unenabled knob is `x86-v4`, which compiles the `gemm-f32`
-AVX-512 microkernels (`gemm-f32/src/microkernel.rs:182-288`). Added as boquilens feature
+AVX-512 microkernels (`gemm-f32/src/microkernel.rs:182-288`). Added as a Montgomery feature
 `cpu-simd = ["burn-flex/simd", "burn-flex/x86-v4"]`.
 
 | Model | Flex default (ms) | Flex x86-v4 (ms) | Δ |
@@ -111,7 +111,7 @@ Root cause isolated by element-wise probes against Flex (`tests/cpu_backend.rs`)
   scrambled, and everything downstream (decode, sigmoid, top-k) is garbage.
 
 This is a CubeCL-CPU/cubecl-cpu 0.10.0-pre.4 contract bug (conv output layout not canonicalized
-across `reshape`), not something boquilens can or should work around. The failing parity tests are
+across `reshape`), not something Montgomery can or should work around. The failing parity tests are
 kept as the upgrade gate: if they pass after a Burn upgrade, re-measure §2.2.
 
 ### 2.3 Threading (Flex; `RAYON_NUM_THREADS`)
@@ -136,7 +136,7 @@ yolov10n (default features, release):
 
 | Pipeline | Measured | Notes |
 | --- | ---: | --- |
-| **boquilens CLI** `boquilens predict --model yolo11n --weights target/yolo11n-...bpk --source assets/dog_bike_man.jpg` | **150 ms** median (n=5: 148.6-162.5) | process start + weights load + letterbox + forward + NMS + annotate + PNG write |
+| **Montgomery CLI** `montgomery predict --model yolo11n --weights target/yolo11n-...bpk --source assets/dog_bike_man.jpg` | **150 ms** median (n=5: 148.6-162.5) | process start + weights load + letterbox + forward + NMS + annotate + PNG write |
 | — Flex forward on the actual 512x640 canvas (throwaway harness) | 117.4 ms median | the model compute inside the CLI |
 | — CLI overhead beyond forward | ~33 ms | weights load, letterbox, NMS (3 dets), annotation render, PNG write, process start |
 | **Ultralytics** `YOLO('yolo11n.pt').predict(src)` (model pre-loaded) | **13.5-14.1 ms** median (n=10) | letterbox + fused PyTorch forward + NMS + results; model load excluded |
@@ -147,9 +147,9 @@ Notes:
 
 - The PyTorch forward-only harness drifts between sessions (17.7 / 21.3 ms median for identical
   work) — ±20%; conclusions below survive this.
-- boquilens' forward at the real canvas is **~7.5x** PyTorch's (117.4 vs 15.7 ms); the full CLI is
+- Montgomery's forward at the real canvas is **~7.5x** PyTorch's (117.4 vs 15.7 ms); the full CLI is
   **~11x** the predict call (150 vs 13.5 ms).
-- Both pipelines are compute-dominated: boquilens' own overhead beyond the model is ~33 ms out of
+- Both pipelines are compute-dominated: Montgomery's own overhead beyond the model is ~33 ms out of
   150 ms (≈22%), Ultralytics' is ~0-2 ms out of 13.5 ms. **Preprocessing/postprocessing is not the
   problem — the Flex forward is.** Closing the product gap means closing the forward gap (or using
   the GPU path, already 12-15x faster than Flex CPU per the README table).
@@ -268,7 +268,7 @@ cargo test --locked --release measures_letterbox_resize_cost -- --ignored --noca
 cargo test --locked --release -- --ignored --test-threads 1
 
 # e2e JSON diff of detections before/after a letterbox change (throwaway script under target/)
-& target\boquilens-default.exe predict --model yolo11n-seg --weights target\yolo11n-seg-coco-ultralytics-v8.4-boquilens-v1.bpk --source assets\dog_bike_man.jpg --json --masks --output target\bench-run.png
+& target\montgomery-default.exe predict --model yolo11n-seg --weights target\yolo11n-seg-coco-ultralytics-v8.4-montgomery-v1.bpk --source assets\dog_bike_man.jpg --json --masks --output target\bench-run.png
 uv run --locked target\letterbox_fir_compare.py
 ```
 
@@ -291,7 +291,7 @@ $env:RAYON_NUM_THREADS='16'
 cargo test --locked --release -- --ignored --nocapture --test-threads 1 yolo11n_measures yolo11x_measures yolo26n_measures yolov10n_measures
 
 # product path
-& target\boquilens-default.exe predict --model yolo11n --weights target\yolo11n-coco-ultralytics-v8.4-boquilens-v1.bpk --source assets\dog_bike_man.jpg
+& target\montgomery-default.exe predict --model yolo11n --weights target\yolo11n-coco-ultralytics-v8.4-montgomery-v1.bpk --source assets\dog_bike_man.jpg
 uv run --locked tools\bench_ultralytics_predict.py target\yolo11n.pt assets\dog_bike_man.jpg
 uv run --locked tools\bench_ultralytics_cpu.py target\yolo11n.pt
 ```

@@ -87,7 +87,7 @@ pub fn export_onnx(
 ) -> Result<OnnxArtifact> {
     let weights = weights.to_owned();
     std::thread::Builder::new()
-        .name("boquilens-onnx-export".into())
+        .name("montgomery-onnx-export".into())
         .stack_size(128 * 1024 * 1024)
         .spawn(move || export_onnx_inner(model_id, &weights, options))?
         .join()
@@ -190,7 +190,7 @@ fn export_staged(
     let input_shape = options.input_shape;
     let write_burn_references = options.verify && options.profile == OnnxProfile::Portable;
     let (tensor_audit, burn_reference_files) = std::thread::Builder::new()
-        .name("boquilens-onnx-snapshot".into())
+        .name("montgomery-onnx-snapshot".into())
         .stack_size(64 * 1024 * 1024)
         .spawn(move || {
             let predictor =
@@ -267,7 +267,7 @@ fn export_staged(
         }
     };
     let manifest = BridgeManifest {
-        schema: "boquilens-onnx-export-input-v1".into(),
+        schema: "montgomery-onnx-export-input-v1".into(),
         export_spec_version: EXPORT_SPEC_VERSION.into(),
         model_id: model_id.as_str().into(),
         family: spec.family,
@@ -319,9 +319,9 @@ fn export_staged(
         sidecar_file: sidecar_name.into(),
         license: spec.license.into(),
         notice: "NOTICE".into(),
-        boquilens_version: env!("CARGO_PKG_VERSION").into(),
-        boquilens_git_commit: git_commit,
-        boquilens_git_dirty: git_dirty,
+        montgomery_version: env!("CARGO_PKG_VERSION").into(),
+        montgomery_git_commit: git_commit,
+        montgomery_git_dirty: git_dirty,
     };
     let manifest_path = intermediate.join("input-manifest.json");
     fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest)?)
@@ -445,7 +445,7 @@ fn validate_options(
 fn resolve_python(explicit: Option<&Path>) -> Result<PathBuf> {
     let candidate = explicit
         .map(Path::to_owned)
-        .or_else(|| env::var_os("BOQUILENS_ONNX_PYTHON").map(PathBuf::from))
+        .or_else(|| env::var_os("MONTGOMERY_ONNX_PYTHON").map(PathBuf::from))
         .unwrap_or_else(|| {
             let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/.venv");
             if cfg!(windows) {
@@ -474,7 +474,7 @@ fn run_python(
     let status = Command::new(python)
         .arg(exporter)
         .args(args)
-        .env("BOQUILENS_ONNX_NO_NETWORK", "1")
+        .env("MONTGOMERY_ONNX_NO_NETWORK", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
@@ -488,7 +488,7 @@ fn run_python(
 
 fn create_intermediate(parent: &Path) -> Result<PathBuf> {
     let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
-    let path = parent.join(format!(".boquilens-onnx-{}-{nonce}", std::process::id()));
+    let path = parent.join(format!(".montgomery-onnx-{}-{nonce}", std::process::id()));
     fs::create_dir(&path).map_err(|error| {
         format!(
             "creating private export directory {} failed: {error}",

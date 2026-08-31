@@ -1,6 +1,6 @@
 """Benchmark official Ultralytics (PyTorch, CPU) single-image inference for comparison.
 
-Mirrors boquilens' latency harness methodology so the README comparison is apples-to-apples:
+Mirrors Montgomery's latency harness methodology so the README comparison is apples-to-apples:
 batch 1, 640 px input, fp32 compute on CPU, 3 warmup runs, 10 timed runs, median and minimum,
 models measured sequentially. The model forward includes the head decode and, for the end-to-end
 families, the top-k postprocess — the same scope as the Rust `measures_single_inference_latency`

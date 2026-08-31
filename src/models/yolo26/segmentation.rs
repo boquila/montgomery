@@ -599,7 +599,7 @@ macro_rules! seg_model {
                 self.load_from(&mut store).map(|_| ())
             }
 
-            /// Load boquilens' versioned, half-precision native Burnpack artifact.
+            /// Load Montgomery's versioned, half-precision native Burnpack artifact.
             #[cfg(feature = "pretrained")]
             pub fn load_burnpack_weights(
                 &mut self,
@@ -618,10 +618,10 @@ macro_rules! seg_model {
                 path: impl Into<std::path::PathBuf>,
             ) -> Result<(), BurnpackError> {
                 let mut store = BurnpackStore::from_file(path.into())
-                    .metadata("boquilens.artifact-format", weights::artifact_format($id))
-                    .metadata("boquilens.model", $id)
-                    .metadata("boquilens.classes", "coco-80")
-                    .metadata("boquilens.precision", "f16")
+                    .metadata("montgomery.artifact-format", weights::artifact_format($id))
+                    .metadata("montgomery.model", $id)
+                    .metadata("montgomery.classes", "coco-80")
+                    .metadata("montgomery.precision", "f16")
                     .with_to_adapter(HalfPrecisionAdapter::new());
                 self.save_into(&mut store)
             }
@@ -935,7 +935,7 @@ mod parity_tests {
                     }),
                 )
                 .unwrap();
-                assert_eq!(fixture.format, "boquilens-ultralytics-golden-v1");
+                assert_eq!(fixture.format, "montgomery-ultralytics-golden-v1");
                 assert_eq!(fixture.model, $id);
 
                 let worker = std::thread::Builder::new()

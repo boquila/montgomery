@@ -1,12 +1,12 @@
 # Model bring-up guide
 
-How to add a new Ultralytics-family detector (a new family or a new scale variant) to boquilens as
+How to add a new Ultralytics-family detector (a new family or a new scale variant) to Montgomery as
 a native Burn implementation. Written for agent sessions: follow the phases in order; every step
 exists because skipping it has already caused a bug once.
 
 Orientation first:
 
-- boquilens runs inference natively in Rust/Burn. Python + PyTorch + the `ultralytics` package are
+- Montgomery runs inference natively in Rust/Burn. Python + PyTorch + the `ultralytics` package are
   conversion-time only; run the locked tools with `uv run --locked`.
 - The architecture reference is the vendored repo at `../ultralytics` (pinned 8.4.117). The locked
   Python package is also 8.4.117. When source and a serialized module disagree, the **official checkpoint
@@ -86,10 +86,10 @@ existing templates. Hard rules:
   with regex remaps (body layers in one rule, head towers one rule per path segment pattern; only
   the inference branch of the head is mapped — the one2many branch is intentionally dropped),
   `load_burnpack_weights`/`save_burnpack_weights` with the `HalfPrecisionAdapter` and
-  `boquilens.*` metadata, plus the ignored checkpoint-import and golden-tensor tests (2e-4
+  `montgomery.*` metadata, plus the ignored checkpoint-import and golden-tensor tests (2e-4
   tolerance, fixture JSON per step 5).
 - `weights.rs`: `artifact_format(<id>)` returning `<id>-v1`, `coco_artifact_filename(<id>)` returning
-  `<id>-coco-ultralytics-v<version>-boquilens-v1.bpk` (e.g. `v8.4`); fill bytes/SHA-256 constants
+  `<id>-coco-ultralytics-v<version>-montgomery-v1.bpk` (e.g. `v8.4`); fill bytes/SHA-256 constants
   after packing a verified artifact.
 - Keep the graph independent of CLI, filesystem, rendering, and image decoding.
 
@@ -126,7 +126,7 @@ Then the parity loop (checkpoint and fixtures live under `target/`):
 
 ```console
 uv run --locked tools\export_ultralytics_state.py target/<id>.pt target/<id>-state.pt
-cargo run --release -- pack-weights --model <id> --input target/<id>-state.pt --output target/<id>-coco-ultralytics-<ver>-boquilens-v1.bpk
+cargo run --release -- pack-weights --model <id> --input target/<id>-state.pt --output target/<id>-coco-ultralytics-<ver>-montgomery-v1.bpk
 uv run --locked tools\export_<id>_fixtures.py target/<id>.pt assets/dog_bike_man.jpg target
 cargo test --locked <id> -- --ignored
 ```

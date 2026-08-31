@@ -90,7 +90,7 @@ pub fn tensor_loss_with_matches<B: Backend>(
     &'static str,
 > {
     let profile_started =
-        std::env::var_os("BOQUILENS_PROFILE_TAL").map(|_| std::time::Instant::now());
+        std::env::var_os("MONTGOMERY_PROFILE_TAL").map(|_| std::time::Instant::now());
     let [batch, box_channels, anchor_count] = raw_boxes.dims();
     let [score_batch, classes, score_anchors] = raw_scores.dims();
     if score_batch != batch

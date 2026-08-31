@@ -52,42 +52,42 @@ def _outputs(value) -> tuple[torch.Tensor, ...]:
 
 def _metadata(manifest: dict) -> dict[str, str]:
     result = {
-        "boquilens.schema": "onnx-metadata-v1",
-        "boquilens.model_id": manifest["model_id"],
-        "boquilens.family": manifest["family"],
-        "boquilens.task": manifest["task"],
-        "boquilens.profile": manifest["profile"],
-        "boquilens.input.layout": manifest["input"]["layout"],
-        "boquilens.input.color": manifest["input"]["color"],
-        "boquilens.input.range": ",".join(str(value) for value in manifest["input"]["range"]),
-        "boquilens.input.shape": ",".join(str(value) for value in manifest["input"]["shape"]),
-        "boquilens.stride": str(manifest["stride"]),
-        "boquilens.class_names": json.dumps(manifest["class_names"], separators=(",", ":")),
-        "boquilens.checkpoint.sha256": manifest["checkpoint_sha256"],
-        "boquilens.weights.sha256": manifest["weights_sha256"],
-        "boquilens.exporter.version": "bridge-v1",
-        "boquilens.git.commit": manifest["boquilens_git_commit"],
-        "boquilens.graph_source": (
+        "montgomery.schema": "onnx-metadata-v1",
+        "montgomery.model_id": manifest["model_id"],
+        "montgomery.family": manifest["family"],
+        "montgomery.task": manifest["task"],
+        "montgomery.profile": manifest["profile"],
+        "montgomery.input.layout": manifest["input"]["layout"],
+        "montgomery.input.color": manifest["input"]["color"],
+        "montgomery.input.range": ",".join(str(value) for value in manifest["input"]["range"]),
+        "montgomery.input.shape": ",".join(str(value) for value in manifest["input"]["shape"]),
+        "montgomery.stride": str(manifest["stride"]),
+        "montgomery.class_names": json.dumps(manifest["class_names"], separators=(",", ":")),
+        "montgomery.checkpoint.sha256": manifest["checkpoint_sha256"],
+        "montgomery.weights.sha256": manifest["weights_sha256"],
+        "montgomery.exporter.version": "bridge-v1",
+        "montgomery.git.commit": manifest["montgomery_git_commit"],
+        "montgomery.graph_source": (
             f'{manifest["graph_source"]["kind"]}@{manifest["graph_source"]["expected_revision"]}'
         ),
-        "boquilens.nms": str(manifest["nms"]).lower(),
+        "montgomery.nms": str(manifest["nms"]).lower(),
         "model_license": manifest["license"],
         "model_notice": manifest["notice"],
     }
     if manifest.get("box_format"):
-        result["boquilens.box.format"] = manifest["box_format"]
-        result["boquilens.box.space"] = "model-input-pixels"
+        result["montgomery.box.format"] = manifest["box_format"]
+        result["montgomery.box.space"] = "model-input-pixels"
     if manifest["task"] == "segment":
         result.update(
             {
-                "boquilens.mask.coefficients": "32",
-                "boquilens.mask.coefficients_raw": "true",
-                "boquilens.mask.prototype_stride": "4",
-                "boquilens.mask.threshold": "logit>0",
+                "montgomery.mask.coefficients": "32",
+                "montgomery.mask.coefficients_raw": "true",
+                "montgomery.mask.prototype_stride": "4",
+                "montgomery.mask.threshold": "logit>0",
             }
         )
     if not manifest["reproducible"]:
-        result["boquilens.exported_utc"] = dt.datetime.now(dt.timezone.utc).isoformat()
+        result["montgomery.exported_utc"] = dt.datetime.now(dt.timezone.utc).isoformat()
     return result
 
 
@@ -310,7 +310,7 @@ def export_and_validate(
             continue
         artifacts.append({"filename": path.name, "bytes": path.stat().st_size, "sha256": file_sha256(path)})
     final = {
-        "schema": "boquilens-onnx-artifact-v1",
+        "schema": "montgomery-onnx-artifact-v1",
         "model_id": manifest["model_id"],
         "family": manifest["family"],
         "task": manifest["task"],
@@ -324,9 +324,9 @@ def export_and_validate(
         "weights_snapshot_sha256": manifest["weights_sha256"],
         "versions": {
             **versions,
-            "boquilens": manifest["boquilens_version"],
-            "boquilens_git_commit": manifest["boquilens_git_commit"],
-            "boquilens_git_dirty": manifest["boquilens_git_dirty"],
+            "montgomery": manifest["montgomery_version"],
+            "montgomery_git_commit": manifest["montgomery_git_commit"],
+            "montgomery_git_dirty": manifest["montgomery_git_dirty"],
             "graph_source": manifest["graph_source"]["expected_revision"],
         },
         "opset": int(manifest["opset"]),
@@ -348,7 +348,7 @@ def export_and_validate(
         "external_data": external,
         "validation": {"onnx_checker": True, "strict_shape_inference": True, "onnxruntime_cpu": True, "burn_reference": bool(manifest["burn_references"]), "cases": parity},
         "artifacts": artifacts,
-        "reproducibility": {"timestamp_omitted": bool(manifest["reproducible"]), "dirty_source": manifest["boquilens_git_dirty"]},
+        "reproducibility": {"timestamp_omitted": bool(manifest["reproducible"]), "dirty_source": manifest["montgomery_git_dirty"]},
     }
     if not manifest["reproducible"]:
         final["exported_utc"] = dt.datetime.now(dt.timezone.utc).isoformat()

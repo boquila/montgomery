@@ -173,7 +173,7 @@ impl RunDirectory {
         dataset: &ResolvedDataset,
     ) -> Result<(), std::io::Error> {
         let metadata = serde_json::json!({
-            "format": "boquilens-training-run-v1",
+            "format": "montgomery-training-run-v1",
             "crate_version": env!("CARGO_PKG_VERSION"),
             "backend": "burn-wgpu",
             "adapter": adapter,
@@ -363,7 +363,7 @@ mod tests {
             .unwrap()
             .as_nanos();
         let root =
-            std::env::temp_dir().join(format!("boquilens-report-{}-{nonce}", std::process::id()));
+            std::env::temp_dir().join(format!("montgomery-report-{}-{nonce}", std::process::id()));
         let spec = ModelSpec::new(ModelId::Yolo26N, vec!["object".into()], Some([64, 64])).unwrap();
         let config = TrainingConfig::yolox(spec, "data.yaml".into(), root.clone());
         let run = RunDirectory::create(&config, "test").unwrap();

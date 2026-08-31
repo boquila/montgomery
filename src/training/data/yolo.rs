@@ -179,7 +179,7 @@ mod tests {
     #[test]
     fn missing_label_is_valid_background() {
         let path =
-            std::env::temp_dir().join(format!("boquilens-missing-{}.txt", std::process::id()));
+            std::env::temp_dir().join(format!("montgomery-missing-{}.txt", std::process::id()));
         let parsed = parse_labels(path, "empty", [100, 50], YoloParseOptions::new(3)).unwrap();
         assert!(parsed.targets.is_empty());
     }

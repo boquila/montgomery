@@ -31,20 +31,20 @@
 use std::collections::BTreeMap;
 use std::time::Instant;
 
-use boquilens::models::yolo11::{
-    Yolo11N, Yolo11NConfig, Yolo11S, Yolo11SConfig, Yolo11X, Yolo11XConfig,
-};
-use boquilens::models::yolo26::{
-    Yolo26N, Yolo26NConfig, Yolo26S, Yolo26SConfig, Yolo26X, Yolo26XConfig,
-};
-use boquilens::models::yolov10::{
-    Yolov10N, Yolov10NConfig, Yolov10S, Yolov10SConfig, Yolov10X, Yolov10XConfig,
-};
 use burn::backend::cpu::Cpu;
 use burn::tensor::module;
 use burn::tensor::ops::ConvOptions;
 use burn::tensor::{Device, ElementConversion, Tensor, TensorData, backend::Backend};
 use burn_flex::Flex;
+use montgomery::models::yolo11::{
+    Yolo11N, Yolo11NConfig, Yolo11S, Yolo11SConfig, Yolo11X, Yolo11XConfig,
+};
+use montgomery::models::yolo26::{
+    Yolo26N, Yolo26NConfig, Yolo26S, Yolo26SConfig, Yolo26X, Yolo26XConfig,
+};
+use montgomery::models::yolov10::{
+    Yolov10N, Yolov10NConfig, Yolov10S, Yolov10SConfig, Yolov10X, Yolov10XConfig,
+};
 use serde::Deserialize;
 
 const WARMUP_RUNS: usize = 3;
@@ -75,7 +75,7 @@ latency_forward!(
 
 fn artifact(id: &str) -> std::path::PathBuf {
     let checkpoint = std::path::PathBuf::from(format!(
-        "target/{id}-coco-ultralytics-v8.4-boquilens-v1.bpk"
+        "target/{id}-coco-ultralytics-v8.4-montgomery-v1.bpk"
     ));
     assert!(
         checkpoint.exists(),
@@ -196,7 +196,7 @@ fn load_fixture(id: &str) -> GoldenFixture {
     let fixture: GoldenFixture =
         serde_json::from_slice(&std::fs::read(format!("target/{id}-golden-v1.json")).unwrap())
             .unwrap();
-    assert_eq!(fixture.format, "boquilens-ultralytics-golden-v1");
+    assert_eq!(fixture.format, "montgomery-ultralytics-golden-v1");
     assert_eq!(fixture.model, id);
     fixture
 }

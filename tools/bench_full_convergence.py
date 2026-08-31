@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run matched full-COCO convergence training with boquilens and Ultralytics.
+"""Run matched full-COCO convergence training with Montgomery and Ultralytics.
 
 This is intentionally separate from the fast performance matrix. It refuses partial datasets and
 stores every command, log, CSV, and model under ``target/full-convergence``.
@@ -24,7 +24,7 @@ from ultralytics.data.utils import check_det_dataset
 
 
 ROOT = Path(__file__).resolve().parents[1]
-BINARY = ROOT / "target" / "release" / ("boquilens.exe" if os.name == "nt" else "boquilens")
+BINARY = ROOT / "target" / "release" / ("montgomery.exe" if os.name == "nt" else "montgomery")
 EXPECTED_TRAIN = 118_287
 EXPECTED_VAL = 5_000
 AUTO_WORKERS = max(1, min(8, ((os.cpu_count() or 2) + 1) // 2))
@@ -84,7 +84,7 @@ def final_results(path: Path) -> dict[str, object]:
 
 def write_report(output: Path, args: argparse.Namespace, results: list[dict[str, object]]) -> None:
     report = {
-        "format": "boquilens-full-convergence-v1",
+        "format": "montgomery-full-convergence-v1",
         "dataset": {
             "name": "COCO 2017",
             "train_images": EXPECTED_TRAIN,

@@ -1,7 +1,7 @@
 """Convert a full Ultralytics checkpoint into a tensor-only state dict for Burn import.
 
 This is a development/build-time bridge. Python and PyTorch are not runtime dependencies of
-boquilens. The output preserves the original parameter keys and contains no optimizer or model
+Montgomery. The output preserves the original parameter keys and contains no optimizer or model
 object metadata.
 """
 

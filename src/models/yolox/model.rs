@@ -154,7 +154,7 @@ impl<B: Backend> Yolox<B> {
         Ok(())
     }
 
-    /// Load a boquilens-native, half-precision YOLOX Burnpack artifact.
+    /// Load a montgomery-native, half-precision YOLOX Burnpack artifact.
     #[cfg(feature = "pretrained")]
     pub fn load_burnpack_weights(&mut self, path: impl Into<PathBuf>) -> Result<(), BurnpackError> {
         let mut store = BurnpackStore::from_file(path.into())
@@ -172,14 +172,14 @@ impl<B: Backend> Yolox<B> {
     ) -> Result<(), BurnpackError> {
         let mut store = BurnpackStore::from_file(path.into())
             .metadata(
-                "boquilens.artifact-format",
+                "montgomery.artifact-format",
                 weights::artifact_format(model_id),
             )
-            .metadata("boquilens.model", model_id)
-            .metadata("boquilens.classes", "coco-80")
-            .metadata("boquilens.precision", "f16")
-            .metadata("boquilens.source", "yolox-official-v0.1.1rc0")
-            .metadata("boquilens.license", "Apache-2.0")
+            .metadata("montgomery.model", model_id)
+            .metadata("montgomery.classes", "coco-80")
+            .metadata("montgomery.precision", "f16")
+            .metadata("montgomery.source", "yolox-official-v0.1.1rc0")
+            .metadata("montgomery.license", "Apache-2.0")
             .with_to_adapter(HalfPrecisionAdapter::new());
         self.save_into(&mut store)
     }
@@ -327,7 +327,7 @@ mod tests {
                         )
                     }))
                     .unwrap();
-                assert_eq!(fixture.format, "boquilens-yolox-golden-v1");
+                assert_eq!(fixture.format, "montgomery-yolox-golden-v1");
                 assert_eq!(fixture.model, $id);
 
                 let checkpoint = official_checkpoint_path($id);

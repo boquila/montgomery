@@ -17,7 +17,7 @@ pub struct AugRng(ChaCha12Rng);
 impl AugRng {
     pub fn new(key: SeedKey<'_>) -> Self {
         let mut hash = Sha256::new();
-        hash.update(b"boquilens-augmentation-seed-v1");
+        hash.update(b"montgomery-augmentation-seed-v1");
         hash.update(key.run_seed.to_le_bytes());
         hash.update(key.epoch.to_le_bytes());
         hash.update(key.logical_position.to_le_bytes());

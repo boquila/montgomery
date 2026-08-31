@@ -60,7 +60,7 @@ impl<B: Backend> Yolov3Tiny<B> {
         self.load_from(&mut store).map(|_| ())
     }
 
-    /// Load boquilens' versioned, half-precision native Burnpack artifact.
+    /// Load Montgomery's versioned, half-precision native Burnpack artifact.
     #[cfg(feature = "pretrained")]
     pub fn load_burnpack_weights(&mut self, path: impl Into<PathBuf>) -> Result<(), BurnpackError> {
         let mut store = BurnpackStore::from_file(path.into())
@@ -73,10 +73,10 @@ impl<B: Backend> Yolov3Tiny<B> {
     #[cfg(feature = "pretrained")]
     pub fn save_burnpack_weights(&self, path: impl Into<PathBuf>) -> Result<(), BurnpackError> {
         let mut store = BurnpackStore::from_file(path.into())
-            .metadata("boquilens.artifact-format", weights::ARTIFACT_FORMAT)
-            .metadata("boquilens.model", "yolov3-tinyu")
-            .metadata("boquilens.classes", "coco-80")
-            .metadata("boquilens.precision", "f16")
+            .metadata("montgomery.artifact-format", weights::ARTIFACT_FORMAT)
+            .metadata("montgomery.model", "yolov3-tinyu")
+            .metadata("montgomery.classes", "coco-80")
+            .metadata("montgomery.precision", "f16")
             .with_to_adapter(HalfPrecisionAdapter::new());
         self.save_into(&mut store)
     }
@@ -201,13 +201,13 @@ mod tests {
     #[ignore]
     fn matches_ultralytics_golden_tensors() {
         let checkpoint =
-            std::path::PathBuf::from("target/yolov3-tinyu-coco-ultralytics-v8.4-boquilens-v1.bpk");
+            std::path::PathBuf::from("target/yolov3-tinyu-coco-ultralytics-v8.4-montgomery-v1.bpk");
         let fixture: GoldenFixture = serde_json::from_slice(
             &std::fs::read("target/yolov3-tinyu-golden-v1.json")
                 .expect("generate fixtures with tools/export_ultralytics_fixtures.py"),
         )
         .unwrap();
-        assert_eq!(fixture.format, "boquilens-ultralytics-golden-v1");
+        assert_eq!(fixture.format, "montgomery-ultralytics-golden-v1");
         assert_eq!(fixture.model, "yolov3-tinyu");
 
         let worker = std::thread::Builder::new()

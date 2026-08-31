@@ -29,7 +29,7 @@ pub fn derived_seed(
     draw: u64,
 ) -> [u8; 32] {
     let mut hash = Sha256::new();
-    hash.update(b"boquilens-training-rng-v1");
+    hash.update(b"montgomery-training-rng-v1");
     hash.update(global_seed.to_le_bytes());
     hash.update(epoch.to_le_bytes());
     hash.update(stage.as_bytes());

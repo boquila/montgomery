@@ -1,23 +1,23 @@
 use std::path::PathBuf;
 
-#[cfg(feature = "onnx")]
-use boquilens::export::{
-    CheckpointState, ExternalDataPolicy, OnnxExportOptions, OnnxPrecision, OnnxProfile, export_onnx,
-};
-#[cfg(feature = "training")]
-use boquilens::training::automatic_worker_count;
-#[cfg(feature = "training")]
-use boquilens::training::runtime::{
-    TrainingRequest, export as export_training, train as train_native, validate as validate_native,
-};
-use boquilens::{
-    ModelId, PredictOptions, Predictor, annotate, annotate_segmentation, pack_weights,
-};
 #[cfg(feature = "gpu")]
 use burn::backend::Wgpu;
 use burn::tensor::{Device, backend::Backend};
 use burn_flex::Flex;
 use clap::{Args as ClapArgs, Parser, Subcommand, ValueEnum};
+#[cfg(feature = "onnx")]
+use montgomery::export::{
+    CheckpointState, ExternalDataPolicy, OnnxExportOptions, OnnxPrecision, OnnxProfile, export_onnx,
+};
+#[cfg(feature = "training")]
+use montgomery::training::automatic_worker_count;
+#[cfg(feature = "training")]
+use montgomery::training::runtime::{
+    TrainingRequest, export as export_training, train as train_native, validate as validate_native,
+};
+use montgomery::{
+    ModelId, PredictOptions, Predictor, annotate, annotate_segmentation, pack_weights,
+};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -31,7 +31,7 @@ enum DeviceSelection {
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "boquilens",
+    name = "montgomery",
     version,
     about = "YOLO inference and training in Rust with Burn"
 )]
@@ -140,7 +140,7 @@ struct ExportOnnxArgs {
     /// Model architecture represented by the checkpoint.
     #[arg(long)]
     model: ModelId,
-    /// Local boquilens .bpk artifact.
+    /// Local Montgomery .bpk artifact.
     #[arg(long)]
     weights: PathBuf,
     /// Final ONNX path. A missing .onnx suffix is added explicitly.
@@ -220,7 +220,7 @@ struct PredictArgs {
     #[arg(long)]
     model: ModelId,
 
-    /// Local boquilens .bpk artifact.
+    /// Local Montgomery .bpk artifact.
     #[arg(long)]
     weights: PathBuf,
 
@@ -259,7 +259,7 @@ fn default_output(input: &std::path::Path) -> PathBuf {
     input.with_file_name(format!("{stem}-detections.png"))
 }
 
-fn main() -> boquilens::Result<()> {
+fn main() -> montgomery::Result<()> {
     #[cfg(all(windows, feature = "training", debug_assertions))]
     if std::env::var_os("RUST_MIN_STACK").is_none() {
         // Burn/CubeCL creates deep named worker threads after CLI startup. Windows' default Rust
@@ -378,7 +378,7 @@ fn main() -> boquilens::Result<()> {
 }
 
 #[cfg(feature = "onnx")]
-fn export_onnx_command(args: ExportOnnxArgs) -> boquilens::Result<()> {
+fn export_onnx_command(args: ExportOnnxArgs) -> montgomery::Result<()> {
     let mut options = OnnxExportOptions::for_model(args.model, args.output);
     if let Some(imgsz) = &args.imgsz {
         let (height, width) = parse_imgsz(imgsz)?;
@@ -417,7 +417,7 @@ fn export_onnx_command(args: ExportOnnxArgs) -> boquilens::Result<()> {
 }
 
 #[cfg(feature = "onnx")]
-fn parse_imgsz(value: &str) -> boquilens::Result<(usize, usize)> {
+fn parse_imgsz(value: &str) -> montgomery::Result<(usize, usize)> {
     let parts = value
         .split([',', 'x', 'X'])
         .map(str::trim)
@@ -431,7 +431,7 @@ fn parse_imgsz(value: &str) -> boquilens::Result<(usize, usize)> {
     }
 }
 
-fn predict(args: PredictArgs) -> boquilens::Result<()> {
+fn predict(args: PredictArgs) -> montgomery::Result<()> {
     let options = PredictOptions {
         confidence: args.confidence,
         iou: args.iou,
@@ -440,13 +440,13 @@ fn predict(args: PredictArgs) -> boquilens::Result<()> {
         DeviceSelection::Cpu => run_predict::<Flex>(&args, options, Device::<Flex>::default()),
         #[cfg(feature = "gpu")]
         DeviceSelection::Gpu => {
-            let (device, adapter) = boquilens::default_wgpu_device();
+            let (device, adapter) = montgomery::default_wgpu_device();
             eprintln!("GPU adapter: {adapter}");
             run_predict::<Wgpu>(&args, options, device)
         }
         #[cfg(not(feature = "gpu"))]
         DeviceSelection::Gpu => Err(
-            "GPU inference requires building boquilens with the gpu feature: \
+            "GPU inference requires building Montgomery with the gpu feature: \
              cargo build --release --features gpu"
                 .into(),
         ),
@@ -457,7 +457,7 @@ fn run_predict<B: Backend>(
     args: &PredictArgs,
     options: PredictOptions,
     device: Device<B>,
-) -> boquilens::Result<()> {
+) -> montgomery::Result<()> {
     if args.weights.extension().and_then(|value| value.to_str()) != Some("bpk") {
         return Err(
             "predict --weights requires a native .bpk artifact; convert upstream checkpoints with pack-weights"
@@ -538,7 +538,7 @@ fn run_predict<B: Backend>(
             coordinate_format: &'static str,
             coordinate_units: &'static str,
             coordinate_space: &'static str,
-            detections: &'a [boquilens::Detection],
+            detections: &'a [montgomery::Detection],
         }
 
         println!(
@@ -585,8 +585,8 @@ fn report_classifications(
     image: &image::DynamicImage,
     output: &std::path::Path,
     input_size: usize,
-    classifications: &[boquilens::Classification],
-) -> boquilens::Result<()> {
+    classifications: &[montgomery::Classification],
+) -> montgomery::Result<()> {
     let _ = image;
     let _ = output;
     if args.json {
@@ -594,7 +594,7 @@ fn report_classifications(
         struct JsonOutput<'a> {
             task: &'static str,
             input_size_px: usize,
-            classes: &'a [boquilens::Classification],
+            classes: &'a [montgomery::Classification],
         }
 
         println!(
@@ -636,8 +636,8 @@ fn report_segmentations(
     args: &PredictArgs,
     image: &image::DynamicImage,
     output: &std::path::Path,
-    detections: &[boquilens::SegmentationDetection],
-) -> boquilens::Result<()> {
+    detections: &[montgomery::SegmentationDetection],
+) -> montgomery::Result<()> {
     let masks = args.masks;
     if args.json {
         #[derive(Serialize)]
@@ -724,9 +724,9 @@ fn report_segmentations(
     let annotated = if masks {
         annotate_segmentation(image, detections)
     } else {
-        let boxes: Vec<boquilens::Detection> = detections
+        let boxes: Vec<montgomery::Detection> = detections
             .iter()
-            .map(|detection| boquilens::Detection {
+            .map(|detection| montgomery::Detection {
                 class_id: detection.class_id,
                 class_name: detection.class_name.clone(),
                 confidence: detection.confidence,

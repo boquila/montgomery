@@ -189,7 +189,7 @@ impl<B: Backend> Yolo26ClsN<B> {
         self.load_from(&mut store).map(|_| ())
     }
 
-    /// Load boquilens' versioned, half-precision native Burnpack artifact.
+    /// Load Montgomery's versioned, half-precision native Burnpack artifact.
     #[cfg(feature = "pretrained")]
     pub fn load_burnpack_weights(
         &mut self,
@@ -209,12 +209,12 @@ impl<B: Backend> Yolo26ClsN<B> {
     ) -> Result<(), burn_store::BurnpackError> {
         let mut store = burn_store::BurnpackStore::from_file(path.into())
             .metadata(
-                "boquilens.artifact-format",
+                "montgomery.artifact-format",
                 super::weights::artifact_format("yolo26n-cls"),
             )
-            .metadata("boquilens.model", "yolo26n-cls")
-            .metadata("boquilens.classes", "imagenet-1000")
-            .metadata("boquilens.precision", "f16")
+            .metadata("montgomery.model", "yolo26n-cls")
+            .metadata("montgomery.classes", "imagenet-1000")
+            .metadata("montgomery.precision", "f16")
             .with_to_adapter(burn_store::HalfPrecisionAdapter::new());
         self.save_into(&mut store)
     }
@@ -268,7 +268,7 @@ impl<B: Backend> Yolo26ClsS<B> {
         self.load_from(&mut store).map(|_| ())
     }
 
-    /// Load boquilens' versioned, half-precision native Burnpack artifact.
+    /// Load Montgomery's versioned, half-precision native Burnpack artifact.
     #[cfg(feature = "pretrained")]
     pub fn load_burnpack_weights(
         &mut self,
@@ -288,12 +288,12 @@ impl<B: Backend> Yolo26ClsS<B> {
     ) -> Result<(), burn_store::BurnpackError> {
         let mut store = burn_store::BurnpackStore::from_file(path.into())
             .metadata(
-                "boquilens.artifact-format",
+                "montgomery.artifact-format",
                 super::weights::artifact_format("yolo26s-cls"),
             )
-            .metadata("boquilens.model", "yolo26s-cls")
-            .metadata("boquilens.classes", "imagenet-1000")
-            .metadata("boquilens.precision", "f16")
+            .metadata("montgomery.model", "yolo26s-cls")
+            .metadata("montgomery.classes", "imagenet-1000")
+            .metadata("montgomery.precision", "f16")
             .with_to_adapter(burn_store::HalfPrecisionAdapter::new());
         self.save_into(&mut store)
     }
@@ -347,7 +347,7 @@ impl<B: Backend> Yolo26ClsM<B> {
         self.load_from(&mut store).map(|_| ())
     }
 
-    /// Load boquilens' versioned, half-precision native Burnpack artifact.
+    /// Load Montgomery's versioned, half-precision native Burnpack artifact.
     #[cfg(feature = "pretrained")]
     pub fn load_burnpack_weights(
         &mut self,
@@ -367,12 +367,12 @@ impl<B: Backend> Yolo26ClsM<B> {
     ) -> Result<(), burn_store::BurnpackError> {
         let mut store = burn_store::BurnpackStore::from_file(path.into())
             .metadata(
-                "boquilens.artifact-format",
+                "montgomery.artifact-format",
                 super::weights::artifact_format("yolo26m-cls"),
             )
-            .metadata("boquilens.model", "yolo26m-cls")
-            .metadata("boquilens.classes", "imagenet-1000")
-            .metadata("boquilens.precision", "f16")
+            .metadata("montgomery.model", "yolo26m-cls")
+            .metadata("montgomery.classes", "imagenet-1000")
+            .metadata("montgomery.precision", "f16")
             .with_to_adapter(burn_store::HalfPrecisionAdapter::new());
         self.save_into(&mut store)
     }
@@ -426,7 +426,7 @@ impl<B: Backend> Yolo26ClsL<B> {
         self.load_from(&mut store).map(|_| ())
     }
 
-    /// Load boquilens' versioned, half-precision native Burnpack artifact.
+    /// Load Montgomery's versioned, half-precision native Burnpack artifact.
     #[cfg(feature = "pretrained")]
     pub fn load_burnpack_weights(
         &mut self,
@@ -446,12 +446,12 @@ impl<B: Backend> Yolo26ClsL<B> {
     ) -> Result<(), burn_store::BurnpackError> {
         let mut store = burn_store::BurnpackStore::from_file(path.into())
             .metadata(
-                "boquilens.artifact-format",
+                "montgomery.artifact-format",
                 super::weights::artifact_format("yolo26l-cls"),
             )
-            .metadata("boquilens.model", "yolo26l-cls")
-            .metadata("boquilens.classes", "imagenet-1000")
-            .metadata("boquilens.precision", "f16")
+            .metadata("montgomery.model", "yolo26l-cls")
+            .metadata("montgomery.classes", "imagenet-1000")
+            .metadata("montgomery.precision", "f16")
             .with_to_adapter(burn_store::HalfPrecisionAdapter::new());
         self.save_into(&mut store)
     }
@@ -505,7 +505,7 @@ impl<B: Backend> Yolo26ClsX<B> {
         self.load_from(&mut store).map(|_| ())
     }
 
-    /// Load boquilens' versioned, half-precision native Burnpack artifact.
+    /// Load Montgomery's versioned, half-precision native Burnpack artifact.
     #[cfg(feature = "pretrained")]
     pub fn load_burnpack_weights(
         &mut self,
@@ -525,12 +525,12 @@ impl<B: Backend> Yolo26ClsX<B> {
     ) -> Result<(), burn_store::BurnpackError> {
         let mut store = burn_store::BurnpackStore::from_file(path.into())
             .metadata(
-                "boquilens.artifact-format",
+                "montgomery.artifact-format",
                 super::weights::artifact_format("yolo26x-cls"),
             )
-            .metadata("boquilens.model", "yolo26x-cls")
-            .metadata("boquilens.classes", "imagenet-1000")
-            .metadata("boquilens.precision", "f16")
+            .metadata("montgomery.model", "yolo26x-cls")
+            .metadata("montgomery.classes", "imagenet-1000")
+            .metadata("montgomery.precision", "f16")
             .with_to_adapter(burn_store::HalfPrecisionAdapter::new());
         self.save_into(&mut store)
     }
@@ -895,7 +895,7 @@ mod tests {
                     }),
                 )
                 .unwrap();
-                assert_eq!(fixture.format, "boquilens-ultralytics-golden-v1");
+                assert_eq!(fixture.format, "montgomery-ultralytics-golden-v1");
                 assert_eq!(fixture.model, $id);
 
                 let worker = std::thread::Builder::new()
@@ -1055,8 +1055,8 @@ mod tests {
                     // The 1000-way softmax is sensitive to the +-1 per-channel rounding of any
                     // anti-aliased bilinear resize (even PIL vs torchvision differ on ~half the
                     // pixels), and flat distributions amplify the shift (observed worst case
-                    // 0.037 on yolo11s-cls). Verified: Ultralytics fed boquilens' canvas
-                    // reproduces boquilens' probabilities exactly, so this delta is preprocessing
+                    // 0.037 on yolo11s-cls). Verified: Ultralytics fed Montgomery's canvas
+                    // reproduces Montgomery's probabilities exactly, so this delta is preprocessing
                     // rounding, not graph drift; the golden test pins the graph at 2e-4 on the
                     // shared canvas.
                     assert!(

@@ -1,4 +1,4 @@
-//! Versioned names for boquilens-native YOLO11 artifacts.
+//! Versioned names for montgomery-native YOLO11 artifacts.
 
 const ARTIFACT_SCHEMA: &str = "v1";
 
@@ -7,7 +7,7 @@ pub fn artifact_format(model: &str) -> String {
 }
 
 pub fn coco_artifact_filename(model: &str) -> String {
-    format!("{model}-coco-ultralytics-v8.4-boquilens-v1.bpk")
+    format!("{model}-coco-ultralytics-v8.4-montgomery-v1.bpk")
 }
 
 pub fn dataset_tag(model: &str) -> &'static str {
@@ -22,7 +22,7 @@ pub fn dataset_tag(model: &str) -> &'static str {
 
 pub fn artifact_filename(model: &str) -> String {
     format!(
-        "{model}-{}-ultralytics-v8.4-boquilens-v1.bpk",
+        "{model}-{}-ultralytics-v8.4-montgomery-v1.bpk",
         dataset_tag(model)
     )
 }

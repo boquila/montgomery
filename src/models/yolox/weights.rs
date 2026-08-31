@@ -1,6 +1,6 @@
-//! Official checkpoint provenance and boquilens-native artifact naming for YOLOX.
+//! Official checkpoint provenance and montgomery-native artifact naming for YOLOX.
 
-/// Schema suffix of native YOLOX artifacts written by `boquilens pack-weights`.
+/// Schema suffix of native YOLOX artifacts written by `montgomery pack-weights`.
 const ARTIFACT_SCHEMA: &str = "v1";
 
 /// Native artifact schema string for one scale variant.
@@ -10,7 +10,7 @@ pub fn artifact_format(model: &str) -> String {
 
 /// Recommended filename for a COCO-80 artifact converted from the official YOLOX release.
 pub fn coco_artifact_filename(model: &str) -> String {
-    format!("{model}-coco-official-v0.1.1rc0-boquilens-v1.bpk")
+    format!("{model}-coco-official-v0.1.1rc0-montgomery-v1.bpk")
 }
 
 /// Immutable provenance for one official upstream checkpoint.

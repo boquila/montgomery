@@ -3,7 +3,7 @@
 //! The official Ultralytics YOLO26-cls checkpoints store per-index WordNet IDs (`model.names`,
 //! 1000 entries); at inference Ultralytics maps them to human-readable labels through the
 //! `wnid -> name` table in `ultralytics/cfg/datasets/ImageNet.yaml` (AGPL-3.0). This table is
-//! that mapped list in checkpoint order, so index 0 here is class 0 of every boquilens
+//! that mapped list in checkpoint order, so index 0 here is class 0 of every montgomery
 //! classification artifact and names match the official `Results` output verbatim.
 /// ImageNet-1k class labels, in official checkpoint order.
 pub const CLASSES: [&str; 1000] = [

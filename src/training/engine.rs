@@ -173,7 +173,7 @@ impl Trainer {
         let mut deferred = Vec::<DeferredDiagnostic<B>>::with_capacity(diagnostic_capacity);
         let mut optimizer_steps = 0;
         let mut group_start = 0;
-        let profile = std::env::var_os("BOQUILENS_PROFILE_TRAINING").is_some();
+        let profile = std::env::var_os("MONTGOMERY_PROFILE_TRAINING").is_some();
         let mut data_time = Duration::ZERO;
         let mut forward_time = Duration::ZERO;
         let mut backward_time = Duration::ZERO;

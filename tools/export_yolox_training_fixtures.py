@@ -51,7 +51,7 @@ def main() -> None:
     total = losses["total_loss"] if isinstance(losses, dict) else losses[0]
     total.backward()
     fixture = {
-        "format": "boquilens-yolox-training-v1",
+        "format": "montgomery-yolox-training-v1",
         "reference": {"tag": "0.1.1rc0", "torch": torch.__version__},
         "model": args.model,
         "checkpoint_sha256": hashlib.sha256(args.checkpoint.read_bytes()).hexdigest(),

@@ -15,7 +15,7 @@ use sha2::{Digest, Sha256};
 
 use crate::training::{TrainingConfig, scheduler::LrScheduler, state::TrainingState};
 
-pub const CHECKPOINT_FORMAT: &str = "boquilens-training-v1";
+pub const CHECKPOINT_FORMAT: &str = "montgomery-training-v1";
 
 pub struct PendingCheckpoint {
     handle: std::thread::JoinHandle<Result<(), CheckpointError>>,
@@ -367,7 +367,7 @@ mod tests {
             .unwrap()
             .as_nanos();
         std::env::temp_dir().join(format!(
-            "boquilens-{label}-{}-{}",
+            "montgomery-{label}-{}-{}",
             std::process::id(),
             nonce
         ))

@@ -49,7 +49,7 @@ def main() -> None:
         if parameter.grad is not None
     }
     fixture = {
-        "format": "boquilens-ultralytics-training-v1",
+        "format": "montgomery-ultralytics-training-v1",
         "reference": {"ultralytics": ultralytics_version, "commit": "461196cf0", "torch": torch.__version__},
         "model": args.model,
         "checkpoint_sha256": hashlib.sha256(args.checkpoint.read_bytes()).hexdigest(),

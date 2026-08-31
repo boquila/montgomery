@@ -1,4 +1,4 @@
-"""Run the reproducible boquilens/Burn vs Ultralytics/PyTorch training matrix.
+"""Run the reproducible Montgomery/Burn vs Ultralytics/PyTorch training matrix.
 
 Run from the repository root with the locked CUDA benchmark environment:
 
@@ -28,7 +28,7 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
-NATIVE = ROOT / "target" / "release" / ("boquilens.exe" if os.name == "nt" else "boquilens")
+NATIVE = ROOT / "target" / "release" / ("montgomery.exe" if os.name == "nt" else "montgomery")
 ULTRA_SCRIPT = ROOT / "tools" / "bench_ultralytics_train.py"
 ULTRA_VALIDATION_SCRIPT = ROOT / "tools" / "validate_ultralytics_training.py"
 DATA_SCRIPT = ROOT / "tools" / "prepare_training_benchmark_data.py"
@@ -373,7 +373,7 @@ def main() -> None:
     parser.add_argument(
         "--native-binary",
         type=Path,
-        help="benchmark this native executable instead of target/release/boquilens",
+        help="benchmark this native executable instead of target/release/montgomery",
     )
     parser.add_argument("--skip-prime", action="store_true")
     parser.add_argument("--keep-runs", action="store_true")
@@ -399,7 +399,7 @@ def main() -> None:
     output_root = output.parent
     output_root.mkdir(parents=True, exist_ok=True)
     new_result: dict[str, Any] = {
-        "schema": "boquilens-training-comparison-v1",
+        "schema": "montgomery-training-comparison-v1",
         "created_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "methodology": {
             "timer": "external process wall clock",

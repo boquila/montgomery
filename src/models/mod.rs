@@ -1,4 +1,4 @@
-//! Native model implementations owned and versioned by boquilens.
+//! Native model implementations owned and versioned by Montgomery.
 
 #[cfg(feature = "training")]
 pub(crate) mod training_ops;

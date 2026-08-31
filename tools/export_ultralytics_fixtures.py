@@ -91,7 +91,7 @@ def main() -> None:
         "decoded_scores": decoded[..., 4:],
     }
     fixture = {
-        "format": "boquilens-ultralytics-golden-v1",
+        "format": "montgomery-ultralytics-golden-v1",
         "model": "yolov3-tinyu",
         "checkpoint_sha256": file_sha256(args.checkpoint),
         "input_sha256": file_sha256(input_path),

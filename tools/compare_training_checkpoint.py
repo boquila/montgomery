@@ -51,7 +51,7 @@ def main() -> None:
     actual = json.loads(args.actual.read_text(encoding="utf-8"))
     errors: list[str] = []
     compare("$", expected, actual, args.atol, args.rtol, errors)
-    result = {"format": "boquilens-training-comparison-v1", "passed": not errors, "errors": errors}
+    result = {"format": "montgomery-training-comparison-v1", "passed": not errors, "errors": errors}
     if args.report:
         args.report.parent.mkdir(parents=True, exist_ok=True)
         args.report.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")

@@ -110,7 +110,7 @@ def main() -> None:
         tensors["protos"] = protos
         tensors["mask_coeffs"] = preds["mask_coefficient"]
     fixture = {
-        "format": "boquilens-ultralytics-golden-v1",
+        "format": "montgomery-ultralytics-golden-v1",
         "model": args.model,
         "checkpoint_sha256": file_sha256(args.checkpoint),
         "input_sha256": file_sha256(input_path),

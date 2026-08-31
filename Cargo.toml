@@ -1,9 +1,14 @@
 [package]
-name = "boquilens"
+name = "montgomery"
 version = "0.1.0"
 edition = "2024"
-description = "Object detection in Rust with Burn"
+description = "Native YOLO inference and training in Rust with Burn"
 license = "AGPL-3.0"
+repository = "https://github.com/boquila/montgomery"
+homepage = "https://github.com/boquila/montgomery"
+readme = "README.md"
+keywords = ["computer-vision", "yolo", "burn", "inference", "training"]
+categories = ["computer-vision", "science"]
 
 [features]
 default = ["pretrained", "onnx"]
@@ -48,6 +53,6 @@ serde_yaml = { version = "0.9", optional = true }
 sha2 = { version = "0.10", optional = true }
 
 [[bin]]
-name = "boquilens"
+name = "montgomery"
 path = "src/main.rs"
 required-features = ["pretrained"]

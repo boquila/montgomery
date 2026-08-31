@@ -61,9 +61,9 @@ pub struct BridgeManifest {
     pub sidecar_file: String,
     pub license: String,
     pub notice: String,
-    pub boquilens_version: String,
-    pub boquilens_git_commit: String,
-    pub boquilens_git_dirty: bool,
+    pub montgomery_version: String,
+    pub montgomery_git_commit: String,
+    pub montgomery_git_dirty: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

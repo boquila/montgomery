@@ -796,7 +796,7 @@ pub struct TrainingRequest {
 
 pub fn train(request: TrainingRequest) -> Result<PathBuf, Box<dyn Error + Send + Sync>> {
     let worker = std::thread::Builder::new()
-        .name("boquilens-training".into())
+        .name("montgomery-training".into())
         .stack_size(64 * 1024 * 1024)
         .spawn(move || train_inner(request))?;
     worker.join().map_err(|_| {
@@ -1368,7 +1368,7 @@ fn write_run_summary(run: &std::path::Path) -> Result<(), Box<dyn Error + Send +
     let best = crate::training::checkpoint::load(run.join("checkpoints/best"))?;
     let last = crate::training::checkpoint::load(run.join("checkpoints/last"))?;
     let summary = serde_json::json!({
-        "format": "boquilens-training-summary-v1",
+        "format": "montgomery-training-summary-v1",
         "epochs_completed": last.state.epoch,
         "best_epoch": best.state.best_epoch,
         "best_fitness": best.state.best_fitness,
@@ -1541,7 +1541,7 @@ where
     V: FnMut(M::InnerModule) -> Result<ValidationSummary, Box<dyn Error + Send + Sync>>,
 {
     let (mut optimizer, external_weight_decay) = optimizer;
-    let profile_training = std::env::var_os("BOQUILENS_PROFILE_TRAINING").is_some();
+    let profile_training = std::env::var_os("MONTGOMERY_PROFILE_TRAINING").is_some();
     let mut ema_model = model.clone();
     let mut ema_state = crate::training::ema::EmaState::new(0.9999)?;
     ema_state.updates = trainer.state.ema_updates;
@@ -1961,7 +1961,7 @@ pub struct ValidationSummary {
 
 pub fn validate(checkpoint: PathBuf) -> Result<ValidationSummary, Box<dyn Error + Send + Sync>> {
     let worker = std::thread::Builder::new()
-        .name("boquilens-training-validation".into())
+        .name("montgomery-training-validation".into())
         .stack_size(64 * 1024 * 1024)
         .spawn(move || validate_inner(checkpoint))?;
     worker.join().map_err(|_| {
@@ -2770,7 +2770,7 @@ pub fn export(
     output: PathBuf,
 ) -> Result<PathBuf, Box<dyn Error + Send + Sync>> {
     let worker = std::thread::Builder::new()
-        .name("boquilens-training-export".into())
+        .name("montgomery-training-export".into())
         .stack_size(64 * 1024 * 1024)
         .spawn(move || export_inner(checkpoint, output))?;
     worker.join().map_err(|_| {
@@ -2908,18 +2908,18 @@ where
         crate::training::TaskKind::Classify => "classify",
     };
     let mut store = burn_store::BurnpackStore::from_file(output)
-        .metadata("boquilens.artifact-format", "boquilens-trained-v1")
-        .metadata("boquilens.model", spec.architecture.as_str())
-        .metadata("boquilens.task", task)
+        .metadata("montgomery.artifact-format", "montgomery-trained-v1")
+        .metadata("montgomery.model", spec.architecture.as_str())
+        .metadata("montgomery.task", task)
         .metadata(
-            "boquilens.class-names-json",
+            "montgomery.class-names-json",
             serde_json::to_string(&spec.class_names)?,
         )
         .metadata(
-            "boquilens.input-size-json",
+            "montgomery.input-size-json",
             serde_json::to_string(&spec.input_size)?,
         )
-        .metadata("boquilens.precision", "f16")
+        .metadata("montgomery.precision", "f16")
         .with_filter(PathFilter::new().with_predicate(keep_inference_tensor))
         .with_to_adapter(burn_store::HalfPrecisionAdapter::new());
     model.save_into(&mut store)?;
