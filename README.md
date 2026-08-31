@@ -124,6 +124,19 @@ The offline exporter validates the graph with ONNX Runtime. Setup details are in
 
 ## Develop
 
+Stable Rust is the only requirement for the native crate. A fresh checkout is ready in two commands:
+
+```console
+git clone https://github.com/boquila/montgomery.git && cd montgomery
+cargo test --locked
+```
+
+Cargo downloads and builds every Rust dependency automatically. Python is optional and only used
+for checkpoint conversion, benchmark generation, and ONNX development; `uv run --locked <command>`
+creates that environment from the committed `pyproject.toml` and `uv.lock` when needed.
+
+The same checks used by CI are:
+
 ```console
 cargo fmt --check
 cargo test --locked
