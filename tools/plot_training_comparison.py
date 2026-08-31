@@ -199,7 +199,7 @@ def convergence(entries: dict[str, dict], output: Path) -> None:
         axis.set_ylabel("Loss / epoch-1 loss")
         axis.spines[["top", "right"]].set_visible(False)
     if found:
-        axes[0].legend(frameon=False)
+        next(axis for axis in axes if axis.get_visible()).legend(frameon=False)
         figure.suptitle("Ten-epoch convergence sanity check", x=0.04, ha="left", fontsize=20, fontweight="bold")
         finish(figure, output / "convergence-normalized.png")
     else:
