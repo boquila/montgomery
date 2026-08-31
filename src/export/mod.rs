@@ -456,7 +456,7 @@ fn resolve_python(explicit: Option<&Path>) -> Result<PathBuf> {
         });
     if !candidate.is_file() {
         return Err(format!(
-            "Python environment preflight: {} is missing. Create the export environment with:\n  python -m venv target/.venv\n  {} -m pip install -r tools/onnx/requirements.lock.txt\nNo packages were installed automatically.",
+            "Python environment preflight: {} is missing. Create the export environment with:\n  uv venv --python 3.13 target/.venv\n  uv pip sync --python {} tools/onnx/requirements.lock.txt\nNo packages were installed automatically.",
             candidate.display(),
             candidate.display()
         )

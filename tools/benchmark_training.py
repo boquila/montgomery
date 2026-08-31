@@ -2,11 +2,11 @@
 
 Full reproducible run:
 
-    target/.venv-ultralytics-gpu/Scripts/python.exe tools/benchmark_training.py --publish
+    uv run --locked tools/benchmark_training.py --publish
 
 Fast iteration on one bottleneck:
 
-    target/.venv-ultralytics-gpu/Scripts/python.exe tools/benchmark_training.py \
+    uv run --locked tools/benchmark_training.py \
         --scenario yolov8n-segment --repeats 1 --segmentation-repeats 1
 """
 

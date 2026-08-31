@@ -7,11 +7,11 @@ the named outputs, and write the sidecar. They do not download weights, install 
 floating `ultralytics` wheel.
 
 ```powershell
-python -m venv target/.venv
-target/.venv/Scripts/python.exe -m pip install -r tools/onnx/requirements.lock.txt
+uv venv --python 3.13 target/.venv
+uv pip sync --python target/.venv/Scripts/python.exe tools/onnx/requirements.lock.txt
 ```
 
-Linux/macOS use `target/.venv/bin/python`. YOLOX additionally requires the official `0.1.1rc0`
+Linux/macOS pass `target/.venv/bin/python` to `uv pip sync`. YOLOX additionally requires the official `0.1.1rc0`
 source checkout at `target/yolox-ref/YOLOX-0.1.1rc0` or an explicit `--yolox-repo`; the bridge
 checks the SHA-256 of every graph source file it copies, so an ancestor Git repository cannot be
 mistaken for the pinned checkout.

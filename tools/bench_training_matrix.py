@@ -1,8 +1,8 @@
 """Run the reproducible boquilens/Burn vs Ultralytics/PyTorch training matrix.
 
-Run from the repository root with the CUDA-enabled benchmark environment:
+Run from the repository root with the locked CUDA benchmark environment:
 
-    target/.venv-ultralytics-gpu/Scripts/python.exe tools/bench_training_matrix.py
+    uv run --locked tools/bench_training_matrix.py
 
 Generated checkpoints and logs stay under target/. The compact JSON result is consumed by
 tools/plot_training_comparison.py and is suitable for copying into docs/assets/.

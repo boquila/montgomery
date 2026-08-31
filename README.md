@@ -10,6 +10,8 @@ require Python, PyTorch, or ONNX Runtime.
 
 ## Quick start
 
+Prerequisites: Rust and [uv](https://docs.astral.sh/uv/).
+
 Every model runs from a boquilens Burnpack (`.bpk`). Upstream `.pth` and `.pt` checkpoints are
 one-time conversion inputs; they are not accepted by `predict`.
 
@@ -26,13 +28,12 @@ cargo run --locked --release -- pack-weights --model yolox-nano --input target/y
 For Ultralytics models, first export a tensor-only state, then pack it:
 
 ```console
-python -m pip install torch ultralytics==8.4.117
-python -c "from ultralytics import YOLO; YOLO('yolo26n.pt')"
-python tools/export_ultralytics_state.py yolo26n.pt target/yolo26n-state.pt
+uv run --locked python -c "from ultralytics import YOLO; YOLO('yolo26n.pt')"
+uv run --locked tools/export_ultralytics_state.py yolo26n.pt target/yolo26n-state.pt
 cargo run --locked --release -- pack-weights --model yolo26n --input target/yolo26n-state.pt --output target/yolo26n-coco-ultralytics-v8.4-boquilens-v1.bpk
 ```
 
-Python is needed only for the Ultralytics conversion step.
+`uv` creates the locked Python environment automatically. Python is needed only for conversion.
 
 ### 2. Run inference
 
@@ -125,8 +126,8 @@ The default CPU backend is Burn Flex. Benchmark methodology and recorded CPU/GPU
 ONNX export is an offline development workflow. Create its pinned Python environment once:
 
 ```powershell
-python -m venv target/.venv
-target/.venv/Scripts/python.exe -m pip install -r tools/onnx/requirements.lock.txt
+uv venv --python 3.13 target/.venv
+uv pip sync --python target/.venv/Scripts/python.exe tools/onnx/requirements.lock.txt
 ```
 
 Then export a Burnpack:

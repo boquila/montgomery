@@ -170,7 +170,7 @@ The complete comparison is one command after installing the pinned GPU benchmark
 preparing the upstream checkpoints:
 
 ```console
-target/.venv-ultralytics-gpu/Scripts/python.exe tools/benchmark_training.py --publish
+uv run --locked tools/benchmark_training.py --publish
 ```
 
 It builds boquilens in release mode, prepares deterministic datasets, primes WGPU, runs the matrix,
@@ -180,7 +180,7 @@ validates the ten-epoch checkpoints, renders every chart, and publishes JSON and
 For a quick iteration on one bottleneck:
 
 ```console
-target/.venv-ultralytics-gpu/Scripts/python.exe tools/benchmark_training.py --scenario yolov8n-segment --repeats 1 --segmentation-repeats 1
+uv run --locked tools/benchmark_training.py --scenario yolov8n-segment --repeats 1 --segmentation-repeats 1
 ```
 
 Use `--list` on `tools/bench_training_matrix.py` to see every scenario. Runs can be resumed, and full

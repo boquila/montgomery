@@ -4,9 +4,9 @@ Mirrors boquilens' latency harness methodology so the README comparison is apple
 batch 1, 640 px input, fp32 compute on CPU, 3 warmup runs, 10 timed runs, median and minimum,
 models measured sequentially. The model forward includes the head decode and, for the end-to-end
 families, the top-k postprocess — the same scope as the Rust `measures_single_inference_latency`
-tests. Run from the repository root with the conversion venv:
+tests. Run from the repository root with uv:
 
-    & target\\.venv\\Scripts\\python.exe tools\\bench_ultralytics_cpu.py <checkpoint.pt> ...
+    uv run --locked tools\\bench_ultralytics_cpu.py <checkpoint.pt> ...
 """
 
 from __future__ import annotations

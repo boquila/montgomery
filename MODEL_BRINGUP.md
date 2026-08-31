@@ -7,9 +7,9 @@ exists because skipping it has already caused a bug once.
 Orientation first:
 
 - boquilens runs inference natively in Rust/Burn. Python + PyTorch + the `ultralytics` package are
-  conversion-time only; the environment for that is the venv at `target/.venv`.
-- The architecture reference is the vendored repo at `../ultralytics` (pinned 8.4.117). The venv's
-  installed package may be a slightly newer 8.4.x. When the two disagree, the **official checkpoint
+  conversion-time only; run the locked tools with `uv run --locked`.
+- The architecture reference is the vendored repo at `../ultralytics` (pinned 8.4.117). The locked
+  Python package is also 8.4.117. When source and a serialized module disagree, the **official checkpoint
   wins** — it was produced by whichever version trained it.
 - Copy an existing module as the template: `src/models/yolov10/` (DFL head, one2one top-k), or
   `src/models/yolo26/` (DFL-free end-to-end), or `src/models/yolov3_tiny/` (classic NMS path).
@@ -125,9 +125,9 @@ cargo check --locked --no-default-features --lib
 Then the parity loop (checkpoint and fixtures live under `target/`):
 
 ```console
-& target\.venv\Scripts\python.exe tools\export_ultralytics_state.py target/<id>.pt target/<id>-state.pt
+uv run --locked tools\export_ultralytics_state.py target/<id>.pt target/<id>-state.pt
 cargo run --release -- pack-weights --model <id> --input target/<id>-state.pt --output target/<id>-coco-ultralytics-<ver>-boquilens-v1.bpk
-& target\.venv\Scripts\python.exe tools\export_<id>_fixtures.py target/<id>.pt assets/dog_bike_man.jpg target
+uv run --locked tools\export_<id>_fixtures.py target/<id>.pt assets/dog_bike_man.jpg target
 cargo test --locked <id> -- --ignored
 ```
 
@@ -156,7 +156,7 @@ task head as the ground truth. The YOLO11-seg bring-up (n/s/m/l/x) is the segmen
 YOLO26-cls bring-up (n/s/m/l/x) is the classification template.
 
 1. **Feasibility gate first**: verify the `-seg` checkpoints actually exist in the assets release
-   (HTTP HEAD the release URLs; never trust release notes from memory) and load one with the venv
+   (HTTP HEAD the release URLs; never trust release notes from memory) and load one with `uv run --locked`
    before writing any Rust. Pick the family whose existing runtime dispatch extends most cleanly —
    for segmentation that was YOLO11, because Ultralytics' `Segment` head is the classic Detect head
    plus extras and its postprocess rides the exact NMS path the family already has.

@@ -1,0 +1,27 @@
+[project]
+name = "boquilens-tools"
+version = "0.0.0"
+requires-python = "==3.11.*"
+dependencies = [
+    "matplotlib==3.11.1",
+    "torch==2.11.0",
+    "torchvision==0.26.0",
+    "ultralytics==8.4.117",
+]
+
+[tool.uv]
+package = false
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[tool.uv.sources]
+ultralytics = { git = "https://github.com/ultralytics/ultralytics.git", rev = "461196cf09175b64c9b9bd8babebf081c0540520" }
+torch = [
+    { index = "pytorch-cu130", marker = "sys_platform == 'win32' or sys_platform == 'linux'" },
+]
+torchvision = [
+    { index = "pytorch-cu130", marker = "sys_platform == 'win32' or sys_platform == 'linux'" },
+]

@@ -84,19 +84,19 @@ workflow is documented in `README.md`; the short form
 families):
 
 ```console
-python tools/export_ultralytics_state.py yolov10n.pt target/yolov10n-state.pt
+uv run --locked tools/export_ultralytics_state.py yolov10n.pt target/yolov10n-state.pt
 cargo run --release -- pack-weights --model yolov10n --input target/yolov10n-state.pt --output target/yolov10n-coco-ultralytics-v8.4-boquilens-v1.bpk
 cargo run --release -- predict --model yolov10n --weights target/yolov10n-coco-ultralytics-v8.4-boquilens-v1.bpk --source assets/dog_bike_man.jpg
 
-python tools/export_ultralytics_state.py yolo11n.pt target/yolo11n-state.pt
+uv run --locked tools/export_ultralytics_state.py yolo11n.pt target/yolo11n-state.pt
 cargo run --release -- pack-weights --model yolo11n --input target/yolo11n-state.pt --output target/yolo11n-coco-ultralytics-v8.4-boquilens-v1.bpk
 cargo run --release -- predict --model yolo11n --weights target/yolo11n-coco-ultralytics-v8.4-boquilens-v1.bpk --source assets/dog_bike_man.jpg
 
-python tools/export_ultralytics_state.py yolo26n.pt target/yolo26n-state.pt
+uv run --locked tools/export_ultralytics_state.py yolo26n.pt target/yolo26n-state.pt
 cargo run --release -- pack-weights --model yolo26n --input target/yolo26n-state.pt --output target/yolo26n-coco-ultralytics-v8.4-boquilens-v1.bpk
 cargo run --release -- predict --model yolo26n --weights target/yolo26n-coco-ultralytics-v8.4-boquilens-v1.bpk --source assets/dog_bike_man.jpg
 
-python tools/export_ultralytics_state.py yolo11n-seg.pt target/yolo11n-seg-state.pt
+uv run --locked tools/export_ultralytics_state.py yolo11n-seg.pt target/yolo11n-seg-state.pt
 cargo run --release -- pack-weights --model yolo11n-seg --input target/yolo11n-seg-state.pt --output target/yolo11n-seg-coco-ultralytics-v8.4-boquilens-v1.bpk
 cargo run --release -- predict --model yolo11n-seg --weights target/yolo11n-seg-coco-ultralytics-v8.4-boquilens-v1.bpk --source assets/dog_bike_man.jpg --masks
 ```

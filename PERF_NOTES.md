@@ -2,7 +2,7 @@
 
 Date: 2026-08-28. Machine: AMD Ryzen 9 9950X3D (16C/32T), 32 GB RAM, Windows 11, rustc stable
 x86_64-pc-windows-msvc, Burn 0.21.0-pre.4, PyTorch 2.13.0+cpu / Ultralytics 8.4.131 (conversion
-venv). All latency numbers are median / minimum of 10 timed runs after 3 warmups, measured
+environment, now managed by uv). All latency numbers are median / minimum of 10 timed runs after 3 warmups, measured
 sequentially (`--test-threads 1`), single image, batch 1, on zeros `[1, 3, 640, 640]` unless noted.
 Motivating mystery: boquilens Flex CPU inference measured ~5-7.5x slower than the official
 Ultralytics/PyTorch CPU runtime (README table).
@@ -190,7 +190,7 @@ cargo test --locked --release measures_letterbox_resize_cost -- --ignored --noca
 It times JPEG decode, both letterbox constructors, the raw scalers, and fir candidates on
 `assets/dog_bike_man.jpg` (786x600) plus generated 1920x1080 / 3840x2160 images under `target/`,
 diffs canvases, and writes the reference-image canvases to `target/` for cross-checking against
-`cv2.resize` (the throwaway `target/letterbox_fir_compare.py` used the conversion venv against the
+`cv2.resize` (the throwaway `target/letterbox_fir_compare.py` used the conversion environment against the
 lossless PNG dump of the decoded source, so only sampler differences are measured).
 
 ### 5.1 Numbers (medians, release, 9950X3D)
@@ -269,7 +269,7 @@ cargo test --locked --release -- --ignored --test-threads 1
 
 # e2e JSON diff of detections before/after a letterbox change (throwaway script under target/)
 & target\boquilens-default.exe predict --model yolo11n-seg --weights target\yolo11n-seg-coco-ultralytics-v8.4-boquilens-v1.bpk --source assets\dog_bike_man.jpg --json --masks --output target\bench-run.png
-& target\.venv\Scripts\python.exe target\letterbox_fir_compare.py
+uv run --locked target\letterbox_fir_compare.py
 ```
 
 ## 6. Reproduction commands
@@ -292,6 +292,6 @@ cargo test --locked --release -- --ignored --nocapture --test-threads 1 yolo11n_
 
 # product path
 & target\boquilens-default.exe predict --model yolo11n --weights target\yolo11n-coco-ultralytics-v8.4-boquilens-v1.bpk --source assets\dog_bike_man.jpg
-& target\.venv\Scripts\python.exe tools\bench_ultralytics_predict.py target\yolo11n.pt assets\dog_bike_man.jpg
-& target\.venv\Scripts\python.exe tools\bench_ultralytics_cpu.py target\yolo11n.pt
+uv run --locked tools\bench_ultralytics_predict.py target\yolo11n.pt assets\dog_bike_man.jpg
+uv run --locked tools\bench_ultralytics_cpu.py target\yolo11n.pt
 ```

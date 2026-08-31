@@ -54,7 +54,7 @@ def _require_modules() -> dict[str, str]:
         joined = ", ".join(sorted(missing))
         raise PreflightError(
             f"missing locked ONNX export packages: {joined}. Install explicitly with:\n"
-            f"  {sys.executable} -m pip install -r tools/onnx/requirements.lock.txt\n"
+            f"  uv pip sync --python {sys.executable} tools/onnx/requirements.lock.txt\n"
             "No packages were installed and no network request was made by boquilens."
         )
     mismatched = [
@@ -66,7 +66,7 @@ def _require_modules() -> dict[str, str]:
         raise PreflightError(
             "ONNX export environment does not match requirements.lock.txt: "
             + ", ".join(mismatched)
-            + f". Recreate it explicitly with:\n  {sys.executable} -m pip install -r tools/onnx/requirements.lock.txt"
+            + f". Recreate it explicitly with:\n  uv pip sync --python {sys.executable} tools/onnx/requirements.lock.txt"
         )
     return versions
 
