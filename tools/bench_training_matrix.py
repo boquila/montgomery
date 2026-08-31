@@ -29,6 +29,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 NATIVE = ROOT / "target" / "release" / ("boquilens.exe" if os.name == "nt" else "boquilens")
 ULTRA_SCRIPT = ROOT / "tools" / "bench_ultralytics_train.py"
+ULTRA_VALIDATION_SCRIPT = ROOT / "tools" / "validate_ultralytics_training.py"
 DATA_SCRIPT = ROOT / "tools" / "prepare_training_benchmark_data.py"
 DEFAULT_OUTPUT = ROOT / "target" / "performance-comparison" / "results.json"
 
@@ -173,6 +174,7 @@ def run_once(
     label: str,
     keep_logs: bool = True,
     keep_run: bool = False,
+    validate: bool = False,
 ) -> dict[str, Any]:
     project = output_root / "runs" / framework / scenario.id
     project.mkdir(parents=True, exist_ok=True)
@@ -230,6 +232,54 @@ def run_once(
         "loss_curve": curve,
         "final_loss": curve[-1] if curve else None,
     }
+    if validate:
+        if framework == "native":
+            validation_command = [
+                str(NATIVE),
+                "val",
+                "--checkpoint",
+                str(run_dir / "checkpoints" / "last"),
+                "--json",
+            ]
+        else:
+            validation_command = [
+                sys.executable,
+                str(ULTRA_VALIDATION_SCRIPT),
+                str(run_dir / "weights" / "last.pt"),
+                str(scenario.ultralytics_data),
+                "--task",
+                scenario.task,
+                "--imgsz",
+                str(scenario.imgsz),
+                "--batch",
+                str(scenario.batch),
+            ]
+        validation_started = time.perf_counter()
+        validation = subprocess.run(
+            validation_command,
+            cwd=ROOT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+            check=False,
+        )
+        if validation.returncode:
+            raise RuntimeError(
+                f"{scenario.id} {framework} validation failed\n"
+                f"stdout:\n{validation.stdout[-3000:]}\nstderr:\n{validation.stderr[-3000:]}"
+            )
+        if framework == "native":
+            json_start = validation.stdout.find("{")
+            validation_metrics = json.loads(validation.stdout[json_start:])
+        else:
+            marker = "VALIDATION_JSON="
+            line = next(line for line in validation.stdout.splitlines() if line.startswith(marker))
+            validation_metrics = json.loads(line.removeprefix(marker))
+        result["validation"] = {
+            "seconds": time.perf_counter() - validation_started,
+            "metrics": validation_metrics,
+        }
     if not keep_run:
         resolved_run = run_dir.resolve()
         resolved_output = output_root.resolve()
@@ -321,6 +371,7 @@ def main() -> None:
             "precision": "FP32",
             "optimizer": "AdamW",
             "validation_in_timed_region": False,
+            "post_training_validation": "first trial of each ten-epoch convergence scenario",
             "checkpoint_each_epoch": True,
         },
         "host": {
@@ -361,6 +412,7 @@ def main() -> None:
                     output_root,
                     f"trial-{repeat + 1}",
                     keep_run=args.keep_runs,
+                    validate=scenario.group == "convergence" and repeat == 0,
                 )
                 entry["trials"].setdefault(framework, []).append(trial)
                 print(f"    {trial['wall_seconds']:.3f}s", flush=True)

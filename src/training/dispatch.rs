@@ -466,13 +466,8 @@ macro_rules! yolo26_segment_task {
                     batch.masks.clone(),
                     &one_matches,
                 ).map_err(str::to_string)?;
-                let many_semantic = segmentation::semantic_bce_dice_loss(
+                let (many_semantic, one_semantic) = segmentation::dual_semantic_bce_dice_loss(
                     segmentation::bilinear_upsample_2x(output.one_to_many_semantic),
-                    batch.semantic_class_map.clone(),
-                    batch.semantic_coverage.clone(),
-                ).map_err(str::to_string)?;
-                let one_semantic = segmentation::semantic_bce_dice_loss(
-                    segmentation::bilinear_upsample_2x(output.one_to_one_semantic),
                     batch.semantic_class_map.clone(),
                     batch.semantic_coverage.clone(),
                 ).map_err(str::to_string)?;

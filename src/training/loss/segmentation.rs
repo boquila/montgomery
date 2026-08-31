@@ -125,11 +125,7 @@ pub fn instance_mask_loss<B: Backend>(
     }
     let device = prototypes.device();
     let matched_count = matches.len();
-    let mut coefficient_indices = Vec::with_capacity(matched_count);
-    let mut prototype_indices = Vec::with_capacity(matched_count);
-    let mut target_indices = Vec::with_capacity(matched_count);
-    let mut crop = vec![0_f32; matched_count * height * width];
-    let mut normalizers = Vec::with_capacity(matched_count);
+    let mut matches_by_batch = vec![Vec::new(); batch];
     for matched in matches {
         if matched.batch_index >= batch
             || matched.anchor_index >= anchors
@@ -137,74 +133,91 @@ pub fn instance_mask_loss<B: Backend>(
         {
             return Err("segmentation match index is outside tensors");
         }
-        let b = matched.batch_index;
-        let a = matched.anchor_index;
-        let t = matched.target_index;
-        let box_value = matched.normalized_box;
-        let xmin = (box_value.xmin * width as f32)
-            .ceil()
-            .clamp(0.0, width as f32) as usize;
-        let ymin = (box_value.ymin * height as f32)
-            .ceil()
-            .clamp(0.0, height as f32) as usize;
-        let xmax = (box_value.xmax * width as f32)
-            .ceil()
-            .clamp(0.0, width as f32) as usize;
-        let ymax = (box_value.ymax * height as f32)
-            .ceil()
-            .clamp(0.0, height as f32) as usize;
-        let match_index = normalizers.len();
-        let crop_offset = match_index * height * width;
-        for y in ymin..ymax {
-            crop[crop_offset + y * width + xmin..crop_offset + y * width + xmax].fill(1.0);
+        matches_by_batch[matched.batch_index].push(matched);
+    }
+    let matches_per_batch = matches_by_batch
+        .iter()
+        .map(Vec::len)
+        .max()
+        .expect("non-empty matches have a batch")
+        .max(1);
+    let slot_count = batch * matches_per_batch;
+    let mut coefficient_indices = vec![0_i64; slot_count];
+    let mut target_indices = vec![0_i64; slot_count];
+    let mut valid_indices = Vec::with_capacity(matched_count);
+    let mut crop = vec![0_f32; slot_count * height * width];
+    let mut normalizers = Vec::with_capacity(matched_count);
+    for (b, image_matches) in matches_by_batch.into_iter().enumerate() {
+        for (slot, matched) in image_matches.into_iter().enumerate() {
+            let a = matched.anchor_index;
+            let t = matched.target_index;
+            let box_value = matched.normalized_box;
+            let xmin = (box_value.xmin * width as f32)
+                .ceil()
+                .clamp(0.0, width as f32) as usize;
+            let ymin = (box_value.ymin * height as f32)
+                .ceil()
+                .clamp(0.0, height as f32) as usize;
+            let xmax = (box_value.xmax * width as f32)
+                .ceil()
+                .clamp(0.0, width as f32) as usize;
+            let ymax = (box_value.ymax * height as f32)
+                .ceil()
+                .clamp(0.0, height as f32) as usize;
+            let flat_slot = b * matches_per_batch + slot;
+            let crop_offset = flat_slot * height * width;
+            for y in ymin..ymax {
+                crop[crop_offset + y * width + xmin..crop_offset + y * width + xmax].fill(1.0);
+            }
+            let normalized_area =
+                (box_value.xmax - box_value.xmin) * (box_value.ymax - box_value.ymin);
+            if normalized_area <= 0.0 || !normalized_area.is_finite() {
+                return Err("segmentation match has an invalid normalized box");
+            }
+            coefficient_indices[flat_slot] = (b * anchors + a) as i64;
+            target_indices[flat_slot] = (b * target_count + t) as i64;
+            valid_indices.push(flat_slot as i64);
+            normalizers.push((1.0 / ((height * width) as f64 * normalized_area as f64)) as f32);
         }
-        let normalized_area = (box_value.xmax - box_value.xmin) * (box_value.ymax - box_value.ymin);
-        if normalized_area <= 0.0 || !normalized_area.is_finite() {
-            return Err("segmentation match has an invalid normalized box");
-        }
-        coefficient_indices.push((b * anchors + a) as i64);
-        prototype_indices.push(b as i64);
-        target_indices.push((b * target_count + t) as i64);
-        normalizers.push((1.0 / ((height * width) as f64 * normalized_area as f64)) as f32);
     }
 
-    // Build one graph for every positive mask instead of one graph per positive anchor. Besides
-    // avoiding hundreds of tiny WGPU dispatches, `select` accumulates gradients correctly when
-    // several matches share a prototype or target mask.
-    let coefficient_indices = Tensor::<B, 1, Int>::from_data(
-        TensorData::new(coefficient_indices, [matched_count]),
-        &device,
-    );
-    let prototype_indices = Tensor::<B, 1, Int>::from_data(
-        TensorData::new(prototype_indices, [matched_count]),
-        &device,
-    );
+    // Pad only the positive coefficients per image, then multiply each image's coefficient matrix
+    // by its prototype matrix once. This mirrors Ultralytics' per-image einsum without duplicating
+    // a full `[masks, height, width]` prototype for every positive anchor. Padded slots are removed
+    // before the final reduction and therefore contribute neither loss nor gradient.
+    let coefficient_indices =
+        Tensor::<B, 1, Int>::from_data(TensorData::new(coefficient_indices, [slot_count]), &device);
     let target_indices =
-        Tensor::<B, 1, Int>::from_data(TensorData::new(target_indices, [matched_count]), &device);
+        Tensor::<B, 1, Int>::from_data(TensorData::new(target_indices, [slot_count]), &device);
     let coefficients = coefficients
         .swap_dims(1, 2)
         .reshape([batch * anchors, masks])
         .select(0, coefficient_indices)
-        .unsqueeze_dim::<3>(1);
-    let prototypes = prototypes
-        .reshape([batch, masks, height * width])
-        .select(0, prototype_indices);
+        .reshape([batch, matches_per_batch, masks]);
+    let prototypes = prototypes.reshape([batch, masks, height * width]);
     let logits = coefficients
         .matmul(prototypes)
-        .reshape([matched_count, 1, height, width]);
+        .reshape([slot_count, 1, height, width]);
     let targets = target_masks
         .reshape([batch * target_count, height, width])
         .select(0, target_indices)
         .unsqueeze_dim::<4>(1);
     let crop = Tensor::<B, 4>::from_data(
-        TensorData::new(crop, [matched_count, 1, height, width]),
+        TensorData::new(crop, [slot_count, 1, height, width]),
         &device,
     );
     let normalizers =
         Tensor::<B, 2>::from_data(TensorData::new(normalizers, [matched_count, 1]), &device);
     let per_match = (bce_with_logits_tensor(logits, targets) * crop)
-        .reshape([matched_count, height * width])
-        .sum_dim(1);
+        .reshape([slot_count, height * width])
+        .sum_dim(1)
+        .select(
+            0,
+            Tensor::<B, 1, Int>::from_data(
+                TensorData::new(valid_indices, [matched_count]),
+                &device,
+            ),
+        );
     Ok((per_match * normalizers).mean())
 }
 
@@ -239,6 +252,21 @@ pub fn semantic_bce_dice_loss<B: Backend>(
     Ok(bce * 0.5 + dice * 0.5)
 }
 
+/// Compute YOLO26's shared semantic loss once and provide its detached one-to-one counterpart.
+///
+/// `Yolo26SegHead` deliberately exposes the same semantic logits on both branches, with only the
+/// one-to-one view detached. Applying deterministic elementwise/reduction operations before that
+/// detach is value-equivalent and keeps the one-to-one contribution disconnected from the graph.
+pub fn dual_semantic_bce_dice_loss<B: Backend>(
+    logits: Tensor<B, 4>,
+    class_map: Tensor<B, 3, Int>,
+    coverage: Tensor<B, 3, Bool>,
+) -> Result<(Tensor<B, 1>, Tensor<B, 1>), &'static str> {
+    let one_to_many = semantic_bce_dice_loss(logits, class_map, coverage)?;
+    let one_to_one = one_to_many.clone().detach();
+    Ok((one_to_many, one_to_one))
+}
+
 #[cfg(test)]
 mod tests {
     use burn::{
@@ -247,7 +275,10 @@ mod tests {
     };
     use burn_flex::Flex;
 
-    use super::{MaskMatch, bilinear_upsample_2x, instance_mask_loss, semantic_bce_dice_loss};
+    use super::{
+        MaskMatch, bilinear_upsample_2x, dual_semantic_bce_dice_loss, instance_mask_loss,
+        semantic_bce_dice_loss,
+    };
     use crate::training::{geometry::BoxXyxy, loss::common::bce_with_logits};
 
     #[test]
@@ -276,6 +307,48 @@ mod tests {
         let value = loss.as_slice::<f32>().unwrap()[0];
         assert!(value.is_finite());
         assert!(value > 0.0);
+    }
+
+    #[test]
+    fn dual_semantic_loss_reuses_value_but_detaches_one_to_one() {
+        type B = Autodiff<Flex>;
+
+        let device = Default::default();
+        let logits =
+            Tensor::<B, 4>::from_floats([[[[0.5, -0.25], [1.0, -2.0]]]], &device).require_grad();
+        let class_map = Tensor::<B, 3, Int>::from_ints([[[0, 0], [0, 0]]], &device);
+        let coverage =
+            Tensor::<B, 3, Bool>::from_bool([[[true, false], [true, false]]].into(), &device);
+
+        let (one_to_many, one_to_one) =
+            dual_semantic_bce_dice_loss(logits.clone(), class_map.clone(), coverage.clone())
+                .unwrap();
+        let values =
+            Tensor::cat(vec![one_to_many.clone().detach(), one_to_one.clone()], 0).into_data();
+        let values = values.as_slice::<f32>().unwrap();
+        assert_eq!(values[0], values[1]);
+
+        // The detached copy contributes its value but must not double the connected gradient.
+        let dual_gradient = logits
+            .grad(&(one_to_many + one_to_one).backward())
+            .unwrap()
+            .into_data();
+        let reference_logits =
+            Tensor::<B, 4>::from_floats([[[[0.5, -0.25], [1.0, -2.0]]]], &device).require_grad();
+        let reference_loss =
+            semantic_bce_dice_loss(reference_logits.clone(), class_map, coverage).unwrap();
+        let reference_gradient = reference_logits
+            .grad(&reference_loss.backward())
+            .unwrap()
+            .into_data();
+        for (actual, expected) in dual_gradient
+            .as_slice::<f32>()
+            .unwrap()
+            .iter()
+            .zip(reference_gradient.as_slice::<f32>().unwrap())
+        {
+            assert!((actual - expected).abs() < 1e-7, "{actual} != {expected}");
+        }
     }
 
     #[test]
