@@ -1,13 +1,13 @@
 use std::collections::BTreeMap;
 
-use burn::tensor::{Tensor, TensorData, activation, backend::Backend};
+use burn::tensor::{Tensor, TensorData, Transaction, activation, backend::Backend};
 
 use crate::training::{
     assign::tal::{TalGroundTruth, TalPrediction, assign},
     geometry::{FeatureLevelLayout, make_anchors},
 };
 
-use super::common::{LossOutput, bce_with_logits_tensor, log_softmax, scalar_value, scalar_values};
+use super::common::{LossOutput, bce_with_logits_tensor, log_softmax, scalar_values};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DetectionLossConfig {
@@ -89,6 +89,8 @@ pub fn tensor_loss_with_matches<B: Backend>(
     ),
     &'static str,
 > {
+    let profile_started =
+        std::env::var_os("BOQUILENS_PROFILE_TAL").map(|_| std::time::Instant::now());
     let [batch, box_channels, anchor_count] = raw_boxes.dims();
     let [score_batch, classes, score_anchors] = raw_scores.dims();
     if score_batch != batch
@@ -151,8 +153,16 @@ pub fn tensor_loss_with_matches<B: Backend>(
         2,
     ) * stride_tensor.clone();
 
-    let decoded_data = decoded.clone().detach().into_data();
-    let score_data = activation::sigmoid(raw_scores.clone().detach().swap_dims(1, 2)).into_data();
+    let [decoded_data, score_data] = Transaction::default()
+        .register(decoded.clone().detach())
+        .register(activation::sigmoid(
+            raw_scores.clone().detach().swap_dims(1, 2),
+        ))
+        .execute()
+        .try_into()
+        .expect("assignment transaction must preserve both tensors");
+    let readback_elapsed = profile_started.map(|started| started.elapsed());
+    let host_started = profile_started.map(|_| std::time::Instant::now());
     let decoded_host = decoded_data
         .as_slice::<f32>()
         .map_err(|_| "decoded boxes are not f32")?;
@@ -238,10 +248,13 @@ pub fn tensor_loss_with_matches<B: Backend>(
             }
         }
     }
+    let host_elapsed = host_started.map(|started| started.elapsed());
+    let loss_started = profile_started.map(|_| std::time::Instant::now());
     let target_boxes = Tensor::from_data(
         TensorData::new(dense_boxes, [batch, anchor_count, 4]),
         &device,
     );
+    let score_sum = dense_scores.iter().copied().sum::<f32>().max(1.0) as f64;
     let target_scores = Tensor::from_data(
         TensorData::new(dense_scores, [batch, anchor_count, classes]),
         &device,
@@ -250,7 +263,6 @@ pub fn tensor_loss_with_matches<B: Backend>(
         TensorData::new(dense_weights, [batch, anchor_count, 1]),
         &device,
     );
-    let score_sum = scalar_value(target_scores.clone().sum()).max(1.0) as f64;
     let class_loss =
         bce_with_logits_tensor(raw_scores.swap_dims(1, 2), target_scores).sum() / score_sum;
     let ciou = ciou_tensor(decoded, target_boxes.clone());
@@ -298,6 +310,19 @@ pub fn tensor_loss_with_matches<B: Backend>(
         + regression_loss.clone() * config.regression_gain as f64;
     let [box_value, class_value, regression_value, value] =
         scalar_values([box_loss, class_loss, regression_loss, total.clone()]);
+    if let (Some(readback), Some(host), Some(loss_started)) =
+        (readback_elapsed, host_elapsed, loss_started)
+    {
+        eprintln!(
+            "tal-profile top_k={} anchors={} foreground={} readback_ms={:.3} host_ms={:.3} loss_ms={:.3}",
+            config.top_k,
+            anchor_count,
+            foreground,
+            readback.as_secs_f64() * 1e3,
+            host.as_secs_f64() * 1e3,
+            loss_started.elapsed().as_secs_f64() * 1e3,
+        );
+    }
     let mut components = BTreeMap::new();
     components.insert("box_loss".into(), box_value);
     components.insert("classification_loss".into(), class_value);

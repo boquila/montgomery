@@ -22,11 +22,21 @@ pub struct Conv<B: Backend> {
     conv: Conv2d<B>,
     bn: BatchNorm<B>,
     act: bool,
+    #[cfg(feature = "training")]
+    depthwise_training_stencil: bool,
 }
 
 impl<B: Backend> Conv<B> {
     pub fn forward(&self, input: Tensor<B, 4>) -> Tensor<B, 4> {
-        let x = self.bn.forward(self.conv.forward(input));
+        #[cfg(feature = "training")]
+        let x = if self.depthwise_training_stencil && B::ad_enabled(&input.device()) {
+            crate::models::training_ops::depthwise_3x3_stride_1(input, self.conv.weight.val())
+        } else {
+            self.conv.forward(input)
+        };
+        #[cfg(not(feature = "training"))]
+        let x = self.conv.forward(input);
+        let x = self.bn.forward(x);
         if self.act { silu(x) } else { x }
     }
 }
@@ -96,6 +106,11 @@ impl ConvConfig {
             conv,
             bn,
             act: self.act,
+            #[cfg(feature = "training")]
+            depthwise_training_stencil: self.groups == self.in_channels
+                && self.groups == self.out_channels
+                && self.kernel_size == 3
+                && self.stride == 1,
         }
     }
 }

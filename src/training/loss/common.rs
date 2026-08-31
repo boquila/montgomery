@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use burn::tensor::{Tensor, activation::log_sigmoid, backend::Backend};
+use burn::tensor::{Tensor, Transaction, activation::log_sigmoid, backend::Backend};
 
 /// Differentiable scalar plus detached diagnostics returned by every native criterion.
 ///
@@ -28,16 +28,18 @@ pub fn scalar_value<B: Backend>(value: Tensor<B, 1>) -> f32 {
 
 /// Read several detached scalar diagnostics with a single backend synchronization.
 pub fn scalar_values<B: Backend, const N: usize>(values: [Tensor<B, 1>; N]) -> [f32; N] {
-    let values = Tensor::cat(
-        values.into_iter().map(Tensor::detach).collect::<Vec<_>>(),
-        0,
-    )
-    .into_data();
-    let values = values
-        .as_slice::<f32>()
-        .expect("loss scalars must use f32 storage");
+    let transaction = values
+        .into_iter()
+        .fold(Transaction::default(), |transaction, value| {
+            transaction.register(value.detach())
+        });
+    let values = transaction.execute();
     assert_eq!(values.len(), N, "loss diagnostic count must be preserved");
-    std::array::from_fn(|index| values[index])
+    std::array::from_fn(|index| {
+        values[index]
+            .as_slice::<f32>()
+            .expect("loss scalars must use f32 storage")[0]
+    })
 }
 
 pub fn connected_zero<B: Backend, const D: usize>(tensor: Tensor<B, D>) -> Tensor<B, 1> {

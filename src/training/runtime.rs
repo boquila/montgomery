@@ -3,6 +3,7 @@ use std::{
     error::Error,
     path::PathBuf,
     sync::Arc,
+    time::Instant,
 };
 
 use burn::{
@@ -1345,6 +1346,7 @@ where
     S: EpochBatchSource<M::Batch>,
 {
     let (mut optimizer, external_weight_decay) = optimizer;
+    let profile_training = std::env::var_os("BOQUILENS_PROFILE_TRAINING").is_some();
     let mut ema_model = model.clone();
     let mut ema_state = crate::training::ema::EmaState::new(0.9999)?;
     ema_state.updates = trainer.state.ema_updates;
@@ -1375,9 +1377,31 @@ where
         let improved = trainer
             .state
             .observe_fitness(-f64::from(result.2.mean_loss));
-        let model_bytes = encode_record::<TrainBackend, _>(model.clone().into_record())?;
-        let ema_bytes = encode_record::<TrainBackend, _>(ema_model.clone().into_record())?;
-        let optimizer_bytes = encode_record::<TrainBackend, _>(optimizer.to_record())?;
+        let checkpoint_started = Instant::now();
+        let model_record = model.clone().into_record();
+        let ema_record = ema_model.clone().into_record();
+        let optimizer_record = optimizer.to_record();
+        // Burn records download each tensor before bincode can serialize it. Model, EMA, and
+        // optimizer records are independent immutable snapshots, so issuing their downloads in
+        // parallel avoids three fully serialized GPU-to-host readback passes.
+        let (model_bytes, ema_bytes, optimizer_bytes) =
+            std::thread::scope(|scope| -> Result<_, Box<dyn Error + Send + Sync>> {
+                let model = scope.spawn(move || encode_record::<TrainBackend, _>(model_record));
+                let ema = scope.spawn(move || encode_record::<TrainBackend, _>(ema_record));
+                let optimizer =
+                    scope.spawn(move || encode_record::<TrainBackend, _>(optimizer_record));
+                let model_bytes = model
+                    .join()
+                    .map_err(|_| "model checkpoint encoder panicked")??;
+                let ema_bytes = ema
+                    .join()
+                    .map_err(|_| "EMA checkpoint encoder panicked")??;
+                let optimizer_bytes = optimizer
+                    .join()
+                    .map_err(|_| "optimizer checkpoint encoder panicked")??;
+                Ok((model_bytes, ema_bytes, optimizer_bytes))
+            })?;
+        let encoded_at = Instant::now();
         let manifest = CheckpointManifest::new(
             trainer.config.clone(),
             trainer.state.clone(),
@@ -1407,6 +1431,17 @@ where
                 &epoch_path,
                 &saved_manifest,
             )?;
+        }
+        if profile_training {
+            eprintln!(
+                "checkpoint-profile epoch={} encode_ms={:.3} save_ms={:.3} model_mb={:.2} ema_mb={:.2} optimizer_mb={:.2}",
+                trainer.state.epoch,
+                encoded_at.duration_since(checkpoint_started).as_secs_f64() * 1_000.0,
+                encoded_at.elapsed().as_secs_f64() * 1_000.0,
+                model_bytes.len() as f64 / (1024.0 * 1024.0),
+                ema_bytes.len() as f64 / (1024.0 * 1024.0),
+                optimizer_bytes.len() as f64 / (1024.0 * 1024.0),
+            );
         }
         eprintln!(
             "epoch {}: loss {:.6}",

@@ -1,4 +1,8 @@
-use std::{error::Error, fmt};
+use std::{
+    error::Error,
+    fmt,
+    time::{Duration, Instant},
+};
 
 use burn::{
     module::AutodiffModule,
@@ -166,10 +170,17 @@ impl Trainer {
         let mut deferred = Vec::<DeferredDiagnostic<B>>::with_capacity(diagnostic_capacity);
         let mut optimizer_steps = 0;
         let mut group_start = 0;
+        let profile = std::env::var_os("BOQUILENS_PROFILE_TRAINING").is_some();
+        let mut data_time = Duration::ZERO;
+        let mut forward_time = Duration::ZERO;
+        let mut backward_time = Duration::ZERO;
+        let mut optimizer_time = Duration::ZERO;
+        let mut after_step_time = Duration::ZERO;
         while group_start < batch_count {
             let group_end = (group_start + self.config.accumulation).min(batch_count);
             let group_len = group_end - group_start;
             let mut group = Vec::with_capacity(group_len);
+            let data_started = Instant::now();
             for batch_index in group_start..group_end {
                 group.push(batches.next_batch().map_err(EngineError)?.ok_or_else(|| {
                     EngineError(format!(
@@ -177,10 +188,21 @@ impl Trainer {
                     ))
                 })?);
             }
+            if profile {
+                data_time += data_started.elapsed();
+            }
+            let mut group_device = None;
             for (offset, batch) in group.iter().enumerate() {
+                let forward_started = Instant::now();
                 let output = model
                     .forward_loss(batch, LossContext::from_state(&self.state))
                     .map_err(EngineError)?;
+                let device = output.total.device();
+                if profile {
+                    B::sync(&device).map_err(|error| EngineError(error.to_string()))?;
+                    forward_time += forward_started.elapsed();
+                }
+                group_device = Some(device.clone());
                 let total_value = output.total_value;
                 if !output.finite
                     || (output.deferred_component.is_none() && !total_value.is_finite())
@@ -197,10 +219,15 @@ impl Trainer {
                 let deferred_total = output
                     .deferred_component
                     .map(|_| output.total.clone().detach());
+                let backward_started = Instant::now();
                 let gradients = GradientsParams::from_grads(
                     (output.total / group_len as f64).backward(),
                     &model,
                 );
+                if profile {
+                    B::sync(&device).map_err(|error| EngineError(error.to_string()))?;
+                    backward_time += backward_started.elapsed();
+                }
                 if gradients.is_empty() {
                     return Err(EngineError("loss produced no model gradients".into()));
                 }
@@ -225,6 +252,7 @@ impl Trainer {
                 }
             }
             let lr = self.scheduler.step();
+            let optimizer_started = Instant::now();
             model = optimizer.step(lr, model, accumulator.grads());
             if external_weight_decay {
                 model = crate::training::optimizer::apply_selective_weight_decay(
@@ -233,9 +261,28 @@ impl Trainer {
                     self.config.weight_decay,
                 );
             }
+            if profile {
+                B::sync(
+                    group_device
+                        .as_ref()
+                        .expect("a training group has a device"),
+                )
+                .map_err(|error| EngineError(error.to_string()))?;
+                optimizer_time += optimizer_started.elapsed();
+            }
             self.state.optimizer_step += 1;
             self.state.accumulation_position = 0;
+            let after_step_started = Instant::now();
             after_step(&model, self.state.optimizer_step).map_err(EngineError)?;
+            if profile {
+                B::sync(
+                    group_device
+                        .as_ref()
+                        .expect("a training group has a device"),
+                )
+                .map_err(|error| EngineError(error.to_string()))?;
+                after_step_time += after_step_started.elapsed();
+            }
             optimizer_steps += 1;
             group_start = group_end;
             if diagnostic_chunk_full(&events) {
@@ -256,6 +303,18 @@ impl Trainer {
             &mut loss_sum,
         )?;
         let mean_loss = (loss_sum / batch_count as f64) as f32;
+        if profile {
+            eprintln!(
+                "training-profile epoch={} batches={} data_ms={:.3} forward_ms={:.3} backward_ms={:.3} optimizer_ms={:.3} after_step_ms={:.3}",
+                self.state.epoch + 1,
+                batch_count,
+                data_time.as_secs_f64() * 1e3,
+                forward_time.as_secs_f64() * 1e3,
+                backward_time.as_secs_f64() * 1e3,
+                optimizer_time.as_secs_f64() * 1e3,
+                after_step_time.as_secs_f64() * 1e3,
+            );
+        }
         self.run
             .append_metrics(
                 self.state.epoch,
