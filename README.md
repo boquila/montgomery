@@ -8,7 +8,7 @@ Native object detection, instance segmentation, and image classification in Rust
 
 <h3>
 
-[Repository](https://github.com/boquila/montgomery) | [Performance](https://github.com/boquila/montgomery/blob/main/docs/performance-comparison.MD) | [Fat LTO study](https://github.com/boquila/montgomery/blob/main/docs/lto-comparison.MD) | [Model support](#supported-models)
+[Repository](https://github.com/boquila/montgomery) | [Performance](https://github.com/boquila/montgomery/blob/main/docs/performance-comparison.MD) | [Model support](#supported-models)
 
 </h3>
 

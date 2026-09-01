@@ -1,10 +1,10 @@
 # Native training performance
 
 Montgomery native training is competitive today, but not uniformly faster. On the tested RTX 5080,
-it wins **22 of 30** comparisons and **11 of 12** smallest-variant family/task comparisons,
+it wins **22 of 30** comparisons and **all 12** smallest-variant family/task comparisons,
 including every tested classification model and the detection-only YOLOv3-Tiny-U, YOLOv10n, and
-YOLO12n models. YOLOv8n segmentation is **2.00× faster** than Ultralytics. YOLO26n detection is
-ahead at batch 2; segmentation is effectively tied but 0.7% behind in this run.
+YOLO12n models. YOLOv8n segmentation is **1.94× faster** than Ultralytics. YOLO26n detection and
+segmentation are both ahead at batch 2.
 
 ![Median wall time for the nine family and task comparisons](assets/family-task-overview.png)
 
@@ -14,23 +14,23 @@ These are medians of complete training commands. A speedup above `1.00×` favors
 
 | Model | Task | Montgomery | Ultralytics | Native speedup |
 | --- | --- | ---: | ---: | ---: |
-| YOLOv8n | Classify | 3.51 s | 14.34 s | **4.09×** |
-| YOLOv8n | Detect | 5.53 s | 12.72 s | **2.30×** |
-| YOLOv8n | Segment | 6.76 s | 13.49 s | **2.00×** |
-| YOLO11n | Classify | 4.73 s | 12.52 s | **2.65×** |
-| YOLO11n | Detect | 8.61 s | 13.48 s | **1.57×** |
-| YOLO11n | Segment | 10.14 s | 14.08 s | **1.39×** |
-| YOLO26n | Classify | 4.70 s | 12.80 s | **2.72×** |
-| YOLO26n | Detect | 14.19 s | 15.32 s | **1.08×** |
-| YOLO26n | Segment | 16.84 s | 16.73 s | 0.99× |
+| YOLOv8n | Classify | 2.95 s | 12.11 s | **4.10×** |
+| YOLOv8n | Detect | 5.46 s | 12.29 s | **2.25×** |
+| YOLOv8n | Segment | 6.64 s | 12.86 s | **1.94×** |
+| YOLO11n | Classify | 4.46 s | 12.50 s | **2.80×** |
+| YOLO11n | Detect | 7.82 s | 12.92 s | **1.65×** |
+| YOLO11n | Segment | 9.39 s | 13.47 s | **1.43×** |
+| YOLO26n | Classify | 4.71 s | 12.54 s | **2.66×** |
+| YOLO26n | Detect | 13.58 s | 14.33 s | **1.06×** |
+| YOLO26n | Segment | 15.00 s | 16.21 s | **1.08×** |
 
 The detect-only families use the same dataset and settings:
 
 | Model | Montgomery | Ultralytics | Native speedup |
 | --- | ---: | ---: | ---: |
-| YOLOv3-Tiny-U | 4.01 s | 12.37 s | **3.09×** |
-| YOLOv10n | 13.73 s | 14.78 s | **1.08×** |
-| YOLO12n | 14.52 s | 14.70 s | **1.01×** |
+| YOLOv3-Tiny-U | 4.44 s | 11.97 s | **2.70×** |
+| YOLOv10n | 11.95 s | 13.97 s | **1.17×** |
+| YOLO12n | 13.17 s | 13.99 s | **1.06×** |
 
 ![Speedup heatmap for model families and tasks](assets/task-speedup-heatmap.png)
 
@@ -43,7 +43,7 @@ and detached one-to-one semantic targets are evaluated once.
 
 Vectorizing the mask loss reduced the same 48-step YOLOv8n-seg command from **98.08 s to 9.64 s**.
 The runtime and checkpoint work described below reduced the current full-command median again to
-**6.76 s**, which is **2.00× faster** than Ultralytics' 13.49 s median.
+**6.64 s**, which is **1.94× faster** than Ultralytics' 12.86 s median.
 
 ![YOLOv8n segmentation before and after vectorizing the mask loss](assets/segmentation-before-after.png)
 
@@ -57,7 +57,7 @@ Burn/WGPU's grouped-convolution backward falls through a generic path. The light
 exact channelwise 3×3 stencil only while building an autodiff graph; normal inference and stored
 parameters are unchanged. Forward values and weight gradients are tested against grouped
 convolution. Together with flattened role-separated AdamW updates, this cut YOLO26n detection from
-23.76 s to 14.19 s and YOLO11n segmentation from 17.38 s to 10.14 s.
+23.76 s to 13.58 s and YOLO11n segmentation from 17.38 s to 9.39 s.
 
 Full resumable checkpoints still contain the model, EMA, and optimizer in FP32. Their independent
 immutable snapshots are downloaded and encoded concurrently instead of making three serial
@@ -68,20 +68,21 @@ per tensor. Resume, atomic-publication, and step-for-step optimizer parity are t
 
 ## Scale comparison
 
-YOLO26 classification stays ahead through medium. Detection wins at nano and small and is 1.6%
-slower at medium. Segmentation wins narrowly at small but remains the largest medium-scale gap.
+YOLO26 classification stays ahead through medium. Detection wins at nano and small and is 6.4%
+slower at medium. Segmentation wins at nano, is effectively tied at small, and remains the largest
+medium-scale gap.
 
 | Model | Task | Montgomery | Ultralytics | Native speedup |
 | --- | --- | ---: | ---: | ---: |
-| YOLO26n | Classify | 4.70 s | 12.80 s | **2.72×** |
-| YOLO26n | Detect | 14.19 s | 15.32 s | **1.08×** |
-| YOLO26n | Segment | 16.84 s | 16.73 s | 0.99× |
-| YOLO26s | Classify | 5.11 s | 13.21 s | **2.58×** |
-| YOLO26s | Detect | 14.48 s | 15.86 s | **1.10×** |
-| YOLO26s | Segment | 17.69 s | 17.94 s | **1.01×** |
-| YOLO26m | Classify | 7.51 s | 14.19 s | **1.89×** |
-| YOLO26m | Detect | 17.82 s | 17.55 s | 0.98× |
-| YOLO26m | Segment | 24.47 s | 19.59 s | 0.80× |
+| YOLO26n | Classify | 4.71 s | 12.54 s | **2.66×** |
+| YOLO26n | Detect | 13.58 s | 14.33 s | **1.06×** |
+| YOLO26n | Segment | 15.00 s | 16.21 s | **1.08×** |
+| YOLO26s | Classify | 5.19 s | 12.92 s | **2.49×** |
+| YOLO26s | Detect | 14.42 s | 15.42 s | **1.07×** |
+| YOLO26s | Segment | 16.78 s | 16.71 s | 1.00× |
+| YOLO26m | Classify | 7.79 s | 13.96 s | **1.79×** |
+| YOLO26m | Detect | 17.54 s | 16.49 s | 0.94× |
+| YOLO26m | Segment | 25.84 s | 18.85 s | 0.73× |
 
 ![YOLO26 scale comparison](assets/model-scale.png)
 
@@ -92,15 +93,15 @@ batch 1 exposes fixed WGPU dispatch and synchronization costs.
 
 | Task | Batch | Montgomery | Ultralytics | Native speedup |
 | --- | ---: | ---: | ---: | ---: |
-| Classify | 1 | 7.84 s | 14.18 s | **1.81×** |
-| Classify | 2 | 4.70 s | 12.80 s | **2.72×** |
-| Classify | 4 | 3.02 s | 12.24 s | **4.05×** |
-| Detect | 1 | 22.97 s | 18.77 s | 0.82× |
-| Detect | 2 | 14.19 s | 15.32 s | **1.08×** |
-| Detect | 4 | 8.69 s | 13.22 s | **1.52×** |
-| Segment | 1 | 28.55 s | 23.78 s | 0.83× |
-| Segment | 2 | 16.84 s | 16.73 s | 0.99× |
-| Segment | 4 | 11.31 s | 14.33 s | **1.27×** |
+| Classify | 1 | 7.62 s | 13.89 s | **1.82×** |
+| Classify | 2 | 4.71 s | 12.54 s | **2.66×** |
+| Classify | 4 | 3.15 s | 12.29 s | **3.90×** |
+| Detect | 1 | 18.71 s | 17.67 s | 0.94× |
+| Detect | 2 | 13.58 s | 14.33 s | **1.06×** |
+| Detect | 4 | 8.29 s | 12.56 s | **1.51×** |
+| Segment | 1 | 24.70 s | 21.91 s | 0.89× |
+| Segment | 2 | 15.00 s | 16.21 s | **1.08×** |
+| Segment | 4 | 10.49 s | 13.69 s | **1.30×** |
 
 ![Batch-size scaling](assets/batch-scaling.png)
 
@@ -110,10 +111,10 @@ This sweep uses YOLO26n detection, batch 2, and three epochs.
 
 | Image size | Montgomery | Ultralytics | Native speedup |
 | ---: | ---: | ---: | ---: |
-| 64 px | 14.18 s | 15.15 s | **1.07×** |
-| 128 px | 13.42 s | 14.82 s | **1.10×** |
-| 320 px | 14.19 s | 15.32 s | **1.08×** |
-| 640 px | 17.55 s | 15.20 s | 0.87× |
+| 64 px | 11.50 s | 13.98 s | **1.22×** |
+| 128 px | 12.32 s | 13.99 s | **1.14×** |
+| 320 px | 13.58 s | 14.33 s | **1.06×** |
+| 640 px | 17.10 s | 14.11 s | 0.82× |
 
 ![YOLO26n detection resolution scaling](assets/resolution-scaling.png)
 
@@ -127,9 +128,9 @@ too small to measure real model quality.
 
 | Task | Montgomery | Ultralytics | Native speedup |
 | --- | ---: | ---: | ---: |
-| Classify | 16.21 s | 23.54 s | **1.45×** |
-| Detect | 43.07 s | 32.10 s | 0.75× |
-| Segment | 52.12 s | 35.95 s | 0.69× |
+| Classify | 15.26 s | 22.31 s | **1.46×** |
+| Detect | 35.34 s | 28.77 s | 0.81× |
+| Segment | 44.79 s | 32.51 s | 0.73× |
 
 ![Normalized loss over ten epochs](assets/convergence-normalized.png)
 
@@ -141,7 +142,7 @@ Post-training validation is outside the timed region:
 
 | Task | Montgomery | Ultralytics | Interpretation |
 | --- | --- | --- | --- |
-| Classify | top-1 41.7%, top-5 58.3% | top-1 41.7%, top-5 91.7% | 12 validation images; not quality evidence |
+| Classify | top-1 16.7%, top-5 91.7% | top-1 41.7%, top-5 91.7% | 12 validation images; not quality evidence |
 | Detect | mAP50 0.0, mAP50-95 0.0 | mAP50 0.0, mAP50-95 0.0 | 4 validation images; the run is too short |
 | Segment | box/mask mAP 0.0 | box/mask mAP 0.0 | 4 validation images; the run is too short |
 
@@ -165,7 +166,8 @@ Per-trial values, medians, environment metadata, and captured commands are prese
 ## Methodology
 
 - Hardware: NVIDIA GeForce RTX 5080; native Burn/WGPU used Vulkan driver 610.47.
-- Software: Montgomery/Burn release build versus Ultralytics 8.4.117 and PyTorch 2.11 CUDA 13.0.
+- Software: Montgomery/Burn release build with fat LTO versus Ultralytics 8.4.117 and PyTorch 2.11
+  CUDA 13.0.
 - Timing: external wall clock around the complete command, including startup, model loading,
   training, and checkpoint writes. Validation is excluded and recorded separately.
 - Precision: FP32 for both implementations.
