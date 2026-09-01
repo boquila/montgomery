@@ -59,8 +59,8 @@ end.
 - `src/data/letterbox.rs`: model-specific preprocessing and reversible source-image geometry.
 - `src/data/augmentation/`: feature-gated native training augmentation pinned to Ultralytics
   `v8.4.117-2-g461196cf0`, including deterministic traceable detect/segment/classify pipelines,
-  mixed-image transforms, mask formatting, and classification policies. Compatibility details and
-  known tolerance classes live in `AUGMENTATION_COMPATIBILITY.md`.
+  mixed-image transforms, mask formatting, and classification policies. Compatibility and known
+  tolerance classes are enforced by `tests/augmentation_parity.rs`.
 - `src/lib.rs`: `ModelId`, `Predictor`, detection results, NMS integration, and weight packing API.
 - `src/main.rs`: the `predict` and `pack-weights` CLI commands.
 - `tools/`: development-only Ultralytics checkpoint conversion, golden-fixture generators, and the
@@ -84,19 +84,19 @@ workflow is documented in `README.md`; the short form
 families):
 
 ```console
-uv run --locked tools/export_ultralytics_state.py yolov10n.pt target/yolov10n-state.pt
+uv run --project tools --locked tools/export_ultralytics_state.py yolov10n.pt target/yolov10n-state.pt
 cargo run --release -- pack-weights --model yolov10n --input target/yolov10n-state.pt --output target/yolov10n-coco-ultralytics-v8.4-montgomery-v1.bpk
 cargo run --release -- predict --model yolov10n --weights target/yolov10n-coco-ultralytics-v8.4-montgomery-v1.bpk --source assets/dog_bike_man.jpg
 
-uv run --locked tools/export_ultralytics_state.py yolo11n.pt target/yolo11n-state.pt
+uv run --project tools --locked tools/export_ultralytics_state.py yolo11n.pt target/yolo11n-state.pt
 cargo run --release -- pack-weights --model yolo11n --input target/yolo11n-state.pt --output target/yolo11n-coco-ultralytics-v8.4-montgomery-v1.bpk
 cargo run --release -- predict --model yolo11n --weights target/yolo11n-coco-ultralytics-v8.4-montgomery-v1.bpk --source assets/dog_bike_man.jpg
 
-uv run --locked tools/export_ultralytics_state.py yolo26n.pt target/yolo26n-state.pt
+uv run --project tools --locked tools/export_ultralytics_state.py yolo26n.pt target/yolo26n-state.pt
 cargo run --release -- pack-weights --model yolo26n --input target/yolo26n-state.pt --output target/yolo26n-coco-ultralytics-v8.4-montgomery-v1.bpk
 cargo run --release -- predict --model yolo26n --weights target/yolo26n-coco-ultralytics-v8.4-montgomery-v1.bpk --source assets/dog_bike_man.jpg
 
-uv run --locked tools/export_ultralytics_state.py yolo11n-seg.pt target/yolo11n-seg-state.pt
+uv run --project tools --locked tools/export_ultralytics_state.py yolo11n-seg.pt target/yolo11n-seg-state.pt
 cargo run --release -- pack-weights --model yolo11n-seg --input target/yolo11n-seg-state.pt --output target/yolo11n-seg-coco-ultralytics-v8.4-montgomery-v1.bpk
 cargo run --release -- predict --model yolo11n-seg --weights target/yolo11n-seg-coco-ultralytics-v8.4-montgomery-v1.bpk --source assets/dog_bike_man.jpg --masks
 ```
@@ -134,17 +134,15 @@ conv+bn) using the conversion venv.
 
 Letterbox preprocessing cost (JPEG decode, both letterbox transforms, scaler candidates, and
 canvas parity diffs; writes comparison PNGs under `target/`) is measured by the ignored
-`measures_letterbox_resize_cost` test; see PERF_NOTES.md §5 for the recorded
-`fast_image_resize` adoption/evaluation numbers:
+`measures_letterbox_resize_cost` test:
 
 ```console
 cargo test --locked --release measures_letterbox_resize_cost -- --ignored --nocapture
 ```
 
-PERF_NOTES.md records the methodology audit plus alternative-CPU-backend measurements. The
-experimental `cpu-simd` (Flex `x86-v4`) and `cpu-cubecl` (`burn-cpu`) features exist only to
-reproduce those measurements; `cpu-cubecl` is numerically unsound on burn 0.21.0-pre.4 (see
-`tests/cpu_backend.rs`), and its latency/parity commands are documented there.
+The experimental `cpu-simd` (Flex `x86-v4`) and `cpu-cubecl` (`burn-cpu`) features exist only for
+alternative-backend measurements; `cpu-cubecl` is numerically unsound on burn 0.21.0-pre.4, and
+its latency/parity commands are documented in `tests/cpu_backend.rs`.
 
 GPU numbers (Wgpu backend, requires the gpu feature) come from the `_gpu` variants of the same
 harness; the CLI selects the backend with `--device cpu|gpu` (gpu builds print the chosen adapter
@@ -287,7 +285,7 @@ Montgomery is AGPL-3.0 (decided 2026-08). The YOLOX path is a derivative of Apac
 the Apache-2.0 option; YOLOX and its official weights are Apache-2.0. Ultralytics architectures and
 official trained weights are AGPL-3.0 by default, so they are license-compatible with the project.
 Artifacts derived from them inherit AGPL-3.0. Keep provenance and license statements current in
-`NOTICE` and `README.md` whenever a checkpoint or artifact is redistributed.
+`README.md` whenever a checkpoint or artifact is redistributed.
 
 ## Scope direction
 

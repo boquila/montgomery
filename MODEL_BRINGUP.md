@@ -7,7 +7,7 @@ exists because skipping it has already caused a bug once.
 Orientation first:
 
 - Montgomery runs inference natively in Rust/Burn. Python + PyTorch + the `ultralytics` package are
-  conversion-time only; run the locked tools with `uv run --locked`.
+  conversion-time only; run the locked tools with `uv run --project tools --locked`.
 - The architecture reference is the vendored repo at `../ultralytics` (pinned 8.4.117). The locked
   Python package is also 8.4.117. When source and a serialized module disagree, the **official checkpoint
   wins** — it was produced by whichever version trained it.
@@ -125,9 +125,9 @@ cargo check --locked --no-default-features --lib
 Then the parity loop (checkpoint and fixtures live under `target/`):
 
 ```console
-uv run --locked tools\export_ultralytics_state.py target/<id>.pt target/<id>-state.pt
+uv run --project tools --locked tools\export_ultralytics_state.py target/<id>.pt target/<id>-state.pt
 cargo run --release -- pack-weights --model <id> --input target/<id>-state.pt --output target/<id>-coco-ultralytics-<ver>-montgomery-v1.bpk
-uv run --locked tools\export_<id>_fixtures.py target/<id>.pt assets/dog_bike_man.jpg target
+uv run --project tools --locked tools\export_<id>_fixtures.py target/<id>.pt assets/dog_bike_man.jpg target
 cargo test --locked <id> -- --ignored
 ```
 
@@ -146,8 +146,7 @@ pixel (f16 artifact rounding accounts for the residual). Record the artifact byt
 - `README.md`: row in the Models table (family name in the Model column, variant in the Variants
   column), row in the artifacts table, adjust the weight-prep snippet if a new bridge step exists.
 - `AGENTS.md`: "What is here" entry, fast-path commands, invariants (decode/postprocess specifics).
-- `NOTICE`: provenance and licensing (Ultralytics-family weights and derived artifacts are
-  AGPL-3.0; the YOLOX path is Apache-2.0).
+- `README.md`: provenance and licensing for redistributed checkpoints and derived artifacts.
 
 ## 8. Bringing up a new task (instance segmentation, classification)
 
@@ -156,7 +155,8 @@ task head as the ground truth. The YOLO11-seg bring-up (n/s/m/l/x) is the segmen
 YOLO26-cls bring-up (n/s/m/l/x) is the classification template.
 
 1. **Feasibility gate first**: verify the `-seg` checkpoints actually exist in the assets release
-   (HTTP HEAD the release URLs; never trust release notes from memory) and load one with `uv run --locked`
+   (HTTP HEAD the release URLs; never trust release notes from memory) and load one with
+   `uv run --project tools --locked`
    before writing any Rust. Pick the family whose existing runtime dispatch extends most cleanly —
    for segmentation that was YOLO11, because Ultralytics' `Segment` head is the classic Detect head
    plus extras and its postprocess rides the exact NMS path the family already has.

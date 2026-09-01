@@ -28,7 +28,7 @@ training = [
     "dep:serde_yaml",
     "dep:sha2",
 ]
-# Experimental CPU configurations measured in PERF_NOTES.md; neither changes the default path.
+# Experimental CPU configurations retained for backend measurements; neither changes the default path.
 # burn-flex's default features already include simd (macerator/gemm) and rayon; x86-v4 adds the
 # AVX-512 codegen paths of the gemm crate on top.
 cpu-simd = ["burn-flex/simd", "burn-flex/x86-v4"]

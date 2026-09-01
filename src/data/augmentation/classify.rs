@@ -1,6 +1,6 @@
 //! Native classification transforms following the pinned torchvision behavior.
 //!
-//! RandAugment policy structure is adapted from torchvision (BSD-3-Clause); see `NOTICE`.
+//! RandAugment policy structure is adapted from torchvision (BSD-3-Clause).
 
 use super::{
     AugRng, AugmentationTrace, AutoAugmentPolicy, ByteImage, ColorOrder, Interpolation,

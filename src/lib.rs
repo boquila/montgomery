@@ -23,7 +23,9 @@ pub mod training;
 use std::path::PathBuf;
 use std::{error::Error, fmt, path::Path, str::FromStr};
 
-use crate::data::{IMAGENET_CLASSES, LetterboxedImage, classify_transform};
+#[cfg(feature = "pretrained")]
+use crate::data::IMAGENET_CLASSES;
+use crate::data::{LetterboxedImage, classify_transform};
 #[cfg(feature = "pretrained")]
 use crate::models::yolo11::{
     Yolo11ClsLConfig, Yolo11ClsMConfig, Yolo11ClsNConfig, Yolo11ClsSConfig, Yolo11ClsXConfig,
@@ -588,6 +590,7 @@ impl ModelId {
     }
 }
 
+#[cfg(feature = "pretrained")]
 fn catalog_class_names(model_id: ModelId) -> Vec<String> {
     if model_id.as_str().ends_with("-cls") {
         IMAGENET_CLASSES
@@ -599,6 +602,7 @@ fn catalog_class_names(model_id: ModelId) -> Vec<String> {
     }
 }
 
+#[cfg(feature = "pretrained")]
 fn catalog_input_size(model_id: ModelId) -> usize {
     model_id.default_input_size()
 }

@@ -35,8 +35,8 @@ Normal inference needs no Python, PyTorch, or ONNX Runtime.
 Install Rust and [uv](https://docs.astral.sh/uv/), then convert an upstream checkpoint once:
 
 ```console
-uv run --locked python -c "from ultralytics import YOLO; YOLO('yolo26n.pt')"
-uv run --locked tools/export_ultralytics_state.py yolo26n.pt target/yolo26n-state.pt
+uv run --project tools --locked python -c "from ultralytics import YOLO; YOLO('yolo26n.pt')"
+uv run --project tools --locked tools/export_ultralytics_state.py yolo26n.pt target/yolo26n-state.pt
 cargo run --locked --release -- pack-weights --model yolo26n --input target/yolo26n-state.pt --output target/yolo26n-coco-ultralytics-v8.4-montgomery-v1.bpk
 ```
 
@@ -132,8 +132,9 @@ cargo test --locked
 ```
 
 Cargo downloads and builds every Rust dependency automatically. Python is optional and only used
-for checkpoint conversion, benchmark generation, and ONNX development; `uv run --locked <command>`
-creates that environment from the committed `pyproject.toml` and `uv.lock` when needed.
+for checkpoint conversion, benchmark generation, and ONNX development;
+`uv run --project tools --locked <command>` creates that environment from the committed
+`tools/pyproject.toml` and `tools/uv.lock` when needed.
 
 The same checks used by CI are:
 
@@ -149,6 +150,4 @@ implementation invariants.
 
 ## License
 
-Montgomery is [AGPL-3.0](LICENSE). YOLOX code and official weights are Apache-2.0; see
-[LICENSE-APACHE](LICENSE-APACHE). Ultralytics architectures and checkpoints are AGPL-3.0. Full
-provenance is recorded in [NOTICE](NOTICE).
+Montgomery is [AGPL-3.0](LICENSE).

@@ -72,8 +72,8 @@ impl LetterboxedImage {
     /// Resizes with `fast_image_resize`'s adaptive-kernel bilinear convolution (runtime-dispatched
     /// SIMD), the counterpart of the `imageops::Triangle` resampling this used before: both apply
     /// an anti-aliased triangle kernel stretched by the downscale factor, and their outputs agree
-    /// within +/-1 per channel (PERF_NOTES.md, letterbox evaluation). Source pixels are converted
-    /// to RGB8 before resizing, matching the Ultralytics transform below.
+    /// within +/-1 per channel. Source pixels are converted to RGB8 before resizing, matching the
+    /// Ultralytics transform below.
     pub(crate) fn yolox(source: &DynamicImage, size: usize) -> Self {
         let source_width = source.width();
         let source_height = source.height();
@@ -106,8 +106,7 @@ impl LetterboxedImage {
     /// The resize deliberately stays on the hand-rolled cv2-equivalent bilinear sampler:
     /// `fast_image_resize`'s U8 kernels quantize weights more coarsely than cv2 and fall outside
     /// the preprocessing-parity budget of `measures_ultralytics_preprocessing_fixture_parity`,
-    /// while its parity-preserving U16 pipeline is slower than this loop (PERF_NOTES.md, the
-    /// letterbox evaluation).
+    /// while its parity-preserving U16 pipeline is slower than this loop.
     pub(crate) fn ultralytics(source: &DynamicImage, size: usize, stride: usize) -> Self {
         let source_width = source.width();
         let source_height = source.height();
@@ -293,11 +292,10 @@ mod tests {
     ///
     /// Times JPEG decoding, both letterbox constructors, and the raw scalers on the reference
     /// image plus two generated synthetic images under `target/`. It keeps the scaler candidates
-    /// evaluated in PERF_NOTES.md measurable: the Ultralytics transform stays on the hand-rolled
-    /// cv2-linear sampler while the YOLOX transform uses `fast_image_resize`, so the bench times
-    /// the production constructors, the rejected fir candidates, and the previous imageops
-    /// Triangle scaler, diffs their canvases, and writes the reference-image canvases to
-    /// `target/` for the cv2.resize comparison documented in PERF_NOTES.md.
+    /// measurable: the Ultralytics transform stays on the hand-rolled cv2-linear sampler while the
+    /// YOLOX transform uses `fast_image_resize`, so the bench times the production constructors,
+    /// the rejected fir candidates, and the previous imageops Triangle scaler, diffs their
+    /// canvases, and writes the reference-image canvases to `target/` for cv2.resize comparison.
     #[test]
     #[ignore]
     fn measures_letterbox_resize_cost() {
@@ -472,7 +470,9 @@ mod tests {
             .expect("fir u16 resize into a matching buffer");
         let wide_bytes = destination.into_vec();
         let narrowed: Vec<u8> = wide_bytes
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|pair| {
                 let value = u16::from_ne_bytes([pair[0], pair[1]]);
                 ((((value as u32 * 2 + 257) / 514) as usize).min(255)) as u8

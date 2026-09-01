@@ -1,7 +1,7 @@
 //! Native data augmentation compatible with Ultralytics 8.4.117.
 //!
 //! This is a modified Rust adaptation of the Ultralytics data pipeline at commit
-//! `461196cf09175b64c9b9bd8babebf081c0540520` (AGPL-3.0). See `NOTICE`.
+//! `461196cf09175b64c9b9bd8babebf081c0540520` (AGPL-3.0).
 
 mod classify;
 mod compose;

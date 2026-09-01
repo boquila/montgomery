@@ -1,13 +1,12 @@
-//! Experimental CPU-backend measurements backing PERF_NOTES.md.
+//! Experimental CPU-backend measurements.
 //!
 //! Two configurations were measured against the default Flex backend with the same methodology
 //! (zeros `[1, 3, 640, 640]` input, 3 warmup runs + 10 timed runs of `model.forward` — body,
 //! head decode, and result sums forced to completion — median and minimum, sequential execution):
 //!
 //! 1. `cpu-simd` — Flex with the gemm crate's AVX-512 codegen paths (`burn-flex/x86-v4`).
-//!    Numerically sound (all in-tree Flex golden tests pass) but consistently ~2-4% slower;
-//!    see PERF_NOTES.md. It needs no extra tests: the in-tree Flex latency and golden tests
-//!    cover it.
+//!    Numerically sound (all in-tree Flex golden tests pass) but consistently ~2-4% slower. It
+//!    needs no extra tests: the in-tree Flex latency and golden tests cover it.
 //! 2. `cpu-cubecl` — the alternative `burn-cpu` (CubeCL CPU) backend via `burn/cpu`. Measured
 //!    here. Verdict: **numerically unsound on this graph** on burn 0.21.0-pre.4.
 //!

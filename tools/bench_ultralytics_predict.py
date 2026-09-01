@@ -5,7 +5,7 @@ includes Ultralytics' preprocessing (letterbox), model forward, NMS, and result 
 same scope as Montgomery's CLI `predict` (which additionally decodes, annotates, and writes a PNG).
 The model is loaded and warmed up outside the timed region. Run from the repository root:
 
-    uv run --locked tools\\bench_ultralytics_predict.py target\\yolo11n.pt assets\\dog_bike_man.jpg
+    uv run --project tools --locked tools\\bench_ultralytics_predict.py target\\yolo11n.pt assets\\dog_bike_man.jpg
 """
 
 from __future__ import annotations

@@ -2,7 +2,7 @@
 
 Run from the repository root with the locked CUDA benchmark environment:
 
-    uv run --locked tools/bench_training_matrix.py
+    uv run --project tools --locked tools/bench_training_matrix.py
 
 Generated checkpoints and logs stay under target/. The compact JSON result is consumed by
 tools/plot_training_comparison.py and is suitable for copying into docs/assets/.

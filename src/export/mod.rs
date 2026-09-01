@@ -318,7 +318,7 @@ fn export_staged(
         output_file: output_name.into(),
         sidecar_file: sidecar_name.into(),
         license: spec.license.into(),
-        notice: "NOTICE".into(),
+        notice: "See repository LICENSE".into(),
         montgomery_version: env!("CARGO_PKG_VERSION").into(),
         montgomery_git_commit: git_commit,
         montgomery_git_dirty: git_dirty,

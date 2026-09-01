@@ -2,11 +2,11 @@
 
 Full reproducible run:
 
-    uv run --locked tools/benchmark_training.py --publish
+    uv run --project tools --locked tools/benchmark_training.py --publish
 
 Fast iteration on one bottleneck:
 
-    uv run --locked tools/benchmark_training.py \
+    uv run --project tools --locked tools/benchmark_training.py \
         --scenario yolov8n-segment --repeats 1 --segmentation-repeats 1
 """
 

@@ -4,7 +4,7 @@
 This is intentionally separate from the fast performance matrix. It refuses partial datasets and
 stores every command, log, CSV, and model under ``target/full-convergence``.
 
-    uv run --locked tools/bench_full_convergence.py --download --epochs 100
+    uv run --project tools --locked tools/bench_full_convergence.py --download --epochs 100
 """
 
 from __future__ import annotations

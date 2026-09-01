@@ -3,7 +3,7 @@
 
 Run from the repository root:
 
-    uv run --locked tools/profile_wgpu_training.py
+    uv run --project tools --locked tools/profile_wgpu_training.py
 
 The script uses one release binary and isolated processes because CubeCL reads
 ``CUBECL_WGPU_MAX_TASKS`` when the WGPU device is first initialized.
