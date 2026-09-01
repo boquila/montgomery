@@ -17,18 +17,12 @@ use burn::{
 };
 
 #[cfg(feature = "pretrained")]
-use burn_store::{
-    BurnpackError, BurnpackStore, HalfPrecisionAdapter, ModuleSnapshot, PytorchStore,
-    PytorchStoreError,
-};
+use burn_store::{ModuleSnapshot, PytorchStore};
 
 use super::blocks::{BnFlavor, C2f, C2fConfig, Conv, ConvConfig};
 use crate::models::yolo26::classification::{
     ClassificationOutput, ClassifyHead, ClassifyHeadConfig,
 };
-
-#[cfg(feature = "pretrained")]
-use super::weights;
 
 /// Every Conv in the official YOLOv8-cls checkpoints carries plain PyTorch BatchNorm defaults
 /// (eps 1e-5, momentum 0.1) instead of the Ultralytics-initialized values the detect family uses.
@@ -168,400 +162,60 @@ impl Yolov8ClassifyBodyXConfig {
     }
 }
 
-/// Native Burn YOLOv8n-cls model.
-#[derive(Module, Debug)]
-pub struct Yolov8ClsN<B: Backend> {
-    body: Yolov8ClassifyBody<B>,
-    head: ClassifyHead<B>,
-}
+classify_model!(
+    Yolov8ClsN,
+    Yolov8ClsNConfig,
+    Yolov8ClassifyBody,
+    Yolov8ClassifyBodyNConfig,
+    256,
+    "yolov8n-cls",
+    "Native Burn YOLOv8n-cls model.",
+    "Import tensor-only state exported from an official Ultralytics checkpoint."
+);
 
-impl<B: Backend> Yolov8ClsN<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> ClassificationOutput<B> {
-        self.head.forward(self.body.forward(input))
-    }
+classify_model!(
+    Yolov8ClsS,
+    Yolov8ClsSConfig,
+    Yolov8ClassifyBody,
+    Yolov8ClassifyBodySConfig,
+    512,
+    "yolov8s-cls",
+    "Native Burn YOLOv8s-cls model.",
+    "Import tensor-only state exported from an official Ultralytics checkpoint."
+);
 
-    pub fn forward_train(&self, input: Tensor<B, 4>) -> Tensor<B, 2> {
-        self.head.forward_train(self.body.forward(input))
-    }
+classify_model!(
+    Yolov8ClsM,
+    Yolov8ClsMConfig,
+    Yolov8ClassifyBody,
+    Yolov8ClassifyBodyMConfig,
+    768,
+    "yolov8m-cls",
+    "Native Burn YOLOv8m-cls model.",
+    "Import tensor-only state exported from an official Ultralytics checkpoint."
+);
 
-    /// Import tensor-only state exported from an official Ultralytics checkpoint.
-    #[cfg(feature = "pretrained")]
-    pub fn load_pytorch_weights(
-        &mut self,
-        path: impl Into<std::path::PathBuf>,
-    ) -> Result<(), PytorchStoreError> {
-        let mut store = pytorch_store(path);
-        self.load_from(&mut store).map(|_| ())
-    }
+classify_model!(
+    Yolov8ClsL,
+    Yolov8ClsLConfig,
+    Yolov8ClassifyBody,
+    Yolov8ClassifyBodyLConfig,
+    1024,
+    "yolov8l-cls",
+    "Native Burn YOLOv8l-cls model.",
+    "Import tensor-only state exported from an official Ultralytics checkpoint."
+);
 
-    /// Load Montgomery's versioned, half-precision native Burnpack artifact.
-    #[cfg(feature = "pretrained")]
-    pub fn load_burnpack_weights(
-        &mut self,
-        path: impl Into<std::path::PathBuf>,
-    ) -> Result<(), BurnpackError> {
-        let mut store = BurnpackStore::from_file(path.into())
-            .with_from_adapter(HalfPrecisionAdapter::new())
-            .zero_copy(true);
-        self.load_from(&mut store).map(|_| ())
-    }
-
-    /// Save a versioned native artifact. Existing files are deliberately not overwritten.
-    #[cfg(feature = "pretrained")]
-    pub fn save_burnpack_weights(
-        &self,
-        path: impl Into<std::path::PathBuf>,
-    ) -> Result<(), BurnpackError> {
-        let mut store = BurnpackStore::from_file(path.into())
-            .metadata(
-                "montgomery.artifact-format",
-                weights::artifact_format("yolov8n-cls"),
-            )
-            .metadata("montgomery.model", "yolov8n-cls")
-            .metadata("montgomery.classes", "imagenet-1000")
-            .metadata("montgomery.precision", "f16")
-            .with_to_adapter(HalfPrecisionAdapter::new());
-        self.save_into(&mut store)
-    }
-}
-
-#[derive(Debug, Default)]
-pub struct Yolov8ClsNConfig;
-
-impl Yolov8ClsNConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8ClsN<B> {
-        self.init_with_classes(crate::models::yolo26::classification::NUM_CLASSES, device)
-    }
-
-    pub fn init_with_classes<B: Backend>(
-        &self,
-        num_classes: usize,
-        device: &Device<B>,
-    ) -> Yolov8ClsN<B> {
-        Yolov8ClsN {
-            body: Yolov8ClassifyBodyNConfig.init(device),
-            head: ClassifyHeadConfig::new(256)
-                .with_num_classes(num_classes)
-                .init(device),
-        }
-    }
-}
-
-/// Native Burn YOLOv8s-cls model.
-#[derive(Module, Debug)]
-pub struct Yolov8ClsS<B: Backend> {
-    body: Yolov8ClassifyBody<B>,
-    head: ClassifyHead<B>,
-}
-
-impl<B: Backend> Yolov8ClsS<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> ClassificationOutput<B> {
-        self.head.forward(self.body.forward(input))
-    }
-
-    pub fn forward_train(&self, input: Tensor<B, 4>) -> Tensor<B, 2> {
-        self.head.forward_train(self.body.forward(input))
-    }
-
-    /// Import tensor-only state exported from an official Ultralytics checkpoint.
-    #[cfg(feature = "pretrained")]
-    pub fn load_pytorch_weights(
-        &mut self,
-        path: impl Into<std::path::PathBuf>,
-    ) -> Result<(), PytorchStoreError> {
-        let mut store = pytorch_store(path);
-        self.load_from(&mut store).map(|_| ())
-    }
-
-    /// Load Montgomery's versioned, half-precision native Burnpack artifact.
-    #[cfg(feature = "pretrained")]
-    pub fn load_burnpack_weights(
-        &mut self,
-        path: impl Into<std::path::PathBuf>,
-    ) -> Result<(), BurnpackError> {
-        let mut store = BurnpackStore::from_file(path.into())
-            .with_from_adapter(HalfPrecisionAdapter::new())
-            .zero_copy(true);
-        self.load_from(&mut store).map(|_| ())
-    }
-
-    /// Save a versioned native artifact. Existing files are deliberately not overwritten.
-    #[cfg(feature = "pretrained")]
-    pub fn save_burnpack_weights(
-        &self,
-        path: impl Into<std::path::PathBuf>,
-    ) -> Result<(), BurnpackError> {
-        let mut store = BurnpackStore::from_file(path.into())
-            .metadata(
-                "montgomery.artifact-format",
-                weights::artifact_format("yolov8s-cls"),
-            )
-            .metadata("montgomery.model", "yolov8s-cls")
-            .metadata("montgomery.classes", "imagenet-1000")
-            .metadata("montgomery.precision", "f16")
-            .with_to_adapter(HalfPrecisionAdapter::new());
-        self.save_into(&mut store)
-    }
-}
-
-#[derive(Debug, Default)]
-pub struct Yolov8ClsSConfig;
-
-impl Yolov8ClsSConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8ClsS<B> {
-        self.init_with_classes(crate::models::yolo26::classification::NUM_CLASSES, device)
-    }
-
-    pub fn init_with_classes<B: Backend>(
-        &self,
-        num_classes: usize,
-        device: &Device<B>,
-    ) -> Yolov8ClsS<B> {
-        Yolov8ClsS {
-            body: Yolov8ClassifyBodySConfig.init(device),
-            head: ClassifyHeadConfig::new(512)
-                .with_num_classes(num_classes)
-                .init(device),
-        }
-    }
-}
-
-/// Native Burn YOLOv8m-cls model.
-#[derive(Module, Debug)]
-pub struct Yolov8ClsM<B: Backend> {
-    body: Yolov8ClassifyBody<B>,
-    head: ClassifyHead<B>,
-}
-
-impl<B: Backend> Yolov8ClsM<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> ClassificationOutput<B> {
-        self.head.forward(self.body.forward(input))
-    }
-
-    pub fn forward_train(&self, input: Tensor<B, 4>) -> Tensor<B, 2> {
-        self.head.forward_train(self.body.forward(input))
-    }
-
-    /// Import tensor-only state exported from an official Ultralytics checkpoint.
-    #[cfg(feature = "pretrained")]
-    pub fn load_pytorch_weights(
-        &mut self,
-        path: impl Into<std::path::PathBuf>,
-    ) -> Result<(), PytorchStoreError> {
-        let mut store = pytorch_store(path);
-        self.load_from(&mut store).map(|_| ())
-    }
-
-    /// Load Montgomery's versioned, half-precision native Burnpack artifact.
-    #[cfg(feature = "pretrained")]
-    pub fn load_burnpack_weights(
-        &mut self,
-        path: impl Into<std::path::PathBuf>,
-    ) -> Result<(), BurnpackError> {
-        let mut store = BurnpackStore::from_file(path.into())
-            .with_from_adapter(HalfPrecisionAdapter::new())
-            .zero_copy(true);
-        self.load_from(&mut store).map(|_| ())
-    }
-
-    /// Save a versioned native artifact. Existing files are deliberately not overwritten.
-    #[cfg(feature = "pretrained")]
-    pub fn save_burnpack_weights(
-        &self,
-        path: impl Into<std::path::PathBuf>,
-    ) -> Result<(), BurnpackError> {
-        let mut store = BurnpackStore::from_file(path.into())
-            .metadata(
-                "montgomery.artifact-format",
-                weights::artifact_format("yolov8m-cls"),
-            )
-            .metadata("montgomery.model", "yolov8m-cls")
-            .metadata("montgomery.classes", "imagenet-1000")
-            .metadata("montgomery.precision", "f16")
-            .with_to_adapter(HalfPrecisionAdapter::new());
-        self.save_into(&mut store)
-    }
-}
-
-#[derive(Debug, Default)]
-pub struct Yolov8ClsMConfig;
-
-impl Yolov8ClsMConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8ClsM<B> {
-        self.init_with_classes(crate::models::yolo26::classification::NUM_CLASSES, device)
-    }
-
-    pub fn init_with_classes<B: Backend>(
-        &self,
-        num_classes: usize,
-        device: &Device<B>,
-    ) -> Yolov8ClsM<B> {
-        Yolov8ClsM {
-            body: Yolov8ClassifyBodyMConfig.init(device),
-            head: ClassifyHeadConfig::new(768)
-                .with_num_classes(num_classes)
-                .init(device),
-        }
-    }
-}
-
-/// Native Burn YOLOv8l-cls model.
-#[derive(Module, Debug)]
-pub struct Yolov8ClsL<B: Backend> {
-    body: Yolov8ClassifyBody<B>,
-    head: ClassifyHead<B>,
-}
-
-impl<B: Backend> Yolov8ClsL<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> ClassificationOutput<B> {
-        self.head.forward(self.body.forward(input))
-    }
-
-    pub fn forward_train(&self, input: Tensor<B, 4>) -> Tensor<B, 2> {
-        self.head.forward_train(self.body.forward(input))
-    }
-
-    /// Import tensor-only state exported from an official Ultralytics checkpoint.
-    #[cfg(feature = "pretrained")]
-    pub fn load_pytorch_weights(
-        &mut self,
-        path: impl Into<std::path::PathBuf>,
-    ) -> Result<(), PytorchStoreError> {
-        let mut store = pytorch_store(path);
-        self.load_from(&mut store).map(|_| ())
-    }
-
-    /// Load Montgomery's versioned, half-precision native Burnpack artifact.
-    #[cfg(feature = "pretrained")]
-    pub fn load_burnpack_weights(
-        &mut self,
-        path: impl Into<std::path::PathBuf>,
-    ) -> Result<(), BurnpackError> {
-        let mut store = BurnpackStore::from_file(path.into())
-            .with_from_adapter(HalfPrecisionAdapter::new())
-            .zero_copy(true);
-        self.load_from(&mut store).map(|_| ())
-    }
-
-    /// Save a versioned native artifact. Existing files are deliberately not overwritten.
-    #[cfg(feature = "pretrained")]
-    pub fn save_burnpack_weights(
-        &self,
-        path: impl Into<std::path::PathBuf>,
-    ) -> Result<(), BurnpackError> {
-        let mut store = BurnpackStore::from_file(path.into())
-            .metadata(
-                "montgomery.artifact-format",
-                weights::artifact_format("yolov8l-cls"),
-            )
-            .metadata("montgomery.model", "yolov8l-cls")
-            .metadata("montgomery.classes", "imagenet-1000")
-            .metadata("montgomery.precision", "f16")
-            .with_to_adapter(HalfPrecisionAdapter::new());
-        self.save_into(&mut store)
-    }
-}
-
-#[derive(Debug, Default)]
-pub struct Yolov8ClsLConfig;
-
-impl Yolov8ClsLConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8ClsL<B> {
-        self.init_with_classes(crate::models::yolo26::classification::NUM_CLASSES, device)
-    }
-
-    pub fn init_with_classes<B: Backend>(
-        &self,
-        num_classes: usize,
-        device: &Device<B>,
-    ) -> Yolov8ClsL<B> {
-        Yolov8ClsL {
-            body: Yolov8ClassifyBodyLConfig.init(device),
-            head: ClassifyHeadConfig::new(1024)
-                .with_num_classes(num_classes)
-                .init(device),
-        }
-    }
-}
-
-/// Native Burn YOLOv8x-cls model.
-#[derive(Module, Debug)]
-pub struct Yolov8ClsX<B: Backend> {
-    body: Yolov8ClassifyBody<B>,
-    head: ClassifyHead<B>,
-}
-
-impl<B: Backend> Yolov8ClsX<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> ClassificationOutput<B> {
-        self.head.forward(self.body.forward(input))
-    }
-
-    pub fn forward_train(&self, input: Tensor<B, 4>) -> Tensor<B, 2> {
-        self.head.forward_train(self.body.forward(input))
-    }
-
-    /// Import tensor-only state exported from an official Ultralytics checkpoint.
-    #[cfg(feature = "pretrained")]
-    pub fn load_pytorch_weights(
-        &mut self,
-        path: impl Into<std::path::PathBuf>,
-    ) -> Result<(), PytorchStoreError> {
-        let mut store = pytorch_store(path);
-        self.load_from(&mut store).map(|_| ())
-    }
-
-    /// Load Montgomery's versioned, half-precision native Burnpack artifact.
-    #[cfg(feature = "pretrained")]
-    pub fn load_burnpack_weights(
-        &mut self,
-        path: impl Into<std::path::PathBuf>,
-    ) -> Result<(), BurnpackError> {
-        let mut store = BurnpackStore::from_file(path.into())
-            .with_from_adapter(HalfPrecisionAdapter::new())
-            .zero_copy(true);
-        self.load_from(&mut store).map(|_| ())
-    }
-
-    /// Save a versioned native artifact. Existing files are deliberately not overwritten.
-    #[cfg(feature = "pretrained")]
-    pub fn save_burnpack_weights(
-        &self,
-        path: impl Into<std::path::PathBuf>,
-    ) -> Result<(), BurnpackError> {
-        let mut store = BurnpackStore::from_file(path.into())
-            .metadata(
-                "montgomery.artifact-format",
-                weights::artifact_format("yolov8x-cls"),
-            )
-            .metadata("montgomery.model", "yolov8x-cls")
-            .metadata("montgomery.classes", "imagenet-1000")
-            .metadata("montgomery.precision", "f16")
-            .with_to_adapter(HalfPrecisionAdapter::new());
-        self.save_into(&mut store)
-    }
-}
-
-#[derive(Debug, Default)]
-pub struct Yolov8ClsXConfig;
-
-impl Yolov8ClsXConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8ClsX<B> {
-        self.init_with_classes(crate::models::yolo26::classification::NUM_CLASSES, device)
-    }
-
-    pub fn init_with_classes<B: Backend>(
-        &self,
-        num_classes: usize,
-        device: &Device<B>,
-    ) -> Yolov8ClsX<B> {
-        Yolov8ClsX {
-            body: Yolov8ClassifyBodyXConfig.init(device),
-            head: ClassifyHeadConfig::new(1280)
-                .with_num_classes(num_classes)
-                .init(device),
-        }
-    }
-}
+classify_model!(
+    Yolov8ClsX,
+    Yolov8ClsXConfig,
+    Yolov8ClassifyBody,
+    Yolov8ClassifyBodyXConfig,
+    1280,
+    "yolov8x-cls",
+    "Native Burn YOLOv8x-cls model.",
+    "Import tensor-only state exported from an official Ultralytics checkpoint."
+);
 
 /// Build the PyTorch-state store shared by every YOLOv8-cls scale variant.
 ///
@@ -591,53 +245,6 @@ mod tests {
 
     #[cfg(feature = "gpu")]
     use burn::backend::Wgpu;
-
-    #[test]
-    fn produces_class_logits_for_each_scale() {
-        let worker = std::thread::Builder::new()
-            .stack_size(64 * 1024 * 1024)
-            .spawn(|| {
-                let device = Default::default();
-                let input = Tensor::zeros([1, 3, 64, 64], &device);
-
-                let model = Yolov8ClsNConfig.init::<Flex>(&device);
-                let output = model.forward(input.clone());
-                assert_eq!(
-                    output.probs.dims(),
-                    [1, crate::models::yolo26::classification::NUM_CLASSES]
-                );
-
-                let model = Yolov8ClsSConfig.init::<Flex>(&device);
-                let output = model.forward(input.clone());
-                assert_eq!(
-                    output.probs.dims(),
-                    [1, crate::models::yolo26::classification::NUM_CLASSES]
-                );
-
-                let model = Yolov8ClsMConfig.init::<Flex>(&device);
-                let output = model.forward(input.clone());
-                assert_eq!(
-                    output.probs.dims(),
-                    [1, crate::models::yolo26::classification::NUM_CLASSES]
-                );
-
-                let model = Yolov8ClsLConfig.init::<Flex>(&device);
-                let output = model.forward(input.clone());
-                assert_eq!(
-                    output.probs.dims(),
-                    [1, crate::models::yolo26::classification::NUM_CLASSES]
-                );
-
-                let model = Yolov8ClsXConfig.init::<Flex>(&device);
-                let output = model.forward(input);
-                assert_eq!(
-                    output.probs.dims(),
-                    [1, crate::models::yolo26::classification::NUM_CLASSES]
-                );
-            })
-            .expect("shape-test worker should start");
-        worker.join().expect("shape-test worker should not panic");
-    }
 
     #[derive(Deserialize)]
     struct GoldenFixture {

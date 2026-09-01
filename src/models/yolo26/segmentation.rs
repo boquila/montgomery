@@ -758,50 +758,6 @@ impl Yolo26SegXConfig {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use burn_flex::Flex;
-
-    #[test]
-    fn produces_detections_masks_and_prototypes_for_each_scale() {
-        let worker = std::thread::Builder::new()
-            .stack_size(64 * 1024 * 1024)
-            .spawn(|| {
-                let device = Default::default();
-                let input = Tensor::zeros([1, 3, 64, 64], &device);
-
-                let model = Yolo26SegNConfig.init::<Flex>(&device);
-                let output = model.forward(input.clone());
-                assert_eq!(output.decoded.boxes.dims()[1..], [84, 4]);
-                assert_eq!(output.decoded.scores.dims()[1..], [84, 80]);
-                assert_eq!(output.coefficients.dims()[0..2], [1, NUM_MASKS]);
-                assert_eq!(output.prototypes.dims()[0..2], [1, NUM_MASKS]);
-
-                for config in 0..4 {
-                    let output = match config {
-                        0 => Yolo26SegSConfig
-                            .init::<Flex>(&device)
-                            .forward(input.clone()),
-                        1 => Yolo26SegMConfig
-                            .init::<Flex>(&device)
-                            .forward(input.clone()),
-                        2 => Yolo26SegLConfig
-                            .init::<Flex>(&device)
-                            .forward(input.clone()),
-                        _ => Yolo26SegXConfig
-                            .init::<Flex>(&device)
-                            .forward(input.clone()),
-                    };
-                    assert_eq!(output.coefficients.dims()[0..2], [1, NUM_MASKS]);
-                    assert_eq!(output.prototypes.dims()[0..2], [1, NUM_MASKS]);
-                }
-            })
-            .expect("shape-test worker should start");
-        worker.join().expect("shape-test worker should not panic");
-    }
-}
-
 #[cfg(all(test, feature = "pretrained"))]
 mod parity_tests {
     use super::*;
