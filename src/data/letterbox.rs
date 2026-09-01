@@ -241,7 +241,7 @@ mod tests {
     #[test]
     #[ignore]
     fn measures_ultralytics_preprocessing_fixture_parity() {
-        let source = image::open("assets/dog_bike_man.jpg").unwrap();
+        let source = image::open("docs/dog_bike_man.jpg").unwrap();
         let expected_source = image::open("target/yolov3-tinyu-source-reference.png")
             .expect("generate the reference with tools/export_ultralytics_fixtures.py")
             .to_rgb8();
@@ -302,7 +302,7 @@ mod tests {
         write_synthetic_bench_image("target/letterbox-bench-1920x1080.jpg", 1920, 1080);
         write_synthetic_bench_image("target/letterbox-bench-3840x2160.jpg", 3840, 2160);
         let sources = [
-            "assets/dog_bike_man.jpg",
+            "docs/dog_bike_man.jpg",
             "target/letterbox-bench-1920x1080.jpg",
             "target/letterbox-bench-3840x2160.jpg",
         ];
@@ -394,7 +394,7 @@ mod tests {
                 "  fir vs previous-triangle yolox canvas: max={max} mean={mean:.4} differing={fraction:.5}"
             );
 
-            if path == "assets/dog_bike_man.jpg" {
+            if path == "docs/dog_bike_man.jpg" {
                 source
                     .to_rgb8()
                     .save("target/letterbox-bench-source.png")

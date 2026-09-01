@@ -848,7 +848,7 @@ mod tests {
 
     /// Compare the classification runtime end to end against the official Ultralytics prediction
     /// on the reference image (top-5 classes and probabilities). Run the generator first:
-    /// `python tools/export_yolov8_cls_fixtures.py target/<id>.pt assets/dog_bike_man.jpg target --model <id>`
+    /// `python tools/export_yolov8_cls_fixtures.py target/<id>.pt docs/dog_bike_man.jpg target --model <id>`
     macro_rules! cls_e2e_test {
         ($fn_name:ident, $config:ty, $id:literal) => {
             #[test]
@@ -890,7 +890,7 @@ mod tests {
                 )
                 .unwrap();
                 let (image, classifications) = predictor
-                    .predict_classification_path("assets/dog_bike_man.jpg")
+                    .predict_classification_path("docs/dog_bike_man.jpg")
                     .unwrap();
                 let _ = image;
                 assert_eq!(

@@ -585,7 +585,7 @@ mod parity_tests {
                 )
                 .unwrap();
                 let (image, classifications) = predictor
-                    .predict_classification_path("assets/dog_bike_man.jpg")
+                    .predict_classification_path("docs/dog_bike_man.jpg")
                     .unwrap();
                 let _ = image;
                 assert_eq!(

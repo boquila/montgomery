@@ -4,6 +4,8 @@ How to add a new Ultralytics-family detector (a new family or a new scale varian
 a native Burn implementation. Written for agent sessions: follow the phases in order; every step
 exists because skipping it has already caused a bug once.
 
+Run all commands from the repository root; paths in this guide are repository-relative.
+
 Orientation first:
 
 - Montgomery runs inference natively in Rust/Burn. Python + PyTorch + the `ultralytics` package are
@@ -127,7 +129,7 @@ Then the parity loop (checkpoint and fixtures live under `target/`):
 ```console
 uv run --project tools --locked tools\export_ultralytics_state.py target/<id>.pt target/<id>-state.pt
 cargo run --release -- pack-weights --model <id> --input target/<id>-state.pt --output target/<id>-coco-ultralytics-<ver>-montgomery-v1.bpk
-uv run --project tools --locked tools\export_<id>_fixtures.py target/<id>.pt assets/dog_bike_man.jpg target
+uv run --project tools --locked tools\export_<id>_fixtures.py target/<id>.pt docs/dog_bike_man.jpg target
 cargo test --locked <id> -- --ignored
 ```
 
@@ -136,7 +138,7 @@ correct) and `matches_ultralytics_golden_tensors` (graph numerics correct at 2e-
 the remapper silently skips them and the model runs with default weights — the golden test is what
 catches this, so never skip it.
 
-Finally compare end-to-end against Ultralytics on `assets/dog_bike_man.jpg` (`conf=0.25`, same
+Finally compare end-to-end against Ultralytics on `docs/dog_bike_man.jpg` (`conf=0.25`, same
 image, CPU): expect the same detections with confidences within ~0.1% and boxes within ~1 source
 pixel (f16 artifact rounding accounts for the residual). Record the artifact bytes/SHA-256 in
 `weights.rs`.
@@ -145,7 +147,8 @@ pixel (f16 artifact rounding accounts for the residual). Record the artifact byt
 
 - `README.md`: row in the Models table (family name in the Model column, variant in the Variants
   column), row in the artifacts table, adjust the weight-prep snippet if a new bridge step exists.
-- `AGENTS.md`: "What is here" entry, fast-path commands, invariants (decode/postprocess specifics).
+- Repository `AGENTS.md`: update the compact repository map or invariants only when the new model
+  changes them.
 - `README.md`: provenance and licensing for redistributed checkpoints and derived artifacts.
 
 ## 8. Bringing up a new task (instance segmentation, classification)
@@ -194,9 +197,9 @@ Classification (YOLO26-cls template) differs in these ways: the input is 224 px 
 classify transform (anti-aliased shortest-edge resize + centered crop, no letterbox), the class
 table is ImageNet-1k (`src/data/imagenet.rs`), the dispatch trait is `EndToEndClassifier` and the
 predictor method is `predict_classification` (top-5 `Classification` values), and the checkpoint
-batch norms use plain PyTorch defaults (`BnFlavor::Pytorch`) — see the AGENTS.md invariants. The
-end-to-end classification comparison compares the top-5 class set plus per-class probabilities
-(3e-2), not rank order: flat softmax distributions swap adjacent ranks under the +-1 rounding
+batch norms use plain PyTorch defaults (`BnFlavor::Pytorch`) — see the repository `AGENTS.md`
+invariants. The end-to-end classification comparison compares the top-5 class set plus per-class
+probabilities (3e-2), not rank order: flat softmax distributions swap adjacent ranks under the +-1 rounding
 difference between PIL and the Rust resize.
 
 ## Pitfall checklist

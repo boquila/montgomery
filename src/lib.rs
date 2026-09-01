@@ -2592,7 +2592,7 @@ mod tests {
                     )
                     .unwrap();
 
-                let image = image::open("assets/dog_bike_man.jpg").unwrap();
+                let image = image::open("docs/dog_bike_man.jpg").unwrap();
                 let prepared = LetterboxedImage::yolox(&image, 416);
                 let input = image_to_tensor(prepared.image().clone(), &device).unsqueeze::<4>();
                 let flatten = |batches: Vec<Vec<Vec<BoundingBox>>>| {
@@ -2697,7 +2697,7 @@ mod tests {
     /// Compare the seg runtime end to end against the official Ultralytics prediction on the
     /// reference image, including per-detection mask IoU in source-image space. Run the
     /// generator first:
-    /// `python tools/export_yolo11_seg_e2e.py target/<id>.pt assets/dog_bike_man.jpg target --model <id>`
+    /// `python tools/export_yolo11_seg_e2e.py target/<id>.pt docs/dog_bike_man.jpg target --model <id>`
     #[cfg(feature = "pretrained")]
     macro_rules! seg_e2e_test {
         ($fn_name:ident, $model_id:expr, $id:literal) => {
@@ -2738,7 +2738,7 @@ mod tests {
                     Predictor::<Flex>::from_checkpoint($model_id, checkpoint, Default::default())
                         .unwrap();
                 let (image, detections) = predictor
-                    .predict_segmentation_path("assets/dog_bike_man.jpg")
+                    .predict_segmentation_path("docs/dog_bike_man.jpg")
                     .unwrap();
                 let _ = image;
                 assert_eq!(

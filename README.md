@@ -28,7 +28,7 @@ Montgomery is a native Rust computer-vision stack:
 
 Normal inference needs no Python, PyTorch, or ONNX Runtime.
 
-![Instance segmentation produced by YOLO11n-seg](assets/dog_bike_man-segmentation.png)
+![Instance segmentation produced by YOLO11n-seg](docs/dog_bike_man-segmentation.png)
 
 ## Quick start
 
@@ -145,8 +145,8 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo check --locked --no-default-features --lib
 ```
 
-See [MODEL_BRINGUP.md](MODEL_BRINGUP.md) for new model families and [AGENTS.md](AGENTS.md) for
-implementation invariants.
+See [docs/MODEL_BRINGUP.md](docs/MODEL_BRINGUP.md) for new model families and
+[AGENTS.md](AGENTS.md) for implementation invariants.
 
 ## License
 
