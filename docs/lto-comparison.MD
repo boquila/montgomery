@@ -1,152 +1,170 @@
-# Fat LTO training benchmark comparison
+# No LTO vs fat LTO vs Ultralytics
 
-Enabling Rust's full link-time optimization (`[profile.release] lto = "fat"`) improved the
-Montgomery training benchmark overall. Across the 30-scenario RTX 5080 matrix, fat LTO reduced
-native wall time by **6.4% on a geometric-mean basis** and reduced the training executable by
-**7.6%**.
+This report compares three training implementations directly:
 
-This report uses an exact same-revision A/B at commit
-`9d415df6a7e8fafe2dcbc045de0938b066537783`. The older numbers in
-[`performance-comparison.MD`](performance-comparison.MD) were not used as the no-LTO control
-because they predate material training-runtime changes.
+- Montgomery built without link-time optimization;
+- Montgomery built with `[profile.release] lto = "fat"`;
+- Ultralytics 8.4.117 on PyTorch CUDA 13.0.
 
-## Summary
+Both Montgomery binaries were built from commit
+`9d415df6a7e8fafe2dcbc045de0938b066537783`. The Ultralytics series pools the identical paired
+trials from both benchmark sessions and takes their median: six samples normally and four for
+segmentation scenarios. This produces one more stable Ultralytics reference without mixing in the
+older published benchmark revision.
 
-| Measurement | No LTO | Fat LTO | Difference |
+## At a glance
+
+![Fastest implementation across all scenarios](assets/lto-comparison/winner-counts-three-way.png)
+
+| Measurement | Montgomery, no LTO | Montgomery, fat LTO | Ultralytics, pooled |
 | --- | ---: | ---: | ---: |
-| Sum of the 30 native medians | 432.316 s | 396.396 s | **-8.3%** |
-| Geometric mean of per-scenario ratios | 1.000 | 0.936 | **-6.4%** |
-| Median per-scenario change | - | - | **-5.9%** |
-| Native median wins | - | 26 of 30 | - |
-| Wins of at least 3% | - | 20 of 30 | - |
-| Losses of at least 3% | - | 2 of 30 | - |
-| Executable size | 116,947,456 bytes | 108,098,048 bytes | **-7.6%** |
+| Scenarios with lowest median | 3 of 30 | **19 of 30** | 8 of 30 |
+| Sum of 30 scenario medians | 432.316 s | **396.396 s** | 468.479 s |
+| Geometric-mean speedup over Ultralytics | 1.331x | **1.422x** | 1.000x |
+| Native executable size | 116,947,456 bytes | **108,098,048 bytes** | Not comparable |
 
-The paired Ultralytics medians were 1.1% slower on a geometric-mean basis during the fat-LTO
-session. Treating those timings as a control for session-level machine drift changes the estimated
-fat-LTO improvement from 6.4% to **7.4%**. The raw native medians remain the primary measurements;
-the normalized figures are supporting evidence rather than a claim that the two frameworks respond
-identically to environmental drift.
+Fat LTO reduces Montgomery's geometric-mean native wall time by **6.4%** relative to no LTO and
+reduces the executable by **7.6%**. Against the pooled Ultralytics reference, Montgomery's
+geometric-mean advantage increases from 1.331x without LTO to 1.422x with fat LTO.
 
-Native trial ranges were completely non-overlapping in favor of fat LTO in **18 scenarios**. No
-scenario had completely non-overlapping ranges in favor of no LTO.
+The sum of scenario medians is descriptive rather than a workload-weighted score: the matrix
+intentionally repeats the YOLO26n baseline across scale, batch, and resolution sweeps and includes
+longer ten-epoch cells.
 
-## Results by benchmark group
+## Family and task comparison
 
-The percentages below are geometric means of the per-scenario native wall-time ratios. Negative
-values mean fat LTO was faster.
+![Three-way family and task comparison](assets/lto-comparison/family-task-three-way.png)
 
-| Group | Scenarios | Raw change | Ultralytics-normalized change |
+Across the 12 family/task cells, geometric-mean speedup over Ultralytics is **1.683x without LTO**
+and **1.796x with fat LTO**. Fat LTO is fastest in 10 of these 12 cells. No LTO narrowly wins
+YOLOv3-Tiny-U detection, while pooled Ultralytics narrowly wins YOLO26s segmentation.
+
+## Every measured scenario
+
+![All scenarios relative to Ultralytics](assets/lto-comparison/all-scenarios-three-way.png)
+
+The blue `1x` line is pooled Ultralytics. Points to its right favor Montgomery; points to its left
+favor Ultralytics. The gray-to-green connector shows how enabling fat LTO moves each Montgomery
+scenario.
+
+Fat LTO most clearly improves host- and synchronization-heavy jobs, including YOLO26n detection at
+batch 1, 64-pixel detection, and the longer detect/segment runs. Ultralytics remains fastest for
+the larger or less well-amortized YOLO26 detection/segmentation cells.
+
+## Aggregate behavior
+
+![Aggregate speedup by benchmark group](assets/lto-comparison/group-speedup-three-way.png)
+
+| Benchmark group | No-LTO speedup | Fat-LTO speedup | Fastest aggregate |
+| --- | ---: | ---: | --- |
+| Family and task | 1.683x | **1.796x** | Fat LTO |
+| YOLO26 scale | 1.175x | **1.205x** | Fat LTO |
+| Batch size | 1.390x | **1.499x** | Fat LTO |
+| Input resolution | 0.974x | **1.046x** | Fat LTO |
+| Ten-epoch convergence | 0.835x | **0.951x** | Ultralytics |
+
+Values are geometric-mean speedups over pooled Ultralytics. Values above `1x` favor Montgomery.
+Fat LTO moves the resolution group from slightly behind to slightly ahead, but Ultralytics retains
+the aggregate lead in the deliberately small ten-epoch convergence runs.
+
+## Scale, batch, and resolution
+
+![Three-way YOLO26 scale comparison](assets/lto-comparison/model-scale-three-way.png)
+
+At medium scale, Ultralytics leads YOLO26 detection and segmentation. Montgomery remains clearly
+ahead for classification, and fat LTO gives modest improvements in the small/medium detection
+cells.
+
+![Three-way batch scaling](assets/lto-comparison/batch-scaling-three-way.png)
+
+Montgomery dominates classification at every tested batch size and detect/segment at batch 4.
+Ultralytics leads batch-1 detection and segmentation. Fat LTO materially narrows both batch-1 gaps.
+
+![Three-way resolution scaling](assets/lto-comparison/resolution-scaling-three-way.png)
+
+Fat LTO makes Montgomery fastest through 320 pixels in this sweep. Ultralytics remains fastest at
+640 pixels, where GPU compute is a larger fraction of the small command's wall time.
+
+## Ten-epoch commands
+
+![Three-way ten-epoch command time](assets/lto-comparison/convergence-time-three-way.png)
+
+Fat LTO is fastest for classification. It reduces Montgomery's detection median from 42.9 to 35.3
+seconds and segmentation from 51.3 to 44.8 seconds, but pooled Ultralytics remains faster at 28.7
+and 32.4 seconds respectively.
+
+## All 30 medians
+
+Bold values are the lowest median wall time in each row.
+
+| Scenario | No LTO | Fat LTO | Ultralytics, pooled |
 | --- | ---: | ---: | ---: |
-| Family and task | 12 | **-6.2%** | **-7.6%** |
-| YOLO26 scale | 6 | **-2.5%** | **-4.4%** |
-| Batch size | 6 | **-7.3%** | **-7.9%** |
-| Input resolution | 3 | **-6.9%** | **-6.7%** |
-| Ten-epoch convergence | 3 | **-12.2%** | **-12.5%** |
+| YOLOv8n classify | 3.131 s | **2.952 s** | 12.206 s |
+| YOLOv8n detect | 5.794 s | **5.458 s** | 12.251 s |
+| YOLOv8n segment | 6.752 s | **6.644 s** | 12.769 s |
+| YOLO11n classify | 4.781 s | **4.459 s** | 12.427 s |
+| YOLO11n detect | 8.882 s | **7.822 s** | 12.992 s |
+| YOLO11n segment | 10.289 s | **9.392 s** | 13.430 s |
+| YOLO26n classify | 5.035 s | **4.713 s** | 12.512 s |
+| YOLO26n detect | 13.907 s | **13.575 s** | 14.243 s |
+| YOLO26n segment | 16.836 s | **15.003 s** | 15.738 s |
+| YOLOv3-Tiny-U detect | **4.378 s** | 4.435 s | 11.947 s |
+| YOLOv10n detect | 13.732 s | **11.949 s** | 13.667 s |
+| YOLO12n detect | 13.425 s | **13.165 s** | 13.918 s |
+| YOLO26s classify | 5.294 s | **5.192 s** | 12.845 s |
+| YOLO26s detect | 15.015 s | **14.416 s** | 15.132 s |
+| YOLO26s segment | 18.289 s | 16.778 s | **16.515 s** |
+| YOLO26m classify | **7.786 s** | 7.793 s | 13.984 s |
+| YOLO26m detect | 18.280 s | 17.539 s | **16.367 s** |
+| YOLO26m segment | 24.940 s | 25.840 s | **18.504 s** |
+| YOLO26n classify, batch 1 | 8.342 s | **7.618 s** | 13.487 s |
+| YOLO26n classify, batch 4 | **2.964 s** | 3.148 s | 12.302 s |
+| YOLO26n detect, batch 1 | 22.559 s | 18.708 s | **17.367 s** |
+| YOLO26n detect, batch 4 | 8.644 s | **8.294 s** | 12.578 s |
+| YOLO26n segment, batch 1 | 27.922 s | 24.703 s | **21.972 s** |
+| YOLO26n segment, batch 4 | 11.264 s | **10.492 s** | 13.749 s |
+| YOLO26n detect, 64 px | 13.700 s | **11.503 s** | 14.011 s |
+| YOLO26n detect, 128 px | 12.589 s | **12.316 s** | 14.065 s |
+| YOLO26n detect, 640 px | 17.421 s | 17.102 s | **14.069 s** |
+| YOLO26n classify, 10 epochs | 16.231 s | **15.258 s** | 22.311 s |
+| YOLO26n detect, 10 epochs | 42.869 s | 35.338 s | **28.733 s** |
+| YOLO26n segment, 10 epochs | 51.262 s | 44.791 s | **32.386 s** |
 
-The strongest improvements occur in host- and synchronization-heavy jobs: batch-1 detection,
-64-pixel detection, and the longer detection/segmentation runs. Larger GPU-bound model-scale cells
-show smaller gains.
+## Trial repeatability
 
-## Standard benchmark plots
+![Three-way trial repeatability](assets/lto-comparison/trial-repeatability-three-way.png)
 
-These are the same standard plots used by the main performance report, regenerated independently
-from each A/B result. They compare Montgomery with the paired Ultralytics run for that build. The
-detailed table below is the direct no-LTO-versus-fat-LTO comparison.
+The Ultralytics series contains both sessions' samples, which exposes session variation directly.
+For example, the YOLOv8n classification range includes one high Ultralytics outlier, while the
+pooled median remains close to the other five samples. Eighteen native scenario ranges are fully
+non-overlapping in favor of fat LTO; none are fully non-overlapping in favor of no LTO.
 
-### Fat LTO
+## Methodology and artifacts
 
-![Fat-LTO family and task overview](assets/lto-comparison/fat-lto/family-task-overview.png)
-
-![Fat-LTO all-scenario speedups](assets/lto-comparison/fat-lto/all-scenarios-speedup.png)
-
-![Fat-LTO batch scaling](assets/lto-comparison/fat-lto/batch-scaling.png)
-
-![Fat-LTO resolution scaling](assets/lto-comparison/fat-lto/resolution-scaling.png)
-
-![Fat-LTO model-scale comparison](assets/lto-comparison/fat-lto/model-scale.png)
-
-![Fat-LTO trial repeatability](assets/lto-comparison/fat-lto/trial-repeatability.png)
-
-### No-LTO control
-
-![No-LTO family and task overview](assets/lto-comparison/no-lto/family-task-overview.png)
-
-![No-LTO all-scenario speedups](assets/lto-comparison/no-lto/all-scenarios-speedup.png)
-
-![No-LTO batch scaling](assets/lto-comparison/no-lto/batch-scaling.png)
-
-![No-LTO resolution scaling](assets/lto-comparison/no-lto/resolution-scaling.png)
-
-![No-LTO model-scale comparison](assets/lto-comparison/no-lto/model-scale.png)
-
-![No-LTO trial repeatability](assets/lto-comparison/no-lto/trial-repeatability.png)
-
-The remaining generated plots are retained beside each chart set: effective throughput,
-first-versus-warm behavior, task speedup heatmap, and normalized convergence curves.
-
-## All 30 native comparisons
-
-Negative changes favor fat LTO. The normalized column compares each native/Ultralytics ratio with
-the corresponding ratio from the other build session.
-
-| Scenario | No LTO | Fat LTO | Raw change | Normalized change |
-| --- | ---: | ---: | ---: | ---: |
-| YOLOv8n classify | 3.131 s | 2.952 s | **-5.7%** | **-4.7%** |
-| YOLOv8n detect | 5.794 s | 5.458 s | **-5.8%** | **-7.7%** |
-| YOLOv8n segment | 6.752 s | 6.644 s | -1.6% | -2.7% |
-| YOLO11n classify | 4.781 s | 4.459 s | **-6.7%** | **-8.2%** |
-| YOLO11n detect | 8.882 s | 7.822 s | **-11.9%** | **-10.8%** |
-| YOLO11n segment | 10.289 s | 9.392 s | **-8.7%** | **-9.6%** |
-| YOLO26n classify | 5.035 s | 4.713 s | **-6.4%** | **-6.8%** |
-| YOLO26n detect | 13.907 s | 13.575 s | -2.4% | **-3.9%** |
-| YOLO26n segment | 16.836 s | 15.003 s | **-10.9%** | **-15.8%** |
-| YOLOv3-Tiny-U detect | 4.378 s | 4.435 s | +1.3% | +1.1% |
-| YOLOv10n detect | 13.732 s | 11.949 s | **-13.0%** | **-15.3%** |
-| YOLO12n detect | 13.425 s | 13.165 s | -1.9% | **-5.2%** |
-| YOLO26s classify | 5.294 s | 5.192 s | -1.9% | **-3.0%** |
-| YOLO26s detect | 15.015 s | 14.416 s | **-4.0%** | **-7.4%** |
-| YOLO26s segment | 18.289 s | 16.778 s | **-8.3%** | **-11.3%** |
-| YOLO26m classify | 7.786 s | 7.793 s | +0.1% | +1.6% |
-| YOLO26m detect | 18.280 s | 17.539 s | **-4.1%** | **-5.3%** |
-| YOLO26m segment | 24.940 s | 25.840 s | **+3.6%** | -0.2% |
-| YOLO26n classify, batch 1 | 8.342 s | 7.618 s | **-8.7%** | **-11.4%** |
-| YOLO26n classify, batch 4 | 2.964 s | 3.148 s | **+6.2%** | **+6.3%** |
-| YOLO26n detect, batch 1 | 22.559 s | 18.708 s | **-17.1%** | **-18.7%** |
-| YOLO26n detect, batch 4 | 8.644 s | 8.294 s | **-4.1%** | **-3.8%** |
-| YOLO26n segment, batch 1 | 27.922 s | 24.703 s | **-11.5%** | **-11.3%** |
-| YOLO26n segment, batch 4 | 11.264 s | 10.492 s | **-6.9%** | **-6.5%** |
-| YOLO26n detect, 64 px | 13.700 s | 11.503 s | **-16.0%** | **-15.7%** |
-| YOLO26n detect, 128 px | 12.589 s | 12.316 s | -2.2% | -1.4% |
-| YOLO26n detect, 640 px | 17.421 s | 17.102 s | -1.8% | -2.4% |
-| YOLO26n classify, 10 epochs | 16.231 s | 15.258 s | **-6.0%** | **-5.8%** |
-| YOLO26n detect, 10 epochs | 42.869 s | 35.338 s | **-17.6%** | **-17.8%** |
-| YOLO26n segment, 10 epochs | 51.262 s | 44.791 s | **-12.6%** | **-13.5%** |
-
-## Interpretation
-
-Fat LTO is a net win for this release training binary. It improves most scenario medians, produces
-the clearest gains in longer or host-heavy detect/segment runs, and makes the executable 8,849,408
-bytes (8.44 MiB) smaller. YOLO26n classification at batch 4 is the only material regression that
-survives control normalization.
-
-The cost is build time. Enabling fat LTO invalidates release dependency code generation and makes
-the final link substantially slower. The no-LTO control build completed incrementally in 3 minutes
-5 seconds; the fat-LTO build was not a comparable warm-cache build, so this report does not assign a
-formal build-time ratio.
-
-## Methodology and raw data
-
-- Hardware: NVIDIA GeForce RTX 5080, Burn/WGPU Vulkan backend.
-- Source revision: `9d415df6a7e8fafe2dcbc045de0938b066537783` for both binaries.
-- Timing: external complete-command wall time, excluding validation.
-- Sampling: three trials normally and two for segmentation cells, with native WGPU priming outside
-  the measured trials and alternating native/Ultralytics order.
+- Hardware: NVIDIA GeForce RTX 5080; Montgomery used Burn/WGPU on Vulkan and Ultralytics used
+  PyTorch CUDA.
+- Timing: external complete-command wall time, including startup, model loading, training, and
+  checkpoint writes. Validation is excluded.
+- Sampling: three trials normally and two for segmentation, with an untimed Montgomery WGPU prime
+  and alternating Montgomery/Ultralytics order.
+- Ultralytics pooling: trials from both same-revision sessions are combined per scenario before
+  taking the median; no older benchmark trials are included.
+- Precision and optimizer: FP32 and AdamW for all three series.
+- Inputs: the same deterministic replicated source fixtures and scenario settings.
 - No-LTO executable SHA-256:
   `d8607318103a42f5966fecdd7af5d2c148d06e315b7747fe375472a7cf9a4a21`.
 - Fat-LTO executable SHA-256:
   `5df2bb99cc3426604445593fb2dc46c46713419614dec825405f19ab9c75078e`.
 
-The complete commands, individual trials, environment metadata, loss curves, and validation output
-are preserved in the [no-LTO raw results](assets/lto-comparison/no-lto-results.json) and
+Complete commands, individual trials, environment metadata, loss curves, and validation output are
+preserved in the [no-LTO raw results](assets/lto-comparison/no-lto-results.json) and
 [fat-LTO raw results](assets/lto-comparison/fat-lto-results.json).
+
+Regenerate the direct comparison plots with:
+
+```console
+uv run --locked tools/plot_lto_comparison.py docs/assets/lto-comparison/no-lto-results.json docs/assets/lto-comparison/fat-lto-results.json docs/assets/lto-comparison
+```
+
+The original [`performance-comparison.MD`](performance-comparison.MD), its published assets, and
+the separately generated no-LTO/fat-LTO chart sets remain unchanged.
