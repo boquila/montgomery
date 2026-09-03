@@ -228,7 +228,8 @@ struct PredictArgs {
     #[arg(long, value_enum, default_value = "cpu")]
     device: DeviceSelection,
 
-    /// Annotated output image (defaults to <input-stem>-detections.png).
+    /// Annotated output image (defaults to <input-stem>-detections.png, or
+    /// <input-stem>-segmentation.png with --masks).
     #[arg(short, long)]
     output: Option<PathBuf>,
 
@@ -251,12 +252,15 @@ struct PredictArgs {
     json: bool,
 }
 
-fn default_output(input: &std::path::Path) -> PathBuf {
+fn default_output(input: &std::path::Path, masks: bool) -> PathBuf {
     let stem = input
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("prediction");
-    input.with_file_name(format!("{stem}-detections.png"))
+    // The suffix names the rendered content: mask outlines only appear with --masks, so a
+    // segmentation rendering must not default to a *-detections.png path.
+    let suffix = if masks { "segmentation" } else { "detections" };
+    input.with_file_name(format!("{stem}-{suffix}.png"))
 }
 
 fn main() -> montgomery::Result<()> {
@@ -480,7 +484,7 @@ fn run_predict<B: Backend>(
     let output = args
         .output
         .clone()
-        .unwrap_or_else(|| default_output(&args.source));
+        .unwrap_or_else(|| default_output(&args.source, args.masks));
 
     eprintln!("Loading {} weights with Burn...", args.model);
     let predictor: Predictor<B> =
@@ -736,8 +740,12 @@ mod tests {
     #[test]
     fn derives_default_output_path() {
         assert_eq!(
-            default_output(std::path::Path::new("photos/dog.jpg")),
+            default_output(std::path::Path::new("photos/dog.jpg"), false),
             PathBuf::from("photos/dog-detections.png")
+        );
+        assert_eq!(
+            default_output(std::path::Path::new("photos/dog.jpg"), true),
+            PathBuf::from("photos/dog-segmentation.png")
         );
     }
 }
