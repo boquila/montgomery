@@ -19,9 +19,13 @@ mod postprocess;
 #[cfg(feature = "training")]
 pub mod training;
 
-#[cfg(feature = "pretrained")]
-use std::path::PathBuf;
-use std::{error::Error, fmt, path::Path, str::FromStr};
+use std::{
+    borrow::Cow,
+    error::Error,
+    fmt,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 #[cfg(feature = "pretrained")]
 use crate::data::IMAGENET_CLASSES;
@@ -62,7 +66,7 @@ use crate::postprocess::{BoundingBox, nms};
 use burn::tensor::{Device, ElementConversion, Tensor, TensorData, backend::Backend};
 #[cfg(feature = "pretrained")]
 use burn_flex::Flex;
-use image::{DynamicImage, ImageBuffer, Rgb};
+use image::{DynamicImage, GrayImage, ImageBuffer, Rgb, RgbImage, RgbaImage};
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "pretrained")]
 use sha2::{Digest, Sha256};
@@ -306,6 +310,52 @@ impl ModelId {
             _ => INPUT_SIZE,
         }
     }
+
+    /// The prediction task encoded by this architecture.
+    pub const fn task(self) -> ModelTask {
+        match self {
+            Self::Yolo11NSeg
+            | Self::Yolo11SSeg
+            | Self::Yolo11MSeg
+            | Self::Yolo11LSeg
+            | Self::Yolo11XSeg
+            | Self::Yolov8NSeg
+            | Self::Yolov8SSeg
+            | Self::Yolov8MSeg
+            | Self::Yolov8LSeg
+            | Self::Yolov8XSeg
+            | Self::Yolo26NSeg
+            | Self::Yolo26SSeg
+            | Self::Yolo26MSeg
+            | Self::Yolo26LSeg
+            | Self::Yolo26XSeg => ModelTask::Segmentation,
+            Self::Yolo11NCls
+            | Self::Yolo11SCls
+            | Self::Yolo11MCls
+            | Self::Yolo11LCls
+            | Self::Yolo11XCls
+            | Self::Yolov8NCls
+            | Self::Yolov8SCls
+            | Self::Yolov8MCls
+            | Self::Yolov8LCls
+            | Self::Yolov8XCls
+            | Self::Yolo26NCls
+            | Self::Yolo26SCls
+            | Self::Yolo26MCls
+            | Self::Yolo26LCls
+            | Self::Yolo26XCls => ModelTask::Classification,
+            _ => ModelTask::Detection,
+        }
+    }
+}
+
+/// The kind of prediction produced by a model artifact.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ModelTask {
+    Detection,
+    Segmentation,
+    Classification,
 }
 
 impl fmt::Display for ModelId {
@@ -466,6 +516,150 @@ pub struct Classification {
     pub confidence: f32,
 }
 
+/// Results from [`Predictor::inference`], selected automatically from the loaded architecture.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Prediction {
+    Detections(Vec<Detection>),
+    Segmentations(Vec<SegmentationDetection>),
+    Classifications(Vec<Classification>),
+}
+
+impl Prediction {
+    pub fn detections(&self) -> Option<&[Detection]> {
+        match self {
+            Self::Detections(items) => Some(items),
+            _ => None,
+        }
+    }
+
+    pub fn segmentations(&self) -> Option<&[SegmentationDetection]> {
+        match self {
+            Self::Segmentations(items) => Some(items),
+            _ => None,
+        }
+    }
+
+    pub fn classifications(&self) -> Option<&[Classification]> {
+        match self {
+            Self::Classifications(items) => Some(items),
+            _ => None,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Detections(items) => items.len(),
+            Self::Segmentations(items) => items.len(),
+            Self::Classifications(items) => items.len(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+/// An image accepted by [`Predictor::inference`].
+///
+/// Paths and encoded bytes are decoded once. Borrowing a [`DynamicImage`] avoids copying the
+/// source image; passing an owned image buffer transfers its allocation without copying.
+pub enum ImageSource<'a> {
+    Path(Cow<'a, Path>),
+    Image(Cow<'a, DynamicImage>),
+    Encoded(Cow<'a, [u8]>),
+}
+
+impl<'a> ImageSource<'a> {
+    fn decode(self) -> Result<Cow<'a, DynamicImage>> {
+        match self {
+            Self::Path(path) => Ok(Cow::Owned(image::open(path.as_ref())?)),
+            Self::Image(image) => Ok(image),
+            Self::Encoded(bytes) => Ok(Cow::Owned(image::load_from_memory(bytes.as_ref())?)),
+        }
+    }
+}
+
+impl<'a> From<&'a DynamicImage> for ImageSource<'a> {
+    fn from(image: &'a DynamicImage) -> Self {
+        Self::Image(Cow::Borrowed(image))
+    }
+}
+
+impl From<DynamicImage> for ImageSource<'static> {
+    fn from(image: DynamicImage) -> Self {
+        Self::Image(Cow::Owned(image))
+    }
+}
+
+macro_rules! owned_image_source {
+    ($image:ty, $variant:ident) => {
+        impl From<$image> for ImageSource<'static> {
+            fn from(image: $image) -> Self {
+                Self::Image(Cow::Owned(DynamicImage::$variant(image)))
+            }
+        }
+
+        impl<'a> From<&'a $image> for ImageSource<'static> {
+            fn from(image: &'a $image) -> Self {
+                Self::Image(Cow::Owned(DynamicImage::$variant(image.clone())))
+            }
+        }
+    };
+}
+
+owned_image_source!(RgbImage, ImageRgb8);
+owned_image_source!(RgbaImage, ImageRgba8);
+owned_image_source!(GrayImage, ImageLuma8);
+
+impl<'a> From<&'a Path> for ImageSource<'a> {
+    fn from(path: &'a Path) -> Self {
+        Self::Path(Cow::Borrowed(path))
+    }
+}
+
+impl From<PathBuf> for ImageSource<'static> {
+    fn from(path: PathBuf) -> Self {
+        Self::Path(Cow::Owned(path))
+    }
+}
+
+impl<'a> From<&'a PathBuf> for ImageSource<'a> {
+    fn from(path: &'a PathBuf) -> Self {
+        Self::Path(Cow::Borrowed(path.as_path()))
+    }
+}
+
+impl<'a> From<&'a str> for ImageSource<'a> {
+    fn from(path: &'a str) -> Self {
+        Self::Path(Cow::Borrowed(Path::new(path)))
+    }
+}
+
+impl From<String> for ImageSource<'static> {
+    fn from(path: String) -> Self {
+        Self::Path(Cow::Owned(PathBuf::from(path)))
+    }
+}
+
+impl<'a> From<&'a [u8]> for ImageSource<'a> {
+    fn from(bytes: &'a [u8]) -> Self {
+        Self::Encoded(Cow::Borrowed(bytes))
+    }
+}
+
+impl From<Vec<u8>> for ImageSource<'static> {
+    fn from(bytes: Vec<u8>) -> Self {
+        Self::Encoded(Cow::Owned(bytes))
+    }
+}
+
+impl<'a> From<&'a Vec<u8>> for ImageSource<'a> {
+    fn from(bytes: &'a Vec<u8>) -> Self {
+        Self::Encoded(Cow::Borrowed(bytes.as_slice()))
+    }
+}
+
 /// Thresholds used during class-aware non-maximum suppression.
 #[derive(Debug, Clone, Copy)]
 pub struct PredictOptions {
@@ -570,6 +764,41 @@ pub struct Predictor<B: Backend> {
     input_size: usize,
 }
 
+/// A model loaded on Montgomery's default CPU backend.
+///
+/// This is the ergonomic entry point for normal inference. It dereferences to [`Predictor<Flex>`],
+/// so the task-specific methods remain available without an extra accessor. Use [`Predictor`]
+/// directly when selecting a different backend or device.
+#[cfg(feature = "pretrained")]
+pub struct Model(Predictor<Flex>);
+
+#[cfg(feature = "pretrained")]
+impl Model {
+    /// Load a native Burnpack artifact, inferring the architecture from its metadata.
+    pub fn new(checkpoint: impl Into<PathBuf>) -> Result<Self> {
+        Predictor::new(checkpoint).map(Self)
+    }
+
+    /// Load an artifact with explicit confidence and IoU thresholds.
+    pub fn with_options(checkpoint: impl Into<PathBuf>, options: PredictOptions) -> Result<Self> {
+        Predictor::with_options(checkpoint, options).map(Self)
+    }
+
+    /// Consume the convenience wrapper and return the underlying CPU predictor.
+    pub fn into_predictor(self) -> Predictor<Flex> {
+        self.0
+    }
+}
+
+#[cfg(feature = "pretrained")]
+impl std::ops::Deref for Model {
+    type Target = Predictor<Flex>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DetectionPreprocess {
     Yolox,
@@ -608,13 +837,14 @@ fn catalog_input_size(model_id: ModelId) -> usize {
 }
 
 #[cfg(feature = "pretrained")]
-struct TrainedArtifactMetadata {
-    class_names: Vec<String>,
-    input_size: usize,
+struct ArtifactMetadata {
+    model_id: Option<ModelId>,
+    class_names: Option<Vec<String>>,
+    input_size: Option<usize>,
 }
 
 #[cfg(feature = "pretrained")]
-fn trained_artifact_metadata(path: &Path, model_id: ModelId) -> Result<TrainedArtifactMetadata> {
+fn artifact_metadata(path: &Path) -> Result<ArtifactMetadata> {
     #[derive(Deserialize)]
     struct MetadataEnvelope {
         metadata: std::collections::BTreeMap<String, String>,
@@ -635,40 +865,60 @@ fn trained_artifact_metadata(path: &Path, model_id: ModelId) -> Result<TrainedAr
     file.read_exact(&mut metadata_bytes)?;
     let envelope: MetadataEnvelope = ciborium::de::from_reader(metadata_bytes.as_slice())?;
     let metadata = &envelope.metadata;
-    let embedded_model = metadata
+    let model_id = metadata
         .get("montgomery.model")
-        .ok_or("trained artifact is missing montgomery.model metadata")?;
-    if embedded_model != model_id.as_str() {
-        return Err(format!(
-            "trained artifact model metadata is {embedded_model:?}, requested {model_id}"
-        )
-        .into());
-    }
-    let encoded = metadata
+        .map(|encoded| {
+            encoded
+                .parse::<ModelId>()
+                .map_err(|error| format!("invalid montgomery.model metadata {encoded:?}: {error}"))
+        })
+        .transpose()?;
+
+    let class_names = metadata
         .get("montgomery.class-names-json")
-        .ok_or("trained artifact is missing ordered class-name metadata")?;
-    let names: Vec<String> = serde_json::from_str(encoded)?;
-    if names.is_empty()
-        || names.iter().any(|name| name.trim().is_empty())
-        || names
-            .iter()
-            .collect::<std::collections::BTreeSet<_>>()
-            .len()
-            != names.len()
-    {
-        return Err("trained artifact class names must be non-empty and unique".into());
-    }
-    let encoded_size = metadata
+        .map(|encoded| -> Result<Vec<String>> {
+            let names: Vec<String> = serde_json::from_str(encoded)?;
+            if names.is_empty()
+                || names.iter().any(|name| name.trim().is_empty())
+                || names
+                    .iter()
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len()
+                    != names.len()
+            {
+                return Err("artifact class names must be non-empty and unique".into());
+            }
+            Ok(names)
+        })
+        .transpose()?;
+    let input_size = metadata
         .get("montgomery.input-size-json")
-        .ok_or("trained artifact is missing input-size metadata")?;
-    let input_size: [usize; 2] = serde_json::from_str(encoded_size)?;
-    if input_size[0] == 0 || input_size[0] != input_size[1] {
-        return Err("trained artifact currently requires a positive square input size".into());
-    }
-    Ok(TrainedArtifactMetadata {
-        class_names: names,
-        input_size: input_size[0],
+        .map(|encoded| -> Result<usize> {
+            let size: [usize; 2] = serde_json::from_str(encoded)?;
+            if size[0] == 0 || size[0] != size[1] {
+                return Err("artifact currently requires a positive square input size".into());
+            }
+            Ok(size[0])
+        })
+        .transpose()?;
+
+    Ok(ArtifactMetadata {
+        model_id,
+        class_names,
+        input_size,
     })
+}
+
+#[cfg(feature = "pretrained")]
+fn require_burnpack_path(path: &Path) -> Result<()> {
+    if path.extension().and_then(|value| value.to_str()) != Some("bpk") {
+        return Err(
+            "Model requires a native .bpk artifact; convert upstream checkpoints with \
+             pack_weights or the pack-weights CLI"
+                .into(),
+        );
+    }
+    Ok(())
 }
 
 pub type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
@@ -1341,6 +1591,76 @@ fn run_end_to_end<B: Backend>(
 }
 
 impl<B: Backend> Predictor<B> {
+    /// Load a native Burnpack artifact and infer its architecture from embedded metadata.
+    ///
+    /// This is the preferred constructor. Model construction and weight loading happen once;
+    /// subsequent [`inference`](Self::inference) calls reuse the loaded graph.
+    #[cfg(feature = "pretrained")]
+    pub fn new(checkpoint: impl Into<PathBuf>) -> Result<Self> {
+        Self::with_options(checkpoint, PredictOptions::default())
+    }
+
+    /// Load an artifact with explicit prediction thresholds.
+    #[cfg(feature = "pretrained")]
+    pub fn with_options(checkpoint: impl Into<PathBuf>, options: PredictOptions) -> Result<Self> {
+        Self::with_options_on_device(checkpoint, Device::<B>::default(), options)
+    }
+
+    /// Load an artifact on an explicit device using default prediction thresholds.
+    #[cfg(feature = "pretrained")]
+    pub fn new_on_device(checkpoint: impl Into<PathBuf>, device: Device<B>) -> Result<Self> {
+        Self::with_options_on_device(checkpoint, device, PredictOptions::default())
+    }
+
+    /// Load an artifact on an explicit device with explicit prediction thresholds.
+    #[cfg(feature = "pretrained")]
+    pub fn with_options_on_device(
+        checkpoint: impl Into<PathBuf>,
+        device: Device<B>,
+        options: PredictOptions,
+    ) -> Result<Self> {
+        let options = options.validate()?;
+        let checkpoint = checkpoint.into();
+        require_burnpack_path(&checkpoint)?;
+        let metadata = artifact_metadata(&checkpoint)?;
+        if metadata.model_id.is_none() {
+            return Err(
+                "Burnpack artifact is missing montgomery.model metadata; repack it or use \
+                 Predictor::from_checkpoint with an explicit ModelId"
+                    .into(),
+            );
+        }
+        Self::load_from_metadata(checkpoint, device, options, metadata)
+    }
+
+    #[cfg(feature = "pretrained")]
+    fn load_from_metadata(
+        checkpoint: PathBuf,
+        device: Device<B>,
+        options: PredictOptions,
+        metadata: ArtifactMetadata,
+    ) -> Result<Self> {
+        let options = options.validate()?;
+        let model_id = metadata
+            .model_id
+            .ok_or("internal error: artifact architecture was not resolved")?;
+        let class_names = metadata
+            .class_names
+            .unwrap_or_else(|| catalog_class_names(model_id));
+        let input_size = metadata
+            .input_size
+            .unwrap_or_else(|| catalog_input_size(model_id));
+        let model = load_model_checkpoint(model_id, checkpoint, device.clone(), class_names.len())?;
+        Ok(Self {
+            model_id,
+            model,
+            device,
+            options,
+            class_names,
+            input_size,
+        })
+    }
+
     /// Load a model from a native Burnpack artifact on the backend's default device.
     #[cfg(feature = "pretrained")]
     pub fn from_checkpoint(
@@ -1361,25 +1681,20 @@ impl<B: Backend> Predictor<B> {
     ) -> Result<Self> {
         let options = options.validate()?;
         let checkpoint = checkpoint.into();
-        if checkpoint.extension().and_then(|value| value.to_str()) != Some("bpk") {
-            return Err(
-                "Predictor requires a native .bpk artifact; convert upstream checkpoints with pack_weights or the pack-weights CLI"
-                    .into(),
-            );
+        require_burnpack_path(&checkpoint)?;
+        let mut metadata = artifact_metadata(&checkpoint)?;
+        if metadata
+            .model_id
+            .is_some_and(|embedded| embedded != model_id)
+        {
+            return Err(format!(
+                "Burnpack architecture is {}, but {model_id} was requested",
+                metadata.model_id.unwrap()
+            )
+            .into());
         }
-        if trained_artifact_metadata(&checkpoint, model_id).is_ok() {
-            return Self::from_trained_artifact_on_device(model_id, checkpoint, device, options);
-        }
-        let class_names = catalog_class_names(model_id);
-        let model = load_model_checkpoint(model_id, checkpoint, device.clone(), class_names.len())?;
-        Ok(Self {
-            model_id,
-            model,
-            device,
-            options,
-            class_names,
-            input_size: catalog_input_size(model_id),
-        })
+        metadata.model_id = Some(model_id);
+        Self::load_from_metadata(checkpoint, device, options, metadata)
     }
 
     /// Load a native artifact exported from a training checkpoint, using its embedded ordered
@@ -1403,22 +1718,38 @@ impl<B: Backend> Predictor<B> {
     ) -> Result<Self> {
         let options = options.validate()?;
         let checkpoint = checkpoint.into();
-        let metadata = trained_artifact_metadata(&checkpoint, model_id)?;
-        let num_classes = metadata.class_names.len();
-        let model = load_model_checkpoint(model_id, checkpoint, device.clone(), num_classes)?;
-        Ok(Self {
-            model_id,
-            model,
-            device,
-            options,
-            class_names: metadata.class_names,
-            input_size: metadata.input_size,
-        })
+        require_burnpack_path(&checkpoint)?;
+        let mut metadata = artifact_metadata(&checkpoint)?;
+        if metadata
+            .model_id
+            .is_some_and(|embedded| embedded != model_id)
+        {
+            return Err(format!(
+                "Burnpack architecture is {}, but {model_id} was requested",
+                metadata.model_id.unwrap()
+            )
+            .into());
+        }
+        if metadata.class_names.is_none() || metadata.input_size.is_none() {
+            return Err("trained artifact is missing class-name or input-size metadata".into());
+        }
+        metadata.model_id = Some(model_id);
+        Self::load_from_metadata(checkpoint, device, options, metadata)
     }
 
     /// The stable catalog identifier for the loaded model.
     pub const fn model_id(&self) -> ModelId {
         self.model_id
+    }
+
+    /// The task inferred from the artifact's architecture.
+    pub const fn task(&self) -> ModelTask {
+        self.model_id.task()
+    }
+
+    /// Prediction thresholds used by this model.
+    pub const fn options(&self) -> PredictOptions {
+        self.options
     }
 
     /// Ordered class table used by this predictor.
@@ -1431,15 +1762,32 @@ impl<B: Backend> Predictor<B> {
         self.input_size
     }
 
+    /// Decode or borrow an image and run the task represented by the loaded artifact.
+    ///
+    /// Accepts paths (`&str`, [`Path`], [`PathBuf`]), [`DynamicImage`], RGB/RGBA/grayscale
+    /// [`ImageBuffer`] aliases, and encoded image bytes (`&[u8]` or `Vec<u8>`).
+    pub fn inference<'a>(&self, source: impl Into<ImageSource<'a>>) -> Result<Prediction> {
+        let image = source.into().decode()?;
+        match self.task() {
+            ModelTask::Detection => Ok(Prediction::Detections(self.predict(image.as_ref()))),
+            ModelTask::Segmentation => Ok(Prediction::Segmentations(
+                self.predict_segmentation(image.as_ref())?,
+            )),
+            ModelTask::Classification => Ok(Prediction::Classifications(
+                self.predict_classification(image.as_ref())?,
+            )),
+        }
+    }
+
     /// Run object detection on an already-decoded image.
     pub fn predict(&self, image: &DynamicImage) -> Vec<Detection> {
-        let prepared = match self.model_id.detection_preprocess() {
+        let mut prepared = match self.model_id.detection_preprocess() {
             DetectionPreprocess::Yolox => LetterboxedImage::yolox(image, self.input_size),
             DetectionPreprocess::Ultralytics => {
                 LetterboxedImage::ultralytics(image, self.input_size, 32)
             }
         };
-        let input = image_to_tensor(prepared.image().clone(), &self.device).unsqueeze::<4>();
+        let input = image_to_tensor(prepared.take_image(), &self.device).unsqueeze::<4>();
         let input = match self.model_id.detection_preprocess() {
             DetectionPreprocess::Yolox => input,
             DetectionPreprocess::Ultralytics => input / 255.0,
@@ -1693,13 +2041,12 @@ impl<B: Backend> Predictor<B> {
     /// segmentation model (`yolo11n/s/m/l/x-seg`, `yolov8n/s/m/l/x-seg`, or
     /// `yolo26n/s/m/l/x-seg`); detect models should use [`Predictor::predict`].
     pub fn predict_segmentation(&self, image: &DynamicImage) -> Result<Vec<SegmentationDetection>> {
-        let prepared = self.prepare_segmentation(image)?;
+        let mut prepared = self.prepare_segmentation(image)?;
         let (canvas_width, canvas_height) = (
             prepared.image().width() as usize,
             prepared.image().height() as usize,
         );
-        let input =
-            image_to_tensor(prepared.image().clone(), &self.device).unsqueeze::<4>() / 255.0;
+        let input = image_to_tensor(prepared.take_image(), &self.device).unsqueeze::<4>() / 255.0;
         let output = match &self.model {
             RuntimeModel::Yolo11SegN(model) => {
                 run_classic_segmentations(model, input, self.options.iou, self.options.confidence)

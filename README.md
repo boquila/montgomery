@@ -69,26 +69,26 @@ YOLOX is stable. The other families and native training are experimental.
 ## Rust API
 
 ```rust,no_run
-use burn_flex::Flex;
-use montgomery::{ModelId, PredictOptions, Predictor};
+use montgomery::Model;
 
 fn main() -> montgomery::Result<()> {
-    let predictor = Predictor::<Flex>::from_checkpoint(
-        ModelId::Yolo26N,
-        "target/yolo26n-coco-ultralytics-v8.4-montgomery-v1.bpk",
-        PredictOptions::default(),
-    )?;
+    let model = Model::new("target/yolo26n-coco-ultralytics-v8.4-montgomery-v1.bpk")?;
 
-    let (_, detections) = predictor.predict_path("image.jpg")?;
-    for detection in detections {
+    let prediction = model.inference("image.jpg")?;
+    for detection in prediction.detections().expect("detection model") {
         println!("{}: {:.1}%", detection.class_name, detection.confidence * 100.0);
     }
     Ok(())
 }
 ```
 
-Use `predict_segmentation_path` for `-seg` models and `predict_classification_path` for `-cls`
-models.
+The Burnpack embeds its architecture, so loading does not need a separate model identifier.
+`inference` accepts paths, borrowed or owned `DynamicImage`s, RGB/RGBA/grayscale image buffers,
+and encoded image bytes. It automatically returns detections, segmentations, or classifications
+for the artifact's task. Use `Model::with_options` to set confidence/IoU thresholds, or the typed
+`predict`, `predict_segmentation`, and `predict_classification` methods when the task is known.
+`Model` uses the fast `Flex` CPU backend. Use `Predictor::<Wgpu>::new` for GPU inference when the
+`gpu` feature is enabled.
 
 ## Train
 

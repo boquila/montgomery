@@ -138,6 +138,12 @@ impl LetterboxedImage {
         &self.image
     }
 
+    /// Move the prepared pixels into the backend tensor while retaining source geometry for
+    /// postprocessing. The empty replacement does not allocate.
+    pub(crate) fn take_image(&mut self) -> DynamicImage {
+        std::mem::replace(&mut self.image, DynamicImage::new_rgb8(0, 0))
+    }
+
     /// The letterbox scale (source pixels per model-input pixel) and centered padding.
     pub(crate) fn letterbox_geometry(&self) -> (f32, f32, f32) {
         (self.scale, self.pad_x as f32, self.pad_y as f32)

@@ -21,8 +21,8 @@ use montgomery::models::{
 };
 use montgomery::{
     CLASSIFICATION_TOP_K, CLASSIFY_INPUT_SIZE, COCO_CLASSES, Detection, INPUT_SIZE, InstanceMask,
-    ModelId, PredictOptions, Predictor, SegmentationDetection, annotate, annotate_segmentation,
-    pack_weights,
+    Model, ModelId, ModelTask, PredictOptions, Prediction, Predictor, SegmentationDetection,
+    annotate, annotate_segmentation, pack_weights,
 };
 
 fn montgomery(args: &[&str]) -> Output {
@@ -164,6 +164,14 @@ fn model_catalog_is_a_consistent_public_registry() {
             expected_size,
             "input size {name}"
         );
+        let expected_task = if name.ends_with("-cls") {
+            ModelTask::Classification
+        } else if name.ends_with("-seg") {
+            ModelTask::Segmentation
+        } else {
+            ModelTask::Detection
+        };
+        assert_eq!(model.task(), expected_task, "task {name}");
     }
 
     for (alias, model) in [
@@ -182,6 +190,21 @@ fn model_catalog_is_a_consistent_public_registry() {
     assert_eq!(COCO_CLASSES[0], "person");
     assert_eq!(COCO_CLASSES[79], "toothbrush");
     assert_eq!(CLASSIFICATION_TOP_K, 5);
+}
+
+#[test]
+fn simple_model_api_has_a_concrete_cpu_default_and_task_aware_results() {
+    let error = Model::new("does-not-exist.pth")
+        .err()
+        .expect("upstream checkpoint suffix should be rejected")
+        .to_string();
+    assert!(error.contains("native .bpk artifact"), "{error}");
+
+    let detections = Prediction::Detections(Vec::new());
+    assert_eq!(detections.detections(), Some([].as_slice()));
+    assert!(detections.segmentations().is_none());
+    assert!(detections.classifications().is_none());
+    assert!(detections.is_empty());
 }
 
 #[test]
