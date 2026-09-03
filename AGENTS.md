@@ -64,10 +64,11 @@ When external checkpoints and fixtures are available:
 cargo test -- --ignored
 ```
 
-Training is part of the default build. For focused training verification, run:
+Training is opt-in. For training changes, run:
 
 ```console
-cargo test training
+cargo test --features training training
+cargo clippy --features training --all-targets -- -D warnings
 ```
 
 Real training, hardware smoke tests, and latency measurements must use `--release`. Single-image
@@ -115,8 +116,8 @@ rescaling. Golden tensor tests are the authority for these quirks.
   `f32` after RandomErasing.
 - Native seeded output is a Montgomery contract. Cross-language parity uses injected parameters or
   traces, not equal seed values.
-- Training is enabled by default and WGPU-only; inference graphs and prediction output must remain
-  unchanged.
+- Training is opt-in through `--features training` and WGPU-only; inference graphs and prediction
+  output must remain unchanged.
 - Losses consume raw logits. YOLOX uses objectness; modern heads use TAL. YOLOv10/YOLO26 training
   retains one-to-many plus detached-feature one-to-one branches; YOLO26 remains DFL-free.
 - Assignment may synchronize detached values to the host, but loss totals must remain connected to

@@ -53,5 +53,13 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
 
+      - name: Test training feature
+        if: runner.os == 'Linux'
+        run: cargo test --features training
+
+      - name: Clippy training feature
+        if: runner.os == 'Linux'
+        run: cargo clippy --features training --all-targets -- -D warnings
+
       - name: Check minimal library
         run: cargo clippy --no-default-features --lib -- -D warnings

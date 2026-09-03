@@ -113,7 +113,7 @@ def main() -> None:
     parser.add_argument("--output", type=Path, default=ROOT / "target" / "full-convergence")
     args = parser.parse_args()
     if not BINARY.is_file():
-        raise SystemExit("build first: cargo build --release")
+        raise SystemExit("build first: cargo build --release --features training")
     tasks = args.task or ["detect", "segment"]
     frameworks = args.framework or ["native", "ultralytics"]
     train, val, names = resolve_coco(args.download)

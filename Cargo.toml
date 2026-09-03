@@ -11,7 +11,7 @@ keywords = ["computer-vision", "yolo", "burn", "inference", "training"]
 categories = ["computer-vision", "science"]
 
 [features]
-default = ["training", "onnx"]
+default = ["pretrained", "onnx"]
 pretrained = ["dep:burn-store", "dep:ciborium", "dep:sha2"]
 # Offline ONNX production is a Rust-to-SafeTensors-to-Python bridge. The feature adds no runtime
 # dependency to ONNX consumers; it only exposes the exporter and its CLI orchestration.
@@ -43,6 +43,7 @@ burn-wgpu = { version = "=0.21.0-pre.4", optional = true }
 ciborium = { version = "0.2", optional = true }
 clap = { version = "4", features = ["derive"] }
 fast_image_resize = { version = "=6.0.0", features = ["image"] }
+font8x8 = "0.3"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 itertools = { version = "0.14", default-features = false, features = ["use_alloc"] }
 rand = { version = "0.9", optional = true }
@@ -56,6 +57,3 @@ sha2 = { version = "0.10", optional = true }
 name = "montgomery"
 path = "src/main.rs"
 required-features = ["pretrained"]
-
-[profile.release]
-lto = "fat"

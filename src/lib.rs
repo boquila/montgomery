@@ -2549,24 +2549,28 @@ pub fn default_wgpu_device() -> (burn::backend::wgpu::WgpuDevice, String) {
         .clone()
 }
 
-/// Draw detection rectangles on a copy of the image.
+/// Draw labeled detection rectangles on a copy of the image.
 pub fn annotate(image: &DynamicImage, detections: &[Detection]) -> DynamicImage {
     let mut output = image.to_rgb8();
     for detection in detections {
         let color = class_color(detection.class_id);
-        draw_rect(
+        draw_labeled_rect(
             &mut output,
-            detection.xmin as u32,
-            detection.ymin as u32,
-            detection.xmax as u32,
-            detection.ymax as u32,
+            [
+                detection.xmin as u32,
+                detection.ymin as u32,
+                detection.xmax as u32,
+                detection.ymax as u32,
+            ],
             color,
+            &detection.class_name,
+            detection.confidence,
         );
     }
     DynamicImage::ImageRgb8(output)
 }
 
-/// Draw instance-mask outlines and detection rectangles on a copy of the image.
+/// Draw instance-mask outlines and labeled detection rectangles on a copy of the image.
 ///
 /// The outline is the mask's boolean boundary: every covered pixel with at least one uncovered
 /// 4-neighbor is drawn in the class color, then the boxes are stroked on top. Masks live in
@@ -2585,13 +2589,17 @@ pub fn annotate_segmentation(
     }
     for detection in detections {
         let color = class_color(detection.class_id);
-        draw_rect(
+        draw_labeled_rect(
             &mut output,
-            detection.xmin as u32,
-            detection.ymin as u32,
-            detection.xmax as u32,
-            detection.ymax as u32,
+            [
+                detection.xmin as u32,
+                detection.ymin as u32,
+                detection.xmax as u32,
+                detection.ymax as u32,
+            ],
             color,
+            &detection.class_name,
+            detection.confidence,
         );
     }
     DynamicImage::ImageRgb8(output)
@@ -2635,6 +2643,124 @@ fn class_color(class_id: usize) -> Rgb<u8> {
         [236, 72, 153],
     ];
     Rgb(PALETTE[class_id % PALETTE.len()])
+}
+
+fn draw_labeled_rect(
+    image: &mut ImageBuffer<Rgb<u8>, Vec<u8>>,
+    bounds: [u32; 4],
+    color: Rgb<u8>,
+    class_name: &str,
+    confidence: f32,
+) {
+    let [x1, y1, x2, y2] = bounds;
+    draw_rect(image, x1, y1, x2, y2, color);
+    draw_label(image, x1, y1, color, class_name, confidence);
+}
+
+/// Draw a compact class-colored chip above the box, matching the visual convention used by
+/// BoquilaHub. The chip falls inside the image at the top edge and shifts left at the right edge.
+fn draw_label(
+    image: &mut ImageBuffer<Rgb<u8>, Vec<u8>>,
+    x: u32,
+    y: u32,
+    color: Rgb<u8>,
+    class_name: &str,
+    confidence: f32,
+) {
+    use font8x8::{BASIC_FONTS, LATIN_FONTS, UnicodeFonts};
+
+    if image.width() < 16 || image.height() < 12 {
+        return;
+    }
+
+    let scale = match image.width().min(image.height()) {
+        0..=399 => 1,
+        400..=899 => 2,
+        _ => 3,
+    };
+    let padding = 2 * scale;
+    let advance = 9 * scale;
+    let max_chars = ((image.width() - 2 * padding) / advance).max(1) as usize;
+    let text = label_text(class_name, confidence, max_chars);
+    let text_chars = text.chars().count() as u32;
+    let chip_width = (text_chars * advance + 2 * padding).min(image.width());
+    let chip_height = 8 * scale + 2 * padding;
+    if chip_height > image.height() {
+        return;
+    }
+
+    let chip_x = x.min(image.width() - chip_width);
+    let chip_y = if y >= chip_height {
+        y - chip_height
+    } else {
+        y.min(image.height() - chip_height)
+    };
+    fill_rect(image, chip_x, chip_y, chip_width, chip_height, color);
+
+    let white = Rgb([255, 255, 255]);
+    let mut cursor_x = chip_x + padding;
+    for character in text.chars() {
+        let glyph = BASIC_FONTS
+            .get(character)
+            .or_else(|| LATIN_FONTS.get(character))
+            .or_else(|| BASIC_FONTS.get('?'))
+            .expect("the built-in bitmap font contains a question mark");
+        for (row, bits) in glyph.iter().copied().enumerate() {
+            for column in 0..8 {
+                if bits & (1 << column) == 0 {
+                    continue;
+                }
+                let glyph_x = cursor_x + column * scale;
+                let glyph_y = chip_y + padding + row as u32 * scale;
+                fill_rect(image, glyph_x, glyph_y, scale, scale, white);
+            }
+        }
+        cursor_x += advance;
+    }
+}
+
+fn label_text(class_name: &str, confidence: f32, max_chars: usize) -> String {
+    let confidence = format!("{confidence:.2}");
+    if max_chars <= confidence.len() {
+        return confidence.chars().take(max_chars).collect();
+    }
+
+    let name_limit = max_chars - confidence.len() - 1;
+    let mut name: String = class_name
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                '?'
+            } else if character.is_whitespace() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .take(name_limit)
+        .collect();
+    if class_name.chars().count() > name_limit && name_limit > 0 {
+        name.pop();
+        name.push('~');
+    }
+    format!("{name} {confidence}")
+}
+
+fn fill_rect(
+    image: &mut ImageBuffer<Rgb<u8>, Vec<u8>>,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    color: Rgb<u8>,
+) {
+    let right = x.saturating_add(width).min(image.width());
+    let bottom = y.saturating_add(height).min(image.height());
+    for pixel_y in y..bottom {
+        for pixel_x in x..right {
+            image.put_pixel(pixel_x, pixel_y, color);
+        }
+    }
 }
 
 fn draw_rect(
@@ -2750,6 +2876,25 @@ pub const COCO_CLASSES: [&str; 80] = [
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn annotation_labels_include_name_and_confidence_and_fit_the_canvas() {
+        assert_eq!(label_text("person", 0.876, usize::MAX), "person 0.88");
+        assert_eq!(label_text("motorcycle", 0.5, 8), "mo~ 0.50");
+
+        let color = class_color(0);
+        let mut image = ImageBuffer::from_pixel(200, 100, Rgb([0, 0, 0]));
+        draw_label(&mut image, 190, 20, color, "person", 0.9);
+
+        // The 103 px chip is shifted left so it remains fully visible at the right edge.
+        assert_eq!(*image.get_pixel(97, 8), color);
+        assert!(
+            image
+                .enumerate_pixels()
+                .any(|(_, _, pixel)| *pixel == Rgb([255, 255, 255])),
+            "label text should be drawn in white"
+        );
+    }
 
     /// Check that the production YOLOX artifact preserves the direct official-checkpoint result.
     /// Requires the external checkpoint and generated artifact under `target/`.
