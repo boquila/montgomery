@@ -50,7 +50,7 @@ impl ClassificationPipeline {
             ));
         }
         if image.color() == ColorOrder::Bgr {
-            for px in image.data_mut().chunks_exact_mut(3) {
+            for px in image.data_mut().as_chunks_mut::<3>().0 {
                 px.swap(0, 2);
             }
             image.set_color(ColorOrder::Rgb);
@@ -415,7 +415,7 @@ fn enhance(image: &mut ByteImage, m: f32, kind: Enhance) {
             }
         }
         Enhance::Color => {
-            for p in image.data_mut().chunks_exact_mut(3) {
+            for p in image.data_mut().as_chunks_mut::<3>().0 {
                 let gray =
                     (0.299 * p[0] as f32 + 0.587 * p[1] as f32 + 0.114 * p[2] as f32).round();
                 for v in p {
@@ -462,18 +462,22 @@ fn autocontrast(image: &mut ByteImage) {
     for c in 0..3 {
         let min = image
             .data()
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|p| p[c])
             .min()
             .unwrap_or(0);
         let max = image
             .data()
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|p| p[c])
             .max()
             .unwrap_or(255);
         if max > min {
-            for p in image.data_mut().chunks_exact_mut(3) {
+            for p in image.data_mut().as_chunks_mut::<3>().0 {
                 p[c] = ((p[c] - min) as f32 * 255. / (max - min) as f32).round() as u8;
             }
         }
@@ -482,7 +486,7 @@ fn autocontrast(image: &mut ByteImage) {
 fn equalize(image: &mut ByteImage) {
     for c in 0..3 {
         let mut hist = [0usize; 256];
-        for p in image.data().chunks_exact(3) {
+        for p in image.data().as_chunks::<3>().0 {
             hist[p[c] as usize] += 1;
         }
         let nonzero = hist.iter().copied().find(|v| *v > 0).unwrap_or(0);
@@ -496,7 +500,7 @@ fn equalize(image: &mut ByteImage) {
             lut[i] = ((sum + step / 2) / step).min(255) as u8;
             sum += h;
         }
-        for p in image.data_mut().chunks_exact_mut(3) {
+        for p in image.data_mut().as_chunks_mut::<3>().0 {
             p[c] = lut[p[c] as usize];
         }
     }
@@ -529,7 +533,7 @@ fn color_jitter(
             ),
             _ => {
                 let shift = rng.uniform(-h, h) * 255.;
-                for p in image.data_mut().chunks_exact_mut(3) {
+                for p in image.data_mut().as_chunks_mut::<3>().0 {
                     let r = p[0] as f32;
                     let g = p[1] as f32;
                     let b = p[2] as f32;

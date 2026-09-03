@@ -121,7 +121,9 @@ pub fn parse_labels(
             (bbox, None)
         } else {
             let polygon: Vec<[f32; 2]> = coordinates
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|point| {
                     [
                         point[0] * image_size[0] as f32,

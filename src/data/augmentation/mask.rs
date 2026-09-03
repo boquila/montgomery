@@ -30,7 +30,7 @@ pub fn polygon_mask(width: usize, height: usize, polygon: &Polygon) -> Vec<u8> {
             }
         }
         intersections.sort_by(|a, b| a.total_cmp(b));
-        for pair in intersections.chunks_exact(2) {
+        for pair in intersections.as_chunks::<2>().0 {
             let start = pair[0].ceil().max(0.) as usize;
             let end = pair[1].floor().min(width as f32 - 1.) as usize;
             if start <= end && start < width {

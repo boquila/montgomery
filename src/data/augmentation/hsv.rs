@@ -17,7 +17,7 @@ pub fn apply(mut sample: AugSample, gains: [f32; 3]) -> Result<AugSample, Augmen
         val[x] = (x as f32 * (1.0 + gains[2])).clamp(0.0, 255.0) as u8;
     }
     sat[0] = 0;
-    for px in sample.image.data_mut().chunks_exact_mut(3) {
+    for px in sample.image.data_mut().as_chunks_mut::<3>().0 {
         let (h, s, v) = bgr_to_hsv(px[0], px[1], px[2]);
         let (b, g, r) = hsv_to_bgr(hue[h as usize], sat[s as usize], val[v as usize]);
         px.copy_from_slice(&[b, g, r]);

@@ -64,7 +64,7 @@ pub fn grayscale(mut sample: AugSample) -> Result<AugSample, AugmentationError> 
         return Err(AugmentationError::new("ToGray requires three channels"));
     }
     let color = sample.image.color();
-    for p in sample.image.data_mut().chunks_exact_mut(3) {
+    for p in sample.image.data_mut().as_chunks_mut::<3>().0 {
         let v = match color {
             ColorOrder::Bgr => {
                 (0.114 * p[0] as f32 + 0.587 * p[1] as f32 + 0.299 * p[2] as f32).round() as u8
@@ -100,7 +100,7 @@ pub fn image_compression(
         ));
     }
     let mut rgb = Vec::with_capacity(sample.image.data().len());
-    for pixel in sample.image.data().chunks_exact(3) {
+    for pixel in sample.image.data().as_chunks::<3>().0 {
         if sample.image.color() == ColorOrder::Bgr {
             rgb.extend_from_slice(&[pixel[2], pixel[1], pixel[0]]);
         } else {
@@ -121,7 +121,7 @@ pub fn image_compression(
         .to_rgb8();
     let mut bytes = decoded.into_raw();
     if sample.image.color() == ColorOrder::Bgr {
-        for pixel in bytes.chunks_exact_mut(3) {
+        for pixel in bytes.as_chunks_mut::<3>().0 {
             pixel.swap(0, 2);
         }
     }
@@ -144,7 +144,7 @@ pub fn clahe(sample: AugSample, clip_limit: f32) -> Result<AugSample, Augmentati
     let mut out = sample;
     for c in 0..3 {
         let mut hist = [0usize; 256];
-        for p in out.image.data().chunks_exact(3) {
+        for p in out.image.data().as_chunks::<3>().0 {
             hist[p[c] as usize] += 1;
         }
         let limit =
@@ -166,7 +166,7 @@ pub fn clahe(sample: AugSample, clip_limit: f32) -> Result<AugSample, Augmentati
             cdf[i] = sum;
         }
         let total = sum.max(1);
-        for p in out.image.data_mut().chunks_exact_mut(3) {
+        for p in out.image.data_mut().as_chunks_mut::<3>().0 {
             p[c] = ((cdf[p[c] as usize] * 255) / total) as u8;
         }
     }

@@ -153,7 +153,7 @@ impl AugSample {
         let rgb = sample.image.to_rgb8();
         let original = [rgb.height() as usize, rgb.width() as usize];
         let mut bgr = Vec::with_capacity(rgb.as_raw().len());
-        for pixel in rgb.as_raw().chunks_exact(3) {
+        for pixel in rgb.as_raw().as_chunks::<3>().0 {
             bgr.extend_from_slice(&[pixel[2], pixel[1], pixel[0]]);
         }
         let source_image = ByteImage::new(original[1], original[0], 3, ColorOrder::Bgr, bgr)?;

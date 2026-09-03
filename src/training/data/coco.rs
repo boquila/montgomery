@@ -209,7 +209,9 @@ pub fn load_index(
                             .into_iter()
                             .map(|polygon| {
                                 polygon
-                                    .chunks_exact(2)
+                                    .as_chunks::<2>()
+                                    .0
+                                    .iter()
                                     .map(|point| [point[0], point[1]])
                                     .collect()
                             })
