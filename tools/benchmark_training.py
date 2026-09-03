@@ -47,7 +47,7 @@ def main() -> None:
     charts = output / "charts"
     if not args.skip_build and args.native_binary is None:
         subprocess.run(
-            ["cargo", "build", "--release"],
+            ["cargo", "build", "--release", "--features", "training"],
             cwd=ROOT,
             check=True,
         )

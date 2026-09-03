@@ -1,6 +1,6 @@
 //! Native-training contracts and parity-tested building blocks.
 //!
-//! Training is a first-class default capability and uses Burn autodiff on WGPU.
+//! Training is an opt-in capability using Burn autodiff on WGPU.
 
 pub mod assign;
 #[cfg(test)]
