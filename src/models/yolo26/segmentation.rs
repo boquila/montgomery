@@ -622,6 +622,8 @@ macro_rules! seg_model {
                     .metadata("montgomery.model", $id)
                     .metadata("montgomery.classes", "coco-80")
                     .metadata("montgomery.precision", "f16")
+                    .metadata("montgomery.source", "ultralytics-v8.4")
+                    .metadata("montgomery.license", "AGPL-3.0")
                     .with_to_adapter(HalfPrecisionAdapter::new());
                 self.save_into(&mut store)
             }

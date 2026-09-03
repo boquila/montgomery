@@ -77,6 +77,8 @@ impl<B: Backend> Yolov3Tiny<B> {
             .metadata("montgomery.model", "yolov3-tinyu")
             .metadata("montgomery.classes", "coco-80")
             .metadata("montgomery.precision", "f16")
+            .metadata("montgomery.source", "ultralytics-v8.4")
+            .metadata("montgomery.license", "AGPL-3.0")
             .with_to_adapter(HalfPrecisionAdapter::new());
         self.save_into(&mut store)
     }
@@ -200,8 +202,7 @@ mod tests {
     #[test]
     #[ignore]
     fn matches_ultralytics_golden_tensors() {
-        let checkpoint =
-            std::path::PathBuf::from("target/yolov3-tinyu-coco-ultralytics-v8.4-montgomery-v1.bpk");
+        let checkpoint = std::path::PathBuf::from("target/yolov3-tinyu.bpk");
         let fixture: GoldenFixture = serde_json::from_slice(
             &std::fs::read("target/yolov3-tinyu-golden-v1.json")
                 .expect("generate fixtures with tools/export_ultralytics_fixtures.py"),

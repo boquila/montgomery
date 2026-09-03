@@ -195,7 +195,7 @@ The complete comparison is one command after installing the pinned GPU benchmark
 preparing the upstream checkpoints:
 
 ```console
-uv run --project tools --locked tools/benchmark_training.py --publish
+uv run --project tools tools/benchmark_training.py --publish
 ```
 
 It builds Montgomery in release mode, prepares deterministic datasets, primes WGPU, runs the matrix,
@@ -205,7 +205,7 @@ validates the ten-epoch checkpoints, renders every chart, and publishes JSON and
 For a quick iteration on one bottleneck:
 
 ```console
-uv run --project tools --locked tools/benchmark_training.py --scenario yolov8n-segment --repeats 1 --segmentation-repeats 1
+uv run --project tools tools/benchmark_training.py --scenario yolov8n-segment --repeats 1 --segmentation-repeats 1
 ```
 
 Use `--list` on `tools/bench_training_matrix.py` to see every scenario. Runs can be resumed, and full
@@ -216,7 +216,7 @@ checkpoints can be retained with `--keep-runs`; they are deleted by default to k
 - WGPU aggregation was swept at 8, 16, 32, 64, and 128 queued tasks across batch-1 detect/segment,
   640 px detect, and YOLO26m segment. The existing 32-task default was best overall; higher values
   consistently regressed, while apparent 16-task wins disappeared on repeat trials. Re-run with
-  `uv run --project tools --locked tools/profile_wgpu_training.py`.
+  `uv run --project tools tools/profile_wgpu_training.py`.
 - Long runs now extract full-precision model/EMA/optimizer records only on a fitness improvement,
   every `--save-period` epochs (10 by default), at early stop, and at completion. Publication still
   overlaps the next epoch, and only `best`/`last` remain.
@@ -224,5 +224,5 @@ checkpoints can be retained with `--keep-runs`; they are deleted by default to k
   time. Mask/semantic ablations and alternate depthwise kernels did not clear the 5% acceptance
   gate, so no correctness-risking shortcut was retained.
 - A strict full-COCO runner now rejects partial datasets and executes matched detect/segment
-  training plus validation: `uv run --project tools --locked tools/bench_full_convergence.py --download`. Full
+  training plus validation: `uv run --project tools tools/bench_full_convergence.py --download`. Full
   convergence results are still required before any quality-parity claim.

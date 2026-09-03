@@ -294,7 +294,7 @@ mod tests {
     }
 
     /// Ignored microbenchmark for the letterbox preprocessing cost (release mode):
-    /// `cargo test --locked --release measures_letterbox_resize_cost -- --ignored --nocapture`
+    /// `cargo test --release measures_letterbox_resize_cost -- --ignored --nocapture`
     ///
     /// Times JPEG decoding, both letterbox constructors, and the raw scalers on the reference
     /// image plus two generated synthetic images under `target/`. It keeps the scaler candidates

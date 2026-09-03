@@ -1,4 +1,4 @@
-//! Versioned names for montgomery-native YOLOv8 artifacts.
+//! Versioned metadata and simple names for native YOLOv8 artifacts.
 
 const ARTIFACT_SCHEMA: &str = "v1";
 
@@ -7,22 +7,9 @@ pub fn artifact_format(model: &str) -> String {
 }
 
 pub fn coco_artifact_filename(model: &str) -> String {
-    format!("{model}-coco-ultralytics-v8.4-montgomery-v1.bpk")
-}
-
-pub fn dataset_tag(model: &str) -> &'static str {
-    if model.ends_with("-cls") {
-        "imagenet1k"
-    } else if model.ends_with("-obb") {
-        "dotav1"
-    } else {
-        "coco"
-    }
+    format!("{model}.bpk")
 }
 
 pub fn artifact_filename(model: &str) -> String {
-    format!(
-        "{model}-{}-ultralytics-v8.4-montgomery-v1.bpk",
-        dataset_tag(model)
-    )
+    format!("{model}.bpk")
 }

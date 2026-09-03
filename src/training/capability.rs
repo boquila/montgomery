@@ -32,7 +32,7 @@ impl<B: burn::tensor::backend::Backend> Spike<B> {
 }
 
 /// Hardware-gated phase-0 smoke test. It compiles on every training build and can be run on the
-/// selected adapter with `cargo test --features training wgpu_autodiff_capability -- --ignored`.
+/// selected adapter with `cargo test wgpu_autodiff_capability -- --ignored`.
 #[test]
 #[ignore = "requires a local WGPU adapter"]
 fn wgpu_autodiff_capability() {

@@ -1,7 +1,6 @@
 //! Native-training contracts and parity-tested building blocks.
 //!
-//! Training is deliberately non-default: enabling this module selects Burn autodiff and WGPU,
-//! while ordinary inference builds retain their existing dependency and compile-time footprint.
+//! Training is a first-class default capability and uses Burn autodiff on WGPU.
 
 pub mod assign;
 #[cfg(test)]

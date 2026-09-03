@@ -4,7 +4,7 @@
 This is intentionally separate from the fast performance matrix. It refuses partial datasets and
 stores every command, log, CSV, and model under ``target/full-convergence``.
 
-    uv run --project tools --locked tools/bench_full_convergence.py --download --epochs 100
+    uv run --project tools tools/bench_full_convergence.py --download --epochs 100
 """
 
 from __future__ import annotations
@@ -113,7 +113,7 @@ def main() -> None:
     parser.add_argument("--output", type=Path, default=ROOT / "target" / "full-convergence")
     args = parser.parse_args()
     if not BINARY.is_file():
-        raise SystemExit("build first: cargo build --locked --release --features training")
+        raise SystemExit("build first: cargo build --release")
     tasks = args.task or ["detect", "segment"]
     frameworks = args.framework or ["native", "ultralytics"]
     train, val, names = resolve_coco(args.download)

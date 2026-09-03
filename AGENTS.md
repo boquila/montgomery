@@ -1,8 +1,9 @@
 # Montgomery agent guide
 
 This directory is the active Rust/Burn crate. Work from the repository root unless a task
-explicitly targets a sibling vendored project. Generated checkpoints, fixtures, datasets, images,
-reports, and build output belong under `target/` and must not be committed.
+explicitly targets a sibling vendored project. Development checkpoints, fixtures, datasets,
+images, reports, and build output belong under `target/` and must not be committed. User-facing
+Burnpacks use the short `<model>.bpk` name in the repository root and are gitignored.
 
 For a new family, scale, or task, follow [docs/MODEL_BRINGUP.md](docs/MODEL_BRINGUP.md) end to end.
 
@@ -31,17 +32,17 @@ user-facing text.
 Run Python tools from the repository root with the tools project selected:
 
 ```console
-uv run --project tools --locked tools/export_ultralytics_state.py yolo26n.pt target/yolo26n-state.pt
+uv run --project tools tools/export_ultralytics_state.py yolo26n.pt target/yolo26n-state.pt
 ```
 
 Stable YOLOX and Ultralytics-family models both run from native Burnpacks:
 
 ```console
-cargo run --release -- pack-weights --model yolox-nano --input target/yolox_nano.pth --output target/yolox-nano.bpk
-cargo run --release -- predict --model yolox-nano --weights target/yolox-nano.bpk --source docs/dog_bike_man.jpg
+montgomery pack-weights --model yolox-nano --input target/yolox_nano.pth
+montgomery predict --model yolox-nano --source docs/dog_bike_man.jpg
 
-cargo run --release -- pack-weights --model yolo26n --input target/yolo26n-state.pt --output target/yolo26n.bpk
-cargo run --release -- predict --model yolo26n --weights target/yolo26n.bpk --source docs/dog_bike_man.jpg
+montgomery pack-weights --model yolo26n --input target/yolo26n-state.pt
+montgomery predict --model yolo26n --source docs/dog_bike_man.jpg
 ```
 
 Python/PyTorch is conversion- and development-time only; normal inference is Rust/Burn.
@@ -52,22 +53,21 @@ Run before handing off changes:
 
 ```console
 cargo fmt --check
-cargo test --locked
-cargo clippy --locked --all-targets -- -D warnings
-cargo check --locked --no-default-features --lib
+cargo test
+cargo clippy --all-targets -- -D warnings
+cargo check --no-default-features --lib
 ```
 
 When external checkpoints and fixtures are available:
 
 ```console
-cargo test --locked -- --ignored
+cargo test -- --ignored
 ```
 
-For training changes also run:
+Training is part of the default build. For focused training verification, run:
 
 ```console
-cargo test --locked --features training training
-cargo clippy --locked --features training --all-targets -- -D warnings
+cargo test training
 ```
 
 Real training, hardware smoke tests, and latency measurements must use `--release`. Single-image
@@ -115,8 +115,8 @@ rescaling. Golden tensor tests are the authority for these quirks.
   `f32` after RandomErasing.
 - Native seeded output is a Montgomery contract. Cross-language parity uses injected parameters or
   traces, not equal seed values.
-- Training is non-default and WGPU-only (`--features training`); default inference graphs and
-  prediction output must remain unchanged.
+- Training is enabled by default and WGPU-only; inference graphs and prediction output must remain
+  unchanged.
 - Losses consume raw logits. YOLOX uses objectness; modern heads use TAL. YOLOv10/YOLO26 training
   retains one-to-many plus detached-feature one-to-one branches; YOLO26 remains DFL-free.
 - Assignment may synchronize detached values to the host, but loss totals must remain connected to

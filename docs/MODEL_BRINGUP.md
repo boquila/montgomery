@@ -9,7 +9,7 @@ Run all commands from the repository root; paths in this guide are repository-re
 Orientation first:
 
 - Montgomery runs inference natively in Rust/Burn. Python + PyTorch + the `ultralytics` package are
-  conversion-time only; run the locked tools with `uv run --project tools --locked`.
+  conversion-time only; run the locked tools with `uv run --project tools`.
 - The architecture reference is the vendored repo at `../ultralytics` (pinned 8.4.117). The locked
   Python package is also 8.4.117. When source and a serialized module disagree, the **official checkpoint
   wins** — it was produced by whichever version trained it.
@@ -90,9 +90,8 @@ existing templates. Hard rules:
   `load_burnpack_weights`/`save_burnpack_weights` with the `HalfPrecisionAdapter` and
   `montgomery.*` metadata, plus the ignored checkpoint-import and golden-tensor tests (2e-4
   tolerance, fixture JSON per step 5).
-- `weights.rs`: `artifact_format(<id>)` returning `<id>-v1`, `coco_artifact_filename(<id>)` returning
-  `<id>-coco-ultralytics-v<version>-montgomery-v1.bpk` (e.g. `v8.4`); fill bytes/SHA-256 constants
-  after packing a verified artifact.
+- `weights.rs`: `artifact_format(<id>)` returning `<id>-v1` and artifact filename helpers returning
+  `<id>.bpk`; keep dataset, upstream version, format version, hashes, and licensing in metadata.
 - Keep the graph independent of CLI, filesystem, rendering, and image decoding.
 
 ## 4. Wire into the crate
@@ -119,18 +118,18 @@ existing templates. Hard rules:
 
 ```console
 cargo fmt --check
-cargo test --locked
-cargo clippy --locked --all-targets -- -D warnings
-cargo check --locked --no-default-features --lib
+cargo test
+cargo clippy --all-targets -- -D warnings
+cargo check --no-default-features --lib
 ```
 
 Then the parity loop (checkpoint and fixtures live under `target/`):
 
 ```console
-uv run --project tools --locked tools\export_ultralytics_state.py target/<id>.pt target/<id>-state.pt
-cargo run --release -- pack-weights --model <id> --input target/<id>-state.pt --output target/<id>-coco-ultralytics-<ver>-montgomery-v1.bpk
-uv run --project tools --locked tools\export_<id>_fixtures.py target/<id>.pt docs/dog_bike_man.jpg target
-cargo test --locked <id> -- --ignored
+uv run --project tools tools\export_ultralytics_state.py target/<id>.pt target/<id>-state.pt
+montgomery pack-weights --model <id> --input target/<id>-state.pt
+uv run --project tools tools\export_<id>_fixtures.py target/<id>.pt docs/dog_bike_man.jpg target
+cargo test <id> -- --ignored
 ```
 
 Both ignored tests must pass: `imports_official_checkpoint_and_runs_forward` (keys + remaps
@@ -159,7 +158,7 @@ YOLO26-cls bring-up (n/s/m/l/x) is the classification template.
 
 1. **Feasibility gate first**: verify the `-seg` checkpoints actually exist in the assets release
    (HTTP HEAD the release URLs; never trust release notes from memory) and load one with
-   `uv run --project tools --locked`
+   `uv run --project tools`
    before writing any Rust. Pick the family whose existing runtime dispatch extends most cleanly —
    for segmentation that was YOLO11, because Ultralytics' `Segment` head is the classic Detect head
    plus extras and its postprocess rides the exact NMS path the family already has.
@@ -221,4 +220,5 @@ difference between PIL and the Rust resize.
   deviation: one f16-flipped DFL distribution shifts one box edge by a couple of pixels while every
   statistic stays green. Only the end-to-end comparison against the official runtime catches that
   class of drift.
-- Generated checkpoints, states, fixtures, images, and `.bpk` artifacts stay under `target/`.
+- Development checkpoints, states, fixtures, and images stay under `target/`. User-facing native
+  artifacts use `<id>.bpk` in the working directory and remain uncommitted.

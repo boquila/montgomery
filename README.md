@@ -32,22 +32,25 @@ Normal inference needs no Python, PyTorch, or ONNX Runtime.
 
 ## Quick start
 
-Install Rust and [uv](https://docs.astral.sh/uv/), then convert an upstream checkpoint once:
+Download the compiled `montgomery` binary for your platform from
+[Releases](https://github.com/boquila/montgomery/releases). To convert an upstream checkpoint,
+install [uv](https://docs.astral.sh/uv/) and run:
 
 ```console
-uv run --project tools --locked python -c "from ultralytics import YOLO; YOLO('yolo26n.pt')"
-uv run --project tools --locked tools/export_ultralytics_state.py yolo26n.pt target/yolo26n-state.pt
-cargo run --locked --release -- pack-weights --model yolo26n --input target/yolo26n-state.pt --output target/yolo26n-coco-ultralytics-v8.4-montgomery-v1.bpk
+uv run --project tools python -c "from ultralytics import YOLO; YOLO('yolo26n.pt')"
+uv run --project tools tools/export_ultralytics_state.py yolo26n.pt target/yolo26n-state.pt
+montgomery pack-weights --model yolo26n --input target/yolo26n-state.pt
 ```
 
-Run inference:
+This creates `yolo26n.bpk`. Architecture, dataset, upstream version, format version, and licensing
+stay inside the artifact metadata. Run inference with the same short model name:
 
 ```console
-cargo run --locked --release -- predict --model yolo26n --weights target/yolo26n-coco-ultralytics-v8.4-montgomery-v1.bpk --source image.jpg
+montgomery predict --model yolo26n --source image.jpg
 ```
 
 Useful options: `--json`, `--confidence 0.30`, `--output result.png`, `--masks`, and `--device gpu`.
-GPU inference requires `--features gpu`.
+Pass `--weights another-name.bpk` only when you deliberately use a nonstandard filename.
 
 YOLOX accepts its official `.pth` directly through `pack-weights`. Other families use the
 tensor-only conversion shown above. Prediction always uses a Montgomery `.bpk` Burnpack.
@@ -72,7 +75,7 @@ YOLOX is stable. The other families and native training are experimental.
 use montgomery::Model;
 
 fn main() -> montgomery::Result<()> {
-    let model = Model::new("target/yolo26n-coco-ultralytics-v8.4-montgomery-v1.bpk")?;
+    let model = Model::new("yolo26n.bpk")?;
 
     let prediction = model.inference("image.jpg")?;
     for detection in prediction.detections().expect("detection model") {
@@ -92,10 +95,10 @@ for the artifact's task. Use `Model::with_options` to set confidence/IoU thresho
 
 ## Train
 
-Training is WGPU-only and must use a release build:
+Training is a default capability of the compiled binary and runs on WGPU:
 
 ```console
-cargo run --locked --release --features training -- train --model yolo26n --data dataset.yaml --weights target/yolo26n-state.pt --epochs 100
+montgomery train --model yolo26n --data dataset.yaml --epochs 100
 ```
 
 Every run contains:
@@ -116,8 +119,11 @@ and longer detection/segmentation runs still need work. Full methodology and lim
 ## Export ONNX
 
 ```console
-cargo run --locked --release -- export-onnx --model yolo26n --weights target/yolo26n-coco-ultralytics-v8.4-montgomery-v1.bpk --output target/yolo26n.onnx
+montgomery export-onnx --model yolo26n
 ```
+
+This reads `yolo26n.bpk` and writes `yolo26n.onnx`; use `--weights` or `--output` only to override
+those names.
 
 The offline exporter validates the graph with ONNX Runtime. Setup details are in
 [tools/onnx/README.md](tools/onnx/README.md).
@@ -128,21 +134,21 @@ Stable Rust is the only requirement for the native crate. A fresh checkout is re
 
 ```console
 git clone https://github.com/boquila/montgomery.git && cd montgomery
-cargo test --locked
+cargo test
 ```
 
 Cargo downloads and builds every Rust dependency automatically. Python is optional and only used
 for checkpoint conversion, benchmark generation, and ONNX development;
-`uv run --project tools --locked <command>` creates that environment from the committed
+`uv run --project tools <command>` creates that environment from the committed
 `tools/pyproject.toml` and `tools/uv.lock` when needed.
 
 The same checks used by CI are:
 
 ```console
 cargo fmt --check
-cargo test --locked
-cargo clippy --locked --all-targets -- -D warnings
-cargo check --locked --no-default-features --lib
+cargo test
+cargo clippy --all-targets -- -D warnings
+cargo check --no-default-features --lib
 ```
 
 See [docs/MODEL_BRINGUP.md](docs/MODEL_BRINGUP.md) for new model families and

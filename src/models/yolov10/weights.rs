@@ -1,4 +1,4 @@
-//! Versioned names for montgomery-native YOLOv10 artifacts.
+//! Versioned metadata and simple names for native YOLOv10 artifacts.
 
 const ARTIFACT_SCHEMA: &str = "v1";
 
@@ -7,5 +7,5 @@ pub fn artifact_format(model: &str) -> String {
 }
 
 pub fn coco_artifact_filename(model: &str) -> String {
-    format!("{model}-coco-ultralytics-v8.4-montgomery-v1.bpk")
+    format!("{model}.bpk")
 }

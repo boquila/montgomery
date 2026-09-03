@@ -6,7 +6,7 @@ models measured sequentially. The model forward includes the head decode and, fo
 families, the top-k postprocess — the same scope as the Rust `measures_single_inference_latency`
 tests. Run from the repository root with uv:
 
-    uv run --project tools --locked tools\\bench_ultralytics_cpu.py <checkpoint.pt> ...
+    uv run --project tools tools\\bench_ultralytics_cpu.py <checkpoint.pt> ...
 """
 
 from __future__ import annotations

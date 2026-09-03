@@ -16,7 +16,8 @@ use montgomery::training::runtime::{
     TrainingRequest, export as export_training, train as train_native, validate as validate_native,
 };
 use montgomery::{
-    ModelId, PredictOptions, Predictor, annotate, annotate_segmentation, pack_weights,
+    ModelId, ModelTask, PredictOptions, Predictor, annotate, annotate_segmentation, pack_weights,
+    pack_weights_to,
 };
 use serde::Serialize;
 
@@ -24,8 +25,7 @@ use serde::Serialize;
 enum DeviceSelection {
     /// Burn Flex backend on the CPU (default).
     Cpu,
-    /// Burn Wgpu backend on the GPU: Vulkan/DX12 on Windows and Linux, Metal on macOS. Requires
-    /// building with `--features gpu`.
+    /// Burn Wgpu backend on the GPU: Vulkan/DX12 on Windows and Linux, Metal on macOS.
     Gpu,
 }
 
@@ -140,12 +140,12 @@ struct ExportOnnxArgs {
     /// Model architecture represented by the checkpoint.
     #[arg(long)]
     model: ModelId,
-    /// Local Montgomery .bpk artifact.
+    /// Local Montgomery .bpk artifact (defaults to <model>.bpk).
     #[arg(long)]
-    weights: PathBuf,
-    /// Final ONNX path. A missing .onnx suffix is added explicitly.
+    weights: Option<PathBuf>,
+    /// Final ONNX path (defaults to <model>.onnx). A missing suffix is added explicitly.
     #[arg(long)]
-    output: PathBuf,
+    output: Option<PathBuf>,
     /// Square size or H,W. Detect/segment dimensions must be divisible by 32.
     #[arg(long)]
     imgsz: Option<String>,
@@ -199,9 +199,9 @@ struct PackWeightsArgs {
     #[arg(long)]
     input: PathBuf,
 
-    /// Native output artifact; must end in .bpk and must not already exist.
+    /// Native output artifact (defaults to <model>.bpk); must not already exist.
     #[arg(long)]
-    output: PathBuf,
+    output: Option<PathBuf>,
 }
 
 #[derive(Debug, ClapArgs)]
@@ -220,9 +220,9 @@ struct PredictArgs {
     #[arg(long)]
     model: ModelId,
 
-    /// Local Montgomery .bpk artifact.
+    /// Local Montgomery .bpk artifact (defaults to <model>.bpk).
     #[arg(long)]
-    weights: PathBuf,
+    weights: Option<PathBuf>,
 
     /// Compute device for inference.
     #[arg(long, value_enum, default_value = "cpu")]
@@ -272,7 +272,10 @@ fn main() -> montgomery::Result<()> {
     match args.command {
         Command::Predict(args) => predict(args),
         Command::PackWeights(args) => {
-            let packed = pack_weights(args.model, &args.input, &args.output)?;
+            let packed = match args.output {
+                Some(output) => pack_weights_to(args.model, &args.input, output)?,
+                None => pack_weights(args.model, &args.input)?,
+            };
             eprintln!(
                 "Packed {} weights into {} ({} bytes, SHA-256 {})",
                 args.model,
@@ -379,7 +382,13 @@ fn main() -> montgomery::Result<()> {
 
 #[cfg(feature = "onnx")]
 fn export_onnx_command(args: ExportOnnxArgs) -> montgomery::Result<()> {
-    let mut options = OnnxExportOptions::for_model(args.model, args.output);
+    let weights = args
+        .weights
+        .unwrap_or_else(|| PathBuf::from(args.model.artifact_filename()));
+    let output = args
+        .output
+        .unwrap_or_else(|| PathBuf::from(format!("{}.onnx", args.model)));
+    let mut options = OnnxExportOptions::for_model(args.model, output);
     if let Some(imgsz) = &args.imgsz {
         let (height, width) = parse_imgsz(imgsz)?;
         options.input_shape = [args.batch, 3, height, width];
@@ -400,7 +409,7 @@ fn export_onnx_command(args: ExportOnnxArgs) -> montgomery::Result<()> {
     options.force = args.force;
     options.keep_intermediate = args.keep_intermediate;
     options.reproducible = args.reproducible;
-    let artifact = export_onnx(args.model, &args.weights, options)?;
+    let artifact = export_onnx(args.model, &weights, options)?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&artifact)?);
     } else {
@@ -458,7 +467,11 @@ fn run_predict<B: Backend>(
     options: PredictOptions,
     device: Device<B>,
 ) -> montgomery::Result<()> {
-    if args.weights.extension().and_then(|value| value.to_str()) != Some("bpk") {
+    let weights = args
+        .weights
+        .clone()
+        .unwrap_or_else(|| PathBuf::from(args.model.artifact_filename()));
+    if weights.extension().and_then(|value| value.to_str()) != Some("bpk") {
         return Err(
             "predict --weights requires a native .bpk artifact; convert upstream checkpoints with pack-weights"
                 .into(),
@@ -471,57 +484,26 @@ fn run_predict<B: Backend>(
 
     eprintln!("Loading {} weights with Burn...", args.model);
     let predictor: Predictor<B> =
-        Predictor::from_checkpoint_on_device(args.model, args.weights.clone(), device, options)?;
+        Predictor::from_checkpoint_on_device(args.model, weights, device, options)?;
 
-    if matches!(
-        args.model,
-        ModelId::Yolo26NCls
-            | ModelId::Yolo26SCls
-            | ModelId::Yolo26MCls
-            | ModelId::Yolo26LCls
-            | ModelId::Yolo26XCls
-            | ModelId::Yolo11NCls
-            | ModelId::Yolo11SCls
-            | ModelId::Yolo11MCls
-            | ModelId::Yolo11LCls
-            | ModelId::Yolo11XCls
-            | ModelId::Yolov8NCls
-            | ModelId::Yolov8SCls
-            | ModelId::Yolov8MCls
-            | ModelId::Yolov8LCls
-            | ModelId::Yolov8XCls
-    ) {
-        let (image, classifications) = predictor.predict_classification_path(&args.source)?;
-        report_classifications(
-            args,
-            &image,
-            &output,
-            predictor.input_size(),
-            &classifications,
-        )?;
-        return Ok(());
-    }
-    if matches!(
-        args.model,
-        ModelId::Yolo11NSeg
-            | ModelId::Yolo11SSeg
-            | ModelId::Yolo11MSeg
-            | ModelId::Yolo11LSeg
-            | ModelId::Yolo11XSeg
-            | ModelId::Yolov8NSeg
-            | ModelId::Yolov8SSeg
-            | ModelId::Yolov8MSeg
-            | ModelId::Yolov8LSeg
-            | ModelId::Yolov8XSeg
-            | ModelId::Yolo26NSeg
-            | ModelId::Yolo26SSeg
-            | ModelId::Yolo26MSeg
-            | ModelId::Yolo26LSeg
-            | ModelId::Yolo26XSeg
-    ) {
-        let (image, detections) = predictor.predict_segmentation_path(&args.source)?;
-        report_segmentations(args, &image, &output, &detections)?;
-        return Ok(());
+    match args.model.task() {
+        ModelTask::Classification => {
+            let (image, classifications) = predictor.predict_classification_path(&args.source)?;
+            report_classifications(
+                args,
+                &image,
+                &output,
+                predictor.input_size(),
+                &classifications,
+            )?;
+            return Ok(());
+        }
+        ModelTask::Segmentation => {
+            let (image, detections) = predictor.predict_segmentation_path(&args.source)?;
+            report_segmentations(args, &image, &output, &detections)?;
+            return Ok(());
+        }
+        ModelTask::Detection => {}
     }
     if args.masks {
         return Err(

@@ -2,11 +2,11 @@
 
 Full reproducible run:
 
-    uv run --project tools --locked tools/benchmark_training.py --publish
+    uv run --project tools tools/benchmark_training.py --publish
 
 Fast iteration on one bottleneck:
 
-    uv run --project tools --locked tools/benchmark_training.py \
+    uv run --project tools tools/benchmark_training.py \
         --scenario yolov8n-segment --repeats 1 --segmentation-repeats 1
 """
 
@@ -47,7 +47,7 @@ def main() -> None:
     charts = output / "charts"
     if not args.skip_build and args.native_binary is None:
         subprocess.run(
-            ["cargo", "build", "--locked", "--release", "--features", "training"],
+            ["cargo", "build", "--release"],
             cwd=ROOT,
             check=True,
         )

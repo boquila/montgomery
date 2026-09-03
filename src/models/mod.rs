@@ -66,6 +66,8 @@ macro_rules! classify_model {
                     .metadata("montgomery.model", $id)
                     .metadata("montgomery.classes", "imagenet-1000")
                     .metadata("montgomery.precision", "f16")
+                    .metadata("montgomery.source", "ultralytics-v8.4")
+                    .metadata("montgomery.license", "AGPL-3.0")
                     .with_to_adapter(burn_store::HalfPrecisionAdapter::new());
                 self.save_into(&mut store)
             }

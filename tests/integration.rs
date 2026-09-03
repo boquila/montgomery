@@ -22,7 +22,7 @@ use montgomery::models::{
 use montgomery::{
     CLASSIFICATION_TOP_K, CLASSIFY_INPUT_SIZE, COCO_CLASSES, Detection, INPUT_SIZE, InstanceMask,
     Model, ModelId, ModelTask, PredictOptions, Prediction, Predictor, SegmentationDetection,
-    annotate, annotate_segmentation, pack_weights,
+    annotate, annotate_segmentation, pack_weights_to,
 };
 
 fn montgomery(args: &[&str]) -> Output {
@@ -148,6 +148,7 @@ fn model_catalog_is_a_consistent_public_registry() {
         assert!(canonical_names.insert(name), "duplicate model name {name}");
         assert_eq!(name.parse::<ModelId>(), Ok(model), "parse {name}");
         assert_eq!(model.to_string(), name);
+        assert_eq!(model.artifact_filename(), format!("{name}.bpk"));
 
         let encoded = serde_json::to_string(&model).unwrap();
         assert_eq!(serde_json::from_str::<ModelId>(&encoded).unwrap(), model);
@@ -245,7 +246,7 @@ fn prediction_options_enforce_the_public_threshold_contract() {
 #[test]
 fn native_artifact_boundaries_reject_upstream_formats_before_io() {
     for model in ModelId::ALL {
-        let error = pack_weights(model, "does-not-exist.pt", "target/not-a-burnpack.bin")
+        let error = pack_weights_to(model, "does-not-exist.pt", "target/not-a-burnpack.bin")
             .unwrap_err()
             .to_string();
         assert!(error.contains(".bpk extension"), "{model}: {error}");
@@ -323,7 +324,7 @@ fn cli_help_exposes_the_supported_workflows_and_coordinate_contract() {
     let output = montgomery(&["--help"]);
     assert!(output.status.success(), "{}", stderr(&output));
     let help = String::from_utf8_lossy(&output.stdout);
-    for command in ["predict", "pack-weights", "export-onnx"] {
+    for command in ["predict", "pack-weights", "export-onnx", "train"] {
         assert!(help.contains(command), "missing {command} in:\n{help}");
     }
 
@@ -357,8 +358,6 @@ fn cli_rejects_bad_requests_before_loading_models() {
                 "missing.png",
                 "--model",
                 "yolox-nano",
-                "--weights",
-                "missing.bpk",
                 "--confidence",
                 "1.1",
             ],
@@ -371,8 +370,6 @@ fn cli_rejects_bad_requests_before_loading_models() {
                 "not-a-model",
                 "--input",
                 "missing.pt",
-                "--output",
-                "target/missing.bpk",
             ],
             "unknown model 'not-a-model'",
         ),

@@ -211,6 +211,8 @@ impl<B: Backend> Yolo26N<B> {
             .metadata("montgomery.model", "yolo26n")
             .metadata("montgomery.classes", "coco-80")
             .metadata("montgomery.precision", "f16")
+            .metadata("montgomery.source", "ultralytics-v8.4")
+            .metadata("montgomery.license", "AGPL-3.0")
             .with_to_adapter(HalfPrecisionAdapter::new());
         self.save_into(&mut store)
     }
@@ -289,6 +291,8 @@ impl<B: Backend> Yolo26S<B> {
             .metadata("montgomery.model", "yolo26s")
             .metadata("montgomery.classes", "coco-80")
             .metadata("montgomery.precision", "f16")
+            .metadata("montgomery.source", "ultralytics-v8.4")
+            .metadata("montgomery.license", "AGPL-3.0")
             .with_to_adapter(HalfPrecisionAdapter::new());
         self.save_into(&mut store)
     }
@@ -368,6 +372,8 @@ impl<B: Backend> Yolo26M<B> {
             .metadata("montgomery.model", "yolo26m")
             .metadata("montgomery.classes", "coco-80")
             .metadata("montgomery.precision", "f16")
+            .metadata("montgomery.source", "ultralytics-v8.4")
+            .metadata("montgomery.license", "AGPL-3.0")
             .with_to_adapter(HalfPrecisionAdapter::new());
         self.save_into(&mut store)
     }
@@ -446,6 +452,8 @@ impl<B: Backend> Yolo26L<B> {
             .metadata("montgomery.model", "yolo26l")
             .metadata("montgomery.classes", "coco-80")
             .metadata("montgomery.precision", "f16")
+            .metadata("montgomery.source", "ultralytics-v8.4")
+            .metadata("montgomery.license", "AGPL-3.0")
             .with_to_adapter(HalfPrecisionAdapter::new());
         self.save_into(&mut store)
     }
@@ -524,6 +532,8 @@ impl<B: Backend> Yolo26X<B> {
             .metadata("montgomery.model", "yolo26x")
             .metadata("montgomery.classes", "coco-80")
             .metadata("montgomery.precision", "f16")
+            .metadata("montgomery.source", "ultralytics-v8.4")
+            .metadata("montgomery.license", "AGPL-3.0")
             .with_to_adapter(HalfPrecisionAdapter::new());
         self.save_into(&mut store)
     }
@@ -712,10 +722,7 @@ mod tests {
             #[test]
             #[ignore]
             fn $fn_name() {
-                let checkpoint = std::path::PathBuf::from(format!(
-                    "target/{}-coco-ultralytics-v8.4-montgomery-v1.bpk",
-                    $id
-                ));
+                let checkpoint = std::path::PathBuf::from(format!("target/{}.bpk", $id));
                 let fixture: GoldenFixture = serde_json::from_slice(
                     &std::fs::read(format!("target/{}-golden-v1.json", $id)).unwrap_or_else(|_| {
                         panic!(
@@ -753,7 +760,7 @@ mod tests {
             #[ignore]
             fn $fn_name() {
                 let checkpoint = std::path::PathBuf::from(format!(
-                    "target/{}-coco-ultralytics-v8.4-montgomery-v1.bpk",
+                    "target/{}.bpk",
                     $id
                 ));
                 assert!(
@@ -888,7 +895,7 @@ mod tests {
             #[ignore]
             fn $fn_name() {
                 let checkpoint = std::path::PathBuf::from(format!(
-                    "target/{}-coco-ultralytics-v8.4-montgomery-v1.bpk",
+                    "target/{}.bpk",
                     $id
                 ));
                 assert!(

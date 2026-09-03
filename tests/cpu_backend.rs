@@ -23,7 +23,7 @@
 //! Run with:
 //!
 //! ```console
-//! cargo test --locked --release --features cpu-cubecl cubecl_cpu -- --ignored --nocapture --test-threads 1
+//! cargo test --release --features cpu-cubecl cubecl_cpu -- --ignored --nocapture --test-threads 1
 //! ```
 #![cfg(feature = "cpu-cubecl")]
 
@@ -73,9 +73,7 @@ latency_forward!(
 );
 
 fn artifact(id: &str) -> std::path::PathBuf {
-    let checkpoint = std::path::PathBuf::from(format!(
-        "target/{id}-coco-ultralytics-v8.4-montgomery-v1.bpk"
-    ));
+    let checkpoint = std::path::PathBuf::from(format!("target/{id}.bpk"));
     assert!(
         checkpoint.exists(),
         "pack the {id} artifact with pack-weights first"
