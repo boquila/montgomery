@@ -8,7 +8,7 @@ Native object detection, instance segmentation, and image classification in Rust
 
 <h3>
 
-[Repository](https://github.com/boquila/montgomery) | [Performance](https://github.com/boquila/montgomery/blob/main/docs/performance-comparison.MD) | [Model support](#supported-models)
+[Performance](https://github.com/boquila/montgomery/blob/main/docs/performance-comparison.MD) | [Model support](#supported-models)
 
 </h3>
 
@@ -85,17 +85,7 @@ fn main() -> montgomery::Result<()> {
 }
 ```
 
-The Burnpack embeds its architecture, so loading does not need a separate model identifier.
-`inference` accepts paths, borrowed or owned `DynamicImage`s, RGB/RGBA/grayscale image buffers,
-and encoded image bytes. It automatically returns detections, segmentations, or classifications
-for the artifact's task. Use `Model::with_options` to set confidence/IoU thresholds, or the typed
-`predict`, `predict_segmentation`, and `predict_classification` methods when the task is known.
-`Model` uses the fast `Flex` CPU backend. Use `Predictor::<Wgpu>::new` for GPU inference when the
-`gpu` feature is enabled.
-
 ## Train
-
-Training is a default capability of the compiled binary and runs on WGPU:
 
 ```console
 montgomery train --model yolo26n --data dataset.yaml --epochs 100
@@ -107,7 +97,7 @@ Every run contains:
 - `exports/best.bpk` and `exports/last.bpk`
 - `checkpoints/best` and `checkpoints/last`
 
-Only the best and latest resumable models are retained. Validation selects `best` automatically.
+Only the best and latest resumable models are retained.
 Use `--save-period` to control recovery checkpoints and `--workers` to override automatic CPU
 worker selection.
 
@@ -130,17 +120,12 @@ The offline exporter validates the graph with ONNX Runtime. Setup details are in
 
 ## Develop
 
-Stable Rust is the only requirement for the native crate. A fresh checkout is ready in two commands:
+Stable Rust is the only requirement to start development
 
 ```console
 git clone https://github.com/boquila/montgomery.git && cd montgomery
 cargo test
 ```
-
-Cargo downloads and builds every Rust dependency automatically. Python is optional and only used
-for checkpoint conversion, benchmark generation, and ONNX development;
-`uv run --project tools <command>` creates that environment from the committed
-`tools/pyproject.toml` and `tools/uv.lock` when needed.
 
 The same checks used by CI are:
 
@@ -151,8 +136,7 @@ cargo clippy --all-targets -- -D warnings
 cargo check --no-default-features --lib
 ```
 
-See [docs/MODEL_BRINGUP.md](docs/MODEL_BRINGUP.md) for new model families and
-[AGENTS.md](AGENTS.md) for implementation invariants.
+See [docs/MODEL_BRINGUP.md](docs/MODEL_BRINGUP.md) for new model families.
 
 ## License
 
