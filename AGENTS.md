@@ -50,13 +50,19 @@ Python/PyTorch is conversion- and development-time only; normal inference is Rus
 
 ## Verification
 
-Run before handing off changes:
+CI installs the current stable Rust toolchain on every run. Before handing off changes, update the
+local stable toolchain (`rustup update stable`), confirm `rustc --version` matches current stable,
+and run the exact CI sequence below. Do not substitute `cargo check` for Clippy, filter the training
+tests, or omit `cargo build`:
 
 ```console
 cargo fmt --check
+cargo build
 cargo test
 cargo clippy --all-targets -- -D warnings
-cargo check --no-default-features --lib
+cargo test --features training
+cargo clippy --features training --all-targets -- -D warnings
+cargo clippy --no-default-features --lib -- -D warnings
 ```
 
 When external checkpoints and fixtures are available:
@@ -65,12 +71,8 @@ When external checkpoints and fixtures are available:
 cargo test -- --ignored
 ```
 
-Training is opt-in. For training changes, run:
-
-```console
-cargo test --features training training
-cargo clippy --features training --all-targets -- -D warnings
-```
+Training is opt-in at runtime, but its full test and Clippy commands above are mandatory before
+handing off any change because Linux CI always runs them.
 
 Real training, hardware smoke tests, and latency measurements must use `--release`. Single-image
 latency tests must use `--test-threads 1` to avoid CPU contention. When touching a runtime/backend

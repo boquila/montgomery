@@ -2545,7 +2545,9 @@ fn image_to_tensor<B: Backend>(image: DynamicImage, device: &Device<B>) -> Tenso
     // `permute` kernel over ~1.2M floats).
     let mut chw = vec![0.0f32; width * height * 3];
     let plane = width * height;
-    for (index, pixel) in raw.chunks_exact(3).enumerate() {
+    let (pixels, remainder) = raw.as_chunks::<3>();
+    debug_assert!(remainder.is_empty());
+    for (index, pixel) in pixels.iter().enumerate() {
         chw[index] = pixel[0] as f32;
         chw[plane + index] = pixel[1] as f32;
         chw[2 * plane + index] = pixel[2] as f32;
