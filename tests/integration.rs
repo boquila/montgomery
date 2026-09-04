@@ -209,6 +209,16 @@ fn simple_model_api_has_a_concrete_cpu_default_and_task_aware_results() {
 }
 
 #[test]
+fn classifies_a_hot_dog() {
+    let model = Model::new("tests/assets/hot-dog-classifier.bpk").unwrap();
+    let prediction = model.inference("tests/assets/hot-dog.jpg").unwrap();
+    assert_eq!(
+        prediction.classifications().unwrap()[0].class_name,
+        "hot_dog"
+    );
+}
+
+#[test]
 fn prediction_options_enforce_the_public_threshold_contract() {
     for value in [0.0, 0.25, 1.0] {
         assert!(
