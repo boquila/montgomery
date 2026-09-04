@@ -2,38 +2,80 @@ use fast_image_resize as fir;
 use image::{DynamicImage, ImageBuffer, Rgb, RgbImage, imageops};
 
 fn resize_opencv_linear(source: &DynamicImage, width: u32, height: u32) -> RgbImage {
-    let source = source.to_rgb8();
-    let source_width = source.width();
-    let source_height = source.height();
+    // Borrow the RGB8 buffer when the source already is RGB8 to avoid a full-frame clone;
+    // otherwise convert once (same pixels `to_rgb8()` produced).
+    let owned;
+    let (source_raw, source_width, source_height) = match source.as_rgb8() {
+        Some(buffer) => (buffer.as_raw().as_slice(), buffer.width(), buffer.height()),
+        None => {
+            owned = source.to_rgb8();
+            (owned.as_raw().as_slice(), owned.width(), owned.height())
+        }
+    };
     let scale_x = source_width as f64 / width as f64;
     let scale_y = source_height as f64 / height as f64;
+    let max_x = source_width as f64 - 1.0;
+    let max_y = source_height as f64 - 1.0;
 
-    ImageBuffer::from_fn(width, height, |x, y| {
+    // Hoist the per-column and per-row sampling math out of the inner loop. The formulas are
+    // unchanged from the per-pixel version; only the evaluation points move.
+    let width = width as usize;
+    let height = height as usize;
+    let source_width = source_width as usize;
+    let mut x0_table = Vec::with_capacity(width);
+    let mut x1_table = Vec::with_capacity(width);
+    let mut wx_table = Vec::with_capacity(width);
+    for x in 0..width {
         let source_x = (x as f64 + 0.5) * scale_x - 0.5;
-        let source_y = (y as f64 + 0.5) * scale_y - 0.5;
-        let x0 = source_x.floor().clamp(0.0, source_width as f64 - 1.0) as u32;
-        let y0 = source_y.floor().clamp(0.0, source_height as f64 - 1.0) as u32;
+        let x0 = source_x.floor().clamp(0.0, max_x) as usize;
         let x1 = (x0 + 1).min(source_width - 1);
-        let y1 = (y0 + 1).min(source_height - 1);
-        let weight_x = source_x.clamp(0.0, source_width as f64 - 1.0) - x0 as f64;
-        let weight_y = source_y.clamp(0.0, source_height as f64 - 1.0) - y0 as f64;
-        let top_left = source.get_pixel(x0, y0).0;
-        let top_right = source.get_pixel(x1, y0).0;
-        let bottom_left = source.get_pixel(x0, y1).0;
-        let bottom_right = source.get_pixel(x1, y1).0;
-        let mut output = [0_u8; 3];
+        x0_table.push(x0);
+        x1_table.push(x1);
+        wx_table.push(source_x.clamp(0.0, max_x) - x0 as f64);
+    }
+    let source_height_usize = source_height as usize;
+    let mut y0_table = Vec::with_capacity(height);
+    let mut y1_table = Vec::with_capacity(height);
+    let mut wy_table = Vec::with_capacity(height);
+    for y in 0..height {
+        let source_y = (y as f64 + 0.5) * scale_y - 0.5;
+        let y0 = source_y.floor().clamp(0.0, max_y) as usize;
+        let y1 = (y0 + 1).min(source_height_usize - 1);
+        y0_table.push(y0);
+        y1_table.push(y1);
+        wy_table.push(source_y.clamp(0.0, max_y) - y0 as f64);
+    }
 
-        for channel in 0..3 {
-            let top =
-                top_left[channel] as f64 * (1.0 - weight_x) + top_right[channel] as f64 * weight_x;
-            let bottom = bottom_left[channel] as f64 * (1.0 - weight_x)
-                + bottom_right[channel] as f64 * weight_x;
-            output[channel] = (top * (1.0 - weight_y) + bottom * weight_y)
-                .round()
-                .clamp(0.0, 255.0) as u8;
+    let mut output = vec![0u8; width * height * 3];
+    for y in 0..height {
+        let y0 = y0_table[y] * source_width;
+        let y1 = y1_table[y] * source_width;
+        let weight_y = wy_table[y];
+        let inv_weight_y = 1.0 - weight_y;
+        let row = y * width * 3;
+        for x in 0..width {
+            let x0 = x0_table[x];
+            let x1 = x1_table[x];
+            let weight_x = wx_table[x];
+            let inv_weight_x = 1.0 - weight_x;
+            let tl = y0 + x0;
+            let tr = y0 + x1;
+            let bl = y1 + x0;
+            let br = y1 + x1;
+            let out = row + x * 3;
+            for channel in 0..3 {
+                let top = source_raw[tl * 3 + channel] as f64 * inv_weight_x
+                    + source_raw[tr * 3 + channel] as f64 * weight_x;
+                let bottom = source_raw[bl * 3 + channel] as f64 * inv_weight_x
+                    + source_raw[br * 3 + channel] as f64 * weight_x;
+                output[out + channel] = (top * inv_weight_y + bottom * weight_y)
+                    .round()
+                    .clamp(0.0, 255.0) as u8;
+            }
         }
-        Rgb(output)
-    })
+    }
+    ImageBuffer::from_raw(width as u32, height as u32, output)
+        .expect("pre-sized resize buffer matches dimensions")
 }
 
 /// Resize an RGB8 image with the `fast_image_resize` crate (runtime-dispatched SIMD kernels).

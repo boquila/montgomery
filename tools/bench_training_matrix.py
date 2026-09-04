@@ -71,7 +71,7 @@ class Scenario:
 
     @property
     def native_weights(self) -> Path:
-        return ROOT / "target" / f"{self.model}-state.pt"
+        return ROOT / "target" / f"{self.model}.bpk"
 
     @property
     def ultralytics_weights(self) -> Path:
@@ -129,8 +129,6 @@ def command_for(framework: str, scenario: Scenario, project: Path, name: str) ->
             str(NATIVE),
             "train",
             "--model",
-            scenario.model,
-            "--weights",
             str(scenario.native_weights),
             "--data",
             str(scenario.native_data),

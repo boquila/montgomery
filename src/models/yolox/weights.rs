@@ -21,7 +21,7 @@ pub struct OfficialCheckpoint {
     pub sha256: &'static str,
 }
 
-/// Official Apache-2.0 checkpoints used as inputs to `pack-weights` and parity tests.
+/// Official Apache-2.0 checkpoints used as inputs to the tensor-state converter and parity tests.
 pub const OFFICIAL_CHECKPOINTS: &[OfficialCheckpoint] = &[
     OfficialCheckpoint {
         model: "yolox-nano",

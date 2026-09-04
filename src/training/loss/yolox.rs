@@ -119,10 +119,15 @@ pub fn tensor_loss<B: Backend>(
     if targets.len() != batch || classes == 0 {
         return Err("YOLOX target batch or class count does not match predictions");
     }
-    let decoded_host = output.decoded_boxes.clone().detach().into_data();
-    let regression_host = output.regression.clone().detach().into_data();
-    let objectness_host = output.objectness_logits.clone().detach().into_data();
-    let classes_host = output.class_logits.clone().detach().into_data();
+    let [decoded_host, regression_host, objectness_host, classes_host] =
+        burn::tensor::Transaction::default()
+            .register(output.decoded_boxes.clone().detach())
+            .register(output.regression.clone().detach())
+            .register(output.objectness_logits.clone().detach())
+            .register(output.class_logits.clone().detach())
+            .execute()
+            .try_into()
+            .expect("YOLOX assignment transaction must preserve four tensors");
     let decoded = decoded_host
         .as_slice::<f32>()
         .map_err(|_| "YOLOX boxes are not f32")?;

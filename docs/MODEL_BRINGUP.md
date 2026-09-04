@@ -17,9 +17,9 @@ Orientation first:
   `src/models/yolo26/` (DFL-free end-to-end), or `src/models/yolov3_tiny/` (classic NMS path).
 - Inference modes in the wild: one2one end-to-end heads are top-k selected + confidence filtered
   (`end2end_topk_detections` in `src/lib.rs`); plain heads go through class-aware NMS.
-- Non-Ultralytics families need the same ground-truth discipline with different tooling. YOLOX
-  imports its official `.pth` through `pack-weights` and consumes the resulting native `.bpk` at
-  runtime. Its
+- Non-Ultralytics families need the same ground-truth discipline. Every family converts its
+  trusted upstream checkpoint to a tensor-only state with `tools/export_checkpoint_state.py`, then
+  packs that state into the native `.bpk` consumed at runtime. YOLOX's
   golden fixtures come from the *official YOLOX repository sources* instead of the Ultralytics
   package: `tools/export_yolox_fixtures.py` assembles a small import package from a plain YOLOX
   checkout under `target/yolox-ref/`, loads the checkpoint with `strict=True`, and dumps per-stage
@@ -104,11 +104,11 @@ existing templates. Hard rules:
   - the model preprocessing profile and appropriate shared runtime dispatch trait;
   - `pack_weights` arm;
   - the model-name, input-size, and packer-extension tests.
-- `src/main.rs`: `--model` help text lists the new name.
+- `src/main.rs`: keep `--architecture` for catalog identifiers and `--model` for `.bpk` paths.
 
 ## 5. Conversion tooling
 
-- `tools/export_ultralytics_state.py` is model-agnostic; run it against the official `.pt`.
+- `tools/export_checkpoint_state.py` is model-agnostic; run it against the official `.pt` or `.pth`.
 - Copy `tools/export_yolo26_fixtures.py` to `tools/export_<id>_fixtures.py` and adjust: the hooked
   body layer indices, the head index, the `preds["one2one"]` (or plain-tensor) access, and all
   `<id>` filenames. It writes the source/preprocessed reference PNGs and the golden JSON under
@@ -126,8 +126,8 @@ cargo check --no-default-features --lib
 Then the parity loop (checkpoint and fixtures live under `target/`):
 
 ```console
-uv run --project tools tools\export_ultralytics_state.py target/<id>.pt target/<id>-state.pt
-montgomery pack-weights --model <id> --input target/<id>-state.pt
+uv run --project tools tools\export_checkpoint_state.py target/<id>.pt target/<id>-state.pt
+montgomery pack-weights --architecture <id> --state target/<id>-state.pt
 uv run --project tools tools\export_<id>_fixtures.py target/<id>.pt docs/dog_bike_man.jpg target
 cargo test <id> -- --ignored
 ```
@@ -180,7 +180,7 @@ YOLO26-cls bring-up (n/s/m/l/x) is the classification template.
    one place — `Yolo11SegHead` wraps `Yolo11Head`) and add the task head modules with checkpoint
    key names as field names. The mask tensors join the model output (`SegmentOutput`); the decode,
    NMS, and mask assembly stay in the runtime.
-5. **Weights path** is unchanged: `tools/export_ultralytics_state.py` is model-agnostic (it dumps
+5. **Weights path** is unchanged: `tools/export_checkpoint_state.py` is model-agnostic (it dumps
    whatever `state_dict()` holds), so only the Rust key remaps need the new head rules (one per
    path-segment pattern), plus `ModelId` arms, packer arms, and verified artifact bytes/SHA-256.
 6. **Fixtures and parity**: extend the family's fixture exporter for the task (the seg fixture adds
@@ -190,7 +190,7 @@ YOLO26-cls bring-up (n/s/m/l/x) is the classification template.
    ignored Rust test can compare per-detection mask IoU (target >= 0.95).
 7. **Public API**: a new result type (`SegmentationDetection` with `InstanceMask`), a new predictor
    method that does not disturb `predict()`, letterbox geometry shared with the boxes, and CLI
-   wiring (`--model <id>-seg`, `--masks`) that leaves detect-model behavior untouched.
+   wiring (`--model <id>-seg.bpk`, `--masks`) that leaves detect-model behavior untouched.
 
 Classification (YOLO26-cls template) differs in these ways: the input is 224 px with Ultralytics'
 classify transform (anti-aliased shortest-edge resize + centered crop, no letterbox), the class
