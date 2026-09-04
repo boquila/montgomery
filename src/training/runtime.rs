@@ -771,9 +771,19 @@ where
 }
 
 #[derive(Debug, Clone)]
+pub enum TrainingInitialization {
+    /// Construct the named architecture with freshly initialized parameters.
+    Scratch(ModelId),
+    /// Initialize from a self-describing Montgomery inference Burnpack.
+    Pretrained(PathBuf),
+    /// Continue from a full native training checkpoint.
+    Resume(PathBuf),
+}
+
+#[derive(Debug, Clone)]
 pub struct TrainingRequest {
-    pub model: ModelId,
-    pub data: PathBuf,
+    pub initialization: TrainingInitialization,
+    pub data: Option<PathBuf>,
     pub epochs: usize,
     pub batch_size: usize,
     pub accumulation: usize,
@@ -784,8 +794,6 @@ pub struct TrainingRequest {
     pub run_root: PathBuf,
     pub name: String,
     pub dry_run: bool,
-    pub resume: Option<PathBuf>,
-    pub weights: Option<PathBuf>,
     pub val_confidence: Option<f32>,
     pub val_iou: Option<f32>,
     pub max_detections: Option<usize>,
@@ -805,23 +813,41 @@ pub fn train(request: TrainingRequest) -> Result<PathBuf, Box<dyn Error + Send +
 }
 
 fn train_inner(request: TrainingRequest) -> Result<PathBuf, Box<dyn Error + Send + Sync>> {
-    if request.resume.is_some() && request.weights.is_some() {
-        return Err("--resume and --weights are mutually exclusive".into());
-    }
-    let resume_manifest = request
-        .resume
-        .as_ref()
-        .map(crate::training::checkpoint::load)
+    let resume = match &request.initialization {
+        TrainingInitialization::Resume(path) => Some(path),
+        TrainingInitialization::Scratch(_) | TrainingInitialization::Pretrained(_) => None,
+    };
+    let pretrained = match &request.initialization {
+        TrainingInitialization::Pretrained(path) => Some(path),
+        TrainingInitialization::Scratch(_) | TrainingInitialization::Resume(_) => None,
+    };
+    let resume_manifest = resume.map(crate::training::checkpoint::load).transpose()?;
+    let model_id = match &request.initialization {
+        TrainingInitialization::Scratch(model) => *model,
+        TrainingInitialization::Pretrained(path) => ModelId::from_burnpack(path)?,
+        TrainingInitialization::Resume(_) => {
+            resume_manifest
+                .as_ref()
+                .expect("resume initialization loaded a manifest")
+                .config
+                .model
+                .architecture
+        }
+    };
+    let pretrained_classes = pretrained
+        .map(|path| -> Result<usize, Box<dyn Error + Send + Sync>> {
+            let metadata = crate::artifact_metadata(path)?;
+            Ok(metadata.class_names.map_or_else(
+                || crate::catalog_class_names(model_id).len(),
+                |names| names.len(),
+            ))
+        })
         .transpose()?;
-    if let Some(manifest) = &resume_manifest
-        && manifest.config.model.architecture != request.model
-    {
-        return Err("--model conflicts with the immutable resume checkpoint architecture".into());
-    }
     let dataset_path = resume_manifest
         .as_ref()
         .map(|manifest| manifest.config.data.clone())
-        .unwrap_or_else(|| request.data.clone());
+        .or_else(|| request.data.clone())
+        .ok_or("scratch and pretrained training require --data")?;
     let dataset = DatasetManifest::load(&dataset_path)?;
     let spec = if let Some(manifest) = &resume_manifest {
         if manifest.config.model.class_names != dataset.class_names {
@@ -830,7 +856,7 @@ fn train_inner(request: TrainingRequest) -> Result<PathBuf, Box<dyn Error + Send
         manifest.config.model.clone()
     } else {
         ModelSpec::new(
-            request.model,
+            model_id,
             dataset.class_names.clone(),
             request.image_size.map(|side| [side, side]),
         )?
@@ -893,7 +919,7 @@ fn train_inner(request: TrainingRequest) -> Result<PathBuf, Box<dyn Error + Send
     if batch_count == 0 {
         return Err("training split produces no batches".into());
     }
-    let trainer = if let Some(resume) = &request.resume {
+    let trainer = if let Some(resume) = resume {
         Trainer::from_checkpoint(resume)?
     } else {
         let trainer = Trainer::create(config.clone(), &request.name, batch_count)?;
@@ -907,12 +933,21 @@ fn train_inner(request: TrainingRequest) -> Result<PathBuf, Box<dyn Error + Send
     macro_rules! pretrained {
         ($target:expr, $official:expr, $projection:expr) => {{
             let mut target = $target;
-            if let Some(weights) = request.weights.as_ref() {
-                if classes == $projection.official_classes() {
-                    target.load_pytorch_weights(weights)?;
+            if let Some(model) = pretrained {
+                let source_classes = pretrained_classes
+                    .expect("pretrained initialization resolved its class count");
+                if classes == source_classes {
+                    target.load_burnpack_weights(model)?;
                 } else {
+                    if source_classes != $projection.official_classes() {
+                        return Err(format!(
+                            "cannot replace the class projection of a pretrained artifact with {source_classes} classes; this architecture's published pretraining has {} classes",
+                            $projection.official_classes()
+                        )
+                        .into());
+                    }
                     let mut official = $official;
-                    official.load_pytorch_weights(weights)?;
+                    official.load_burnpack_weights(model)?;
                     target = transfer_pretrained(target, &official, $projection)?;
                 }
             }
@@ -964,7 +999,7 @@ fn train_inner(request: TrainingRequest) -> Result<PathBuf, Box<dyn Error + Send
                 },
                 RunTaskOptions {
                     dry_run: request.dry_run,
-                    resume: request.resume.as_ref(),
+                    resume,
                     device: &device,
                 },
             )
@@ -1034,7 +1069,7 @@ fn train_inner(request: TrainingRequest) -> Result<PathBuf, Box<dyn Error + Send
                 },
                 RunTaskOptions {
                     dry_run: request.dry_run,
-                    resume: request.resume.as_ref(),
+                    resume,
                     device: &device,
                 },
             )
@@ -1082,13 +1117,13 @@ fn train_inner(request: TrainingRequest) -> Result<PathBuf, Box<dyn Error + Send
                 },
                 RunTaskOptions {
                     dry_run: request.dry_run,
-                    resume: request.resume.as_ref(),
+                    resume,
                     device: &device,
                 },
             )
         }};
     }
-    let run = match request.model {
+    let run = match model_id {
         ModelId::Yolo11NCls => run!(Yolo11ClsNConfig),
         ModelId::Yolo11SCls => run!(Yolo11ClsSConfig),
         ModelId::Yolo11MCls => run!(Yolo11ClsMConfig),

@@ -261,6 +261,15 @@ fn native_artifact_boundaries_reject_upstream_formats_before_io() {
     .expect("upstream checkpoints must be rejected")
     .to_string();
     assert!(error.contains("native .bpk artifact"), "{error}");
+
+    let error = pack_weights_to(
+        ModelId::YoloxNano,
+        "upstream.pth",
+        "target/rejected-direct-yolox.bpk",
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("tensor-only .pt state"), "{error}");
 }
 
 #[test]
@@ -334,6 +343,44 @@ fn cli_help_exposes_the_supported_workflows_and_coordinate_contract() {
     for contract in ["continuous XYXY pixel edges", "[0, width] x [0, height]"] {
         assert!(help.contains(contract), "missing {contract} in:\n{help}");
     }
+    assert!(help.contains("--model <MODEL.bpk>"), "{help}");
+
+    let output = montgomery(&["pack-weights", "--help"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let help = String::from_utf8_lossy(&output.stdout);
+    assert!(help.contains("--architecture <ARCHITECTURE>"), "{help}");
+    assert!(help.contains("--state <STATE.pt>"), "{help}");
+}
+
+#[cfg(feature = "training")]
+#[test]
+fn training_cli_requires_one_explicit_initialization_mode() {
+    let output = montgomery(&["train", "--help"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let help = String::from_utf8_lossy(&output.stdout);
+    for selector in [
+        "--architecture <ARCHITECTURE>",
+        "--model <MODEL.bpk>",
+        "--resume <CHECKPOINT>",
+    ] {
+        assert!(help.contains(selector), "missing {selector} in:\n{help}");
+    }
+
+    let output = montgomery(&[
+        "train",
+        "--architecture",
+        "yolo26n",
+        "--model",
+        "yolo26n.bpk",
+        "--data",
+        "missing.yaml",
+    ]);
+    assert!(!output.status.success());
+    assert!(stderr(&output).contains("cannot be used with"));
+
+    let output = montgomery(&["train", "--model", "upstream.pt", "--data", "missing.yaml"]);
+    assert!(!output.status.success());
+    assert!(stderr(&output).contains("native .bpk artifact"));
 }
 
 #[test]
@@ -345,8 +392,6 @@ fn cli_rejects_bad_requests_before_loading_models() {
                 "--source",
                 "missing.png",
                 "--model",
-                "yolox-nano",
-                "--weights",
                 "upstream.pth",
             ],
             "native .bpk artifact",
@@ -357,7 +402,7 @@ fn cli_rejects_bad_requests_before_loading_models() {
                 "--source",
                 "missing.png",
                 "--model",
-                "yolox-nano",
+                "missing.bpk",
                 "--confidence",
                 "1.1",
             ],
@@ -366,9 +411,9 @@ fn cli_rejects_bad_requests_before_loading_models() {
         (
             &[
                 "pack-weights",
-                "--model",
+                "--architecture",
                 "not-a-model",
-                "--input",
+                "--state",
                 "missing.pt",
             ],
             "unknown model 'not-a-model'",
@@ -394,8 +439,6 @@ fn cli_reports_the_gpu_feature_boundary() {
         "--source",
         "missing.png",
         "--model",
-        "yolox-nano",
-        "--weights",
         "missing.bpk",
         "--device",
         "gpu",

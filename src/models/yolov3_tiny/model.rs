@@ -183,7 +183,7 @@ mod tests {
         let checkpoint = std::path::PathBuf::from("target/yolov3-tinyu-state.pt");
         assert!(
             checkpoint.exists(),
-            "convert yolov3-tinyu.pt with tools/export_ultralytics_state.py first"
+            "convert yolov3-tinyu.pt with tools/export_checkpoint_state.py first"
         );
         let worker = std::thread::Builder::new()
             .stack_size(64 * 1024 * 1024)

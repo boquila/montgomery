@@ -293,6 +293,16 @@ impl ModelId {
         format!("{}.bpk", self.as_str())
     }
 
+    /// Read the architecture identifier embedded in a Montgomery Burnpack artifact.
+    #[cfg(feature = "pretrained")]
+    pub fn from_burnpack(path: impl AsRef<Path>) -> Result<Self> {
+        let path = path.as_ref();
+        require_burnpack_path(path)?;
+        artifact_metadata(path)?
+            .model_id
+            .ok_or_else(|| "Burnpack artifact is missing montgomery.model metadata".into())
+    }
+
     /// Default square input side for this catalog model.
     pub const fn default_input_size(self) -> usize {
         match self {
@@ -919,7 +929,7 @@ fn require_burnpack_path(path: &Path) -> Result<()> {
     if path.extension().and_then(|value| value.to_str()) != Some("bpk") {
         return Err(
             "Model requires a native .bpk artifact; convert upstream checkpoints with \
-             pack_weights or the pack-weights CLI"
+             the pack-weights CLI"
                 .into(),
         );
     }
@@ -1295,30 +1305,45 @@ pub(crate) fn run_end_to_end_segmentations<B: Backend>(
     // Two-stage top-k exactly like `end2end_topk_detections`, with anchor indices kept so the
     // mask coefficients of every survivor can be gathered.
     let keep = max_detections.min(anchors);
-    let best_scores = (0..anchors)
-        .map(|anchor| {
-            let row = &scores[anchor * num_classes..(anchor + 1) * num_classes];
-            row.iter().copied().fold(f32::NEG_INFINITY, f32::max)
-        })
-        .collect::<Vec<_>>();
-    let mut anchor_order = (0..anchors).collect::<Vec<_>>();
+    let mut best_scores = Vec::with_capacity(anchors);
+    for anchor in 0..anchors {
+        let row = &scores[anchor * num_classes..(anchor + 1) * num_classes];
+        let mut best = f32::NEG_INFINITY;
+        for &score in row {
+            if score > best {
+                best = score;
+            }
+        }
+        best_scores.push(best);
+    }
+    let mut anchor_order: Vec<usize> = (0..anchors)
+        .filter(|&anchor| best_scores[anchor] >= confidence_threshold)
+        .collect();
+    if anchor_order.len() > keep {
+        anchor_order
+            .select_nth_unstable_by(keep, |&a, &b| best_scores[b].total_cmp(&best_scores[a]));
+        anchor_order.truncate(keep);
+    }
     anchor_order.sort_unstable_by(|&a, &b| best_scores[b].total_cmp(&best_scores[a]));
-    anchor_order.truncate(keep);
 
-    let mut candidates = Vec::with_capacity(keep * num_classes);
+    let mut candidates = Vec::with_capacity(anchor_order.len() * num_classes.min(8));
     for (selected_index, &anchor) in anchor_order.iter().enumerate() {
+        let base = anchor * num_classes;
         for class in 0..num_classes {
-            candidates.push((scores[anchor * num_classes + class], selected_index, class));
+            let score = scores[base + class];
+            if score >= confidence_threshold {
+                candidates.push((score, selected_index, class));
+            }
         }
     }
+    if candidates.len() > keep {
+        candidates.select_nth_unstable_by(keep, |a, b| b.0.total_cmp(&a.0));
+        candidates.truncate(keep);
+    }
     candidates.sort_unstable_by(|a, b| b.0.total_cmp(&a.0));
-    candidates.truncate(keep);
 
-    let mut survivors = Vec::new();
+    let mut survivors = Vec::with_capacity(candidates.len());
     for (score, selected_index, class) in candidates {
-        if score < confidence_threshold {
-            continue;
-        }
         let anchor = anchor_order[selected_index];
         let bbox = &boxes[anchor * 4..anchor * 4 + 4];
         survivors.push(SegmentationCandidate {
@@ -1413,6 +1438,11 @@ pub(crate) fn run_classic_segmentations<B: Backend>(
     // Best class per anchor, thresholded (the `nms` helper's filter semantics).
     let mut by_class: Vec<Vec<(BoundingBox, usize)>> =
         (0..num_classes).map(|_| Vec::new()).collect();
+    // Survivors are sparse after thresholding; avoid regrowth without over-allocating.
+    let per_class_cap = (anchors / num_classes.max(1)).clamp(4, 256);
+    for vec in by_class.iter_mut() {
+        vec.reserve(per_class_cap);
+    }
     for anchor in 0..anchors {
         let row = &scores[anchor * num_classes..(anchor + 1) * num_classes];
         let (best_class, best_score) = row
@@ -1441,14 +1471,45 @@ pub(crate) fn run_classic_segmentations<B: Backend>(
     // with every previously kept box of the same class is at most the threshold).
     let mut candidates = Vec::new();
     for (class_id, mut class_candidates) in by_class.into_iter().enumerate() {
-        class_candidates.sort_by(|a, b| b.0.confidence.partial_cmp(&a.0.confidence).unwrap());
-        let mut kept: Vec<(BoundingBox, usize)> = Vec::new();
-        for (bbox, anchor) in class_candidates {
-            if kept
-                .iter()
-                .all(|(kept_box, _)| crate::postprocess::iou(kept_box, &bbox) <= iou_threshold)
-            {
+        if class_candidates.is_empty() {
+            continue;
+        }
+        class_candidates.sort_unstable_by(|a, b| b.0.confidence.total_cmp(&a.0.confidence));
+        let len = class_candidates.len();
+        let mut areas = Vec::with_capacity(len);
+        for (bbox, _) in class_candidates.iter() {
+            areas.push((bbox.xmax - bbox.xmin).max(0.) * (bbox.ymax - bbox.ymin).max(0.));
+        }
+        let mut kept: Vec<(BoundingBox, usize)> = Vec::with_capacity(len);
+        let mut kept_areas: Vec<f32> = Vec::with_capacity(len);
+        for (index, (bbox, anchor)) in class_candidates.into_iter().enumerate() {
+            let area = areas[index];
+            let mut drop = false;
+            for (kept_idx, (kept_box, _)) in kept.iter().enumerate() {
+                if kept_box.xmax <= bbox.xmin
+                    || kept_box.xmin >= bbox.xmax
+                    || kept_box.ymax <= bbox.ymin
+                    || kept_box.ymin >= bbox.ymax
+                {
+                    continue;
+                }
+                let i_xmin = kept_box.xmin.max(bbox.xmin);
+                let i_xmax = kept_box.xmax.min(bbox.xmax);
+                let i_ymin = kept_box.ymin.max(bbox.ymin);
+                let i_ymax = kept_box.ymax.min(bbox.ymax);
+                let i_area = (i_xmax - i_xmin).max(0.) * (i_ymax - i_ymin).max(0.);
+                if i_area == 0.0 {
+                    continue;
+                }
+                let union = kept_areas[kept_idx] + area - i_area;
+                if union > 0.0 && i_area / union > iou_threshold {
+                    drop = true;
+                    break;
+                }
+            }
+            if !drop {
                 kept.push((bbox, anchor));
+                kept_areas.push(area);
             }
         }
         candidates.extend(
@@ -1510,34 +1571,53 @@ pub(crate) fn canvas_instance_mask(
     }
 
     // Bilinear upsample to the canvas, threshold at > 0, and crop to the box, per canvas pixel.
+    // Integerize the `crop_mask` window once (`x >= box[0] && x < box[2]` <=> `x in
+    // [ceil(box[0]), ceil(box[2]))`) so pixels outside the box are never visited instead of
+    // being branched away per pixel.
     let scale_x = proto_width as f64 / canvas_width.max(1) as f64;
     let scale_y = proto_height as f64 / canvas_height.max(1) as f64;
     let mut mask = vec![false; canvas_width * canvas_height];
-    for y in 0..canvas_height {
-        // crop_mask keeps rows `y1 <= y < y2` (box edges in canvas pixels).
-        if (y as f32) < box_canvas[1] || (y as f32) >= box_canvas[3] {
-            continue;
-        }
+    let x_start = (box_canvas[0].ceil().clamp(0.0, canvas_width as f32) as usize).min(canvas_width);
+    let x_end = (box_canvas[2].ceil().clamp(0.0, canvas_width as f32) as usize).min(canvas_width);
+    let y_start =
+        (box_canvas[1].ceil().clamp(0.0, canvas_height as f32) as usize).min(canvas_height);
+    let y_end = (box_canvas[3].ceil().clamp(0.0, canvas_height as f32) as usize).min(canvas_height);
+    if x_start >= x_end || y_start >= y_end {
+        return mask;
+    }
+    // Precompute the horizontal sampling tables once per mask; the same `source_x / x0 / x1 /
+    // lambda_x` was recomputed for every row before.
+    let width = x_end - x_start;
+    let mut x0_table = Vec::with_capacity(width);
+    let mut x1_table = Vec::with_capacity(width);
+    let mut lambda_x_table = Vec::with_capacity(width);
+    for x in x_start..x_end {
+        let source_x = ((x as f64 + 0.5) * scale_x - 0.5).max(0.0);
+        let x0 = source_x.floor();
+        let x1 = (x0 + 1.0).min((proto_width - 1) as f64);
+        x0_table.push(x0 as usize);
+        x1_table.push(x1 as usize);
+        lambda_x_table.push(source_x - x0);
+    }
+    for y in y_start..y_end {
         let source_y = ((y as f64 + 0.5) * scale_y - 0.5).max(0.0);
         let y0 = source_y.floor();
         let y1 = (y0 + 1.0).min((proto_height - 1) as f64);
         let y0 = y0 as usize;
+        let y1 = y1 as usize;
         let lambda_y = source_y - y0 as f64;
-        for x in 0..canvas_width {
-            // crop_mask keeps columns `x1 <= x < x2`.
-            if (x as f32) < box_canvas[0] || (x as f32) >= box_canvas[2] {
-                continue;
-            }
-            let source_x = ((x as f64 + 0.5) * scale_x - 0.5).max(0.0);
-            let x0 = source_x.floor();
-            let x1 = (x0 + 1.0).min((proto_width - 1) as f64);
-            let x0 = x0 as usize;
-            let lambda_x = source_x - x0 as f64;
-            let top = logits[y0 * proto_width + x0] * (1.0 - lambda_x)
-                + logits[y0 * proto_width + x1 as usize] * lambda_x;
-            let bottom = logits[y1 as usize * proto_width + x0] * (1.0 - lambda_x)
-                + logits[y1 as usize * proto_width + x1 as usize] * lambda_x;
-            mask[y * canvas_width + x] = top * (1.0 - lambda_y) + bottom * lambda_y > 0.0;
+        let inv_lambda_y = 1.0 - lambda_y;
+        let row = y * canvas_width;
+        let row0 = y0 * proto_width;
+        let row1 = y1 * proto_width;
+        for (i, x) in (x_start..x_end).enumerate() {
+            let x0 = x0_table[i];
+            let x1 = x1_table[i];
+            let lambda_x = lambda_x_table[i];
+            let inv_lambda_x = 1.0 - lambda_x;
+            let top = logits[row0 + x0] * inv_lambda_x + logits[row0 + x1] * lambda_x;
+            let bottom = logits[row1 + x0] * inv_lambda_x + logits[row1 + x1] * lambda_x;
+            mask[row + x] = top * inv_lambda_y + bottom * lambda_y > 0.0;
         }
     }
     mask
@@ -2289,11 +2369,10 @@ impl<B: Backend> Predictor<B> {
     }
 }
 
-/// Convert imported upstream tensor state into Montgomery's versioned native Burnpack format.
-///
-/// YOLOX accepts its official `.pth` checkpoint; Ultralytics-family inputs are the tensor-only
-/// states generated by `tools/export_ultralytics_state.py`. The output is `<model>.bpk` in the
-/// current directory and stores half-precision tensors. Existing files are never overwritten.
+/// Convert an imported tensor-only checkpoint state into Montgomery's versioned native Burnpack
+/// format. All families use states generated by `tools/export_checkpoint_state.py`. The output is
+/// `<model>.bpk` in the current directory and stores half-precision tensors. Existing files are
+/// never overwritten.
 #[cfg(feature = "pretrained")]
 #[derive(Debug)]
 pub struct PackedWeights {
@@ -2317,6 +2396,12 @@ pub fn pack_weights_to(
 ) -> Result<PackedWeights> {
     let input = input.into();
     let output = output.into();
+    if input.extension().and_then(|value| value.to_str()) != Some("pt") {
+        return Err(
+            "pack-weights input must be a tensor-only .pt state produced by tools/export_checkpoint_state.py"
+                .into(),
+        );
+    }
     if output.extension().and_then(|value| value.to_str()) != Some("bpk") {
         return Err("native weight artifact output must use the .bpk extension".into());
     }
@@ -2452,12 +2537,25 @@ pub fn pack_weights_to(
 
 fn image_to_tensor<B: Backend>(image: DynamicImage, device: &Device<B>) -> Tensor<B, 3> {
     let rgb = image.into_rgb8();
-    let shape = [rgb.height() as usize, rgb.width() as usize, 3];
+    let width = rgb.width() as usize;
+    let height = rgb.height() as usize;
+    let raw = rgb.into_raw();
+    // Fuse the HWC->CHW transpose with the u8->float cast on the host so the backend
+    // receives contiguous CHW directly (previously this uploaded HWC then ran a separate
+    // `permute` kernel over ~1.2M floats).
+    let mut chw = vec![0.0f32; width * height * 3];
+    let plane = width * height;
+    let (pixels, remainder) = raw.as_chunks::<3>();
+    debug_assert!(remainder.is_empty());
+    for (index, pixel) in pixels.iter().enumerate() {
+        chw[index] = pixel[0] as f32;
+        chw[plane + index] = pixel[1] as f32;
+        chw[2 * plane + index] = pixel[2] as f32;
+    }
     Tensor::<B, 3>::from_data(
-        TensorData::new(rgb.into_raw(), shape).convert::<B::FloatElem>(),
+        TensorData::new(chw, [3, height, width]).convert::<B::FloatElem>(),
         device,
     )
-    .permute([2, 0, 1])
 }
 
 /// Select the strongest detections from decoded end-to-end one2one predictions.
@@ -2483,34 +2581,49 @@ pub(crate) fn end2end_topk_detections<B: Backend>(
         let image_scores = &scores[image * anchors * classes..(image + 1) * anchors * classes];
         let image_boxes = &boxes[image * anchors * 4..(image + 1) * anchors * 4];
 
-        let best_scores = (0..anchors)
-            .map(|anchor| {
-                let row = &image_scores[anchor * classes..(anchor + 1) * classes];
-                row.iter().copied().fold(f32::NEG_INFINITY, f32::max)
-            })
-            .collect::<Vec<_>>();
-        let mut anchor_order = (0..anchors).collect::<Vec<_>>();
+        let mut best_scores = Vec::with_capacity(anchors);
+        for anchor in 0..anchors {
+            let row = &image_scores[anchor * classes..(anchor + 1) * classes];
+            let mut best = f32::NEG_INFINITY;
+            for &score in row {
+                if score > best {
+                    best = score;
+                }
+            }
+            best_scores.push(best);
+        }
+        // Anchors whose best score is below threshold cannot survive the confidence
+        // filter below, so drop them before the (anchor, class) expansion. When more
+        // than `keep` anchors remain above threshold this selects the same top-`keep`
+        // set as a full sort; otherwise the survivors are identical after filtering.
+        let mut anchor_order: Vec<usize> = (0..anchors)
+            .filter(|&anchor| best_scores[anchor] >= confidence_threshold)
+            .collect();
+        if anchor_order.len() > keep {
+            anchor_order
+                .select_nth_unstable_by(keep, |&a, &b| best_scores[b].total_cmp(&best_scores[a]));
+            anchor_order.truncate(keep);
+        }
         anchor_order.sort_unstable_by(|&a, &b| best_scores[b].total_cmp(&best_scores[a]));
-        anchor_order.truncate(keep);
 
-        let mut candidates = Vec::with_capacity(keep * classes);
+        let mut candidates = Vec::with_capacity(anchor_order.len() * classes.min(8));
         for (selected_index, &anchor) in anchor_order.iter().enumerate() {
+            let base = anchor * classes;
             for class in 0..classes {
-                candidates.push((
-                    image_scores[anchor * classes + class],
-                    selected_index,
-                    class,
-                ));
+                let score = image_scores[base + class];
+                if score >= confidence_threshold {
+                    candidates.push((score, selected_index, class));
+                }
             }
         }
+        if candidates.len() > keep {
+            candidates.select_nth_unstable_by(keep, |a, b| b.0.total_cmp(&a.0));
+            candidates.truncate(keep);
+        }
         candidates.sort_unstable_by(|a, b| b.0.total_cmp(&a.0));
-        candidates.truncate(keep);
 
         let mut per_class = (0..classes).map(|_| Vec::new()).collect::<Vec<_>>();
         for (score, selected_index, class) in candidates {
-            if score < confidence_threshold {
-                continue;
-            }
             let anchor = anchor_order[selected_index];
             let bbox = &image_boxes[anchor * 4..anchor * 4 + 4];
             per_class[class].push(BoundingBox {

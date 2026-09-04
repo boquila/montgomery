@@ -2,7 +2,6 @@
 
 use alloc::vec::Vec;
 use burn::tensor::{ElementConversion, Tensor, backend::Backend};
-use itertools::Itertools;
 
 pub struct BoundingBox {
     pub xmin: f32,
@@ -63,34 +62,36 @@ pub fn nms<B: Backend>(
                 .map(|v| v.elem::<f32>())
                 .collect();
 
-            // Per-class filtering based on score
-            (0..num_classes)
-                .map(|cls_id| {
-                    // [num_boxes, 1]
-                    (0..num_boxes)
-                        .filter_map(|box_idx| {
-                            let box_cls_idx = cls_idx[box_idx];
-                            if box_cls_idx != cls_id {
-                                return None;
-                            }
-                            let box_cls_score = cls_score[box_idx];
-                            if box_cls_score >= score_threshold {
-                                let bbox = &candidate_boxes[box_idx * 4..box_idx * 4 + 4];
-                                Some(BoundingBox {
-                                    xmin: bbox[0] - bbox[2] / 2.,
-                                    ymin: bbox[1] - bbox[3] / 2.,
-                                    xmax: bbox[0] + bbox[2] / 2.,
-                                    ymax: bbox[1] + bbox[3] / 2.,
-                                    confidence: box_cls_score,
-                                })
-                            } else {
-                                None
-                            }
-                        })
-                        .sorted_unstable_by(|a, b| a.confidence.partial_cmp(&b.confidence).unwrap())
-                        .collect::<Vec<_>>()
-                })
-                .collect::<Vec<_>>()
+            // Per-class filtering based on score: single pass partitioned by argmax class.
+            // (Previously this scanned all boxes once per class plus a wasted ascending sort
+            // per class that `non_maximum_suppression` immediately re-sorted descending.)
+            let mut per_class: Vec<Vec<BoundingBox>> =
+                (0..num_classes).map(|_| Vec::new()).collect();
+            // Reserve roughly even distribution to avoid regrowth; over-reserve slightly when
+            // num_boxes is small.
+            let per_class_cap = (num_boxes / num_classes.max(1)).max(4);
+            for vec in per_class.iter_mut() {
+                vec.reserve(per_class_cap);
+            }
+            for box_idx in 0..num_boxes {
+                let box_cls_score = cls_score[box_idx];
+                if box_cls_score < score_threshold {
+                    continue;
+                }
+                let box_cls_idx = cls_idx[box_idx];
+                if box_cls_idx >= num_classes {
+                    continue;
+                }
+                let bbox = &candidate_boxes[box_idx * 4..box_idx * 4 + 4];
+                per_class[box_cls_idx].push(BoundingBox {
+                    xmin: bbox[0] - bbox[2] / 2.,
+                    ymin: bbox[1] - bbox[3] / 2.,
+                    xmax: bbox[0] + bbox[2] / 2.,
+                    ymax: bbox[1] + bbox[3] / 2.,
+                    confidence: box_cls_score,
+                });
+            }
+            per_class
         })
         .collect::<Vec<_>>();
 
@@ -102,6 +103,10 @@ pub fn nms<B: Backend>(
 }
 
 /// Intersection over union of two bounding boxes.
+///
+/// Retained as the shared definition (unit tests, segmentation path reference); the NMS hot
+/// loop inlines the same math with precomputed areas and an AABB early-reject.
+#[allow(dead_code)]
 pub fn iou(b1: &BoundingBox, b2: &BoundingBox) -> f32 {
     let b1_area = (b1.xmax - b1.xmin).max(0.) * (b1.ymax - b1.ymin).max(0.);
     let b2_area = (b2.xmax - b2.xmin).max(0.) * (b2.ymax - b2.ymin).max(0.);
@@ -116,19 +121,48 @@ pub fn iou(b1: &BoundingBox, b2: &BoundingBox) -> f32 {
 /// Perform non-maximum suppression over boxes of the same class.
 pub fn non_maximum_suppression(bboxes: &mut [Vec<BoundingBox>], threshold: f32) {
     for bboxes_for_class in bboxes.iter_mut() {
-        bboxes_for_class.sort_by(|b1, b2| b2.confidence.partial_cmp(&b1.confidence).unwrap());
+        if bboxes_for_class.len() < 2 {
+            continue;
+        }
+        bboxes_for_class.sort_unstable_by(|a, b| b.confidence.total_cmp(&a.confidence));
+        let len = bboxes_for_class.len();
+        let mut areas = Vec::with_capacity(len);
+        for bbox in bboxes_for_class.iter() {
+            areas.push((bbox.xmax - bbox.xmin).max(0.) * (bbox.ymax - bbox.ymin).max(0.));
+        }
         let mut current_index = 0;
-        for index in 0..bboxes_for_class.len() {
+        for index in 0..len {
+            let (xmin, ymin, xmax, ymax) = {
+                let current = &bboxes_for_class[index];
+                (current.xmin, current.ymin, current.xmax, current.ymax)
+            };
             let mut drop = false;
             for prev_index in 0..current_index {
-                let iou = iou(&bboxes_for_class[prev_index], &bboxes_for_class[index]);
-                if iou > threshold {
+                let kept = &bboxes_for_class[prev_index];
+                // AABB early-reject before the full IoU.
+                if kept.xmax <= xmin || kept.xmin >= xmax || kept.ymax <= ymin || kept.ymin >= ymax
+                {
+                    continue;
+                }
+                let i_xmin = kept.xmin.max(xmin);
+                let i_xmax = kept.xmax.min(xmax);
+                let i_ymin = kept.ymin.max(ymin);
+                let i_ymax = kept.ymax.min(ymax);
+                let i_area = (i_xmax - i_xmin).max(0.) * (i_ymax - i_ymin).max(0.);
+                if i_area == 0.0 {
+                    continue;
+                }
+                let union = areas[prev_index] + areas[index] - i_area;
+                if union > 0.0 && i_area / union > threshold {
                     drop = true;
                     break;
                 }
             }
             if !drop {
-                bboxes_for_class.swap(current_index, index);
+                if current_index != index {
+                    bboxes_for_class.swap(current_index, index);
+                    areas.swap(current_index, index);
+                }
                 current_index += 1;
             }
         }
