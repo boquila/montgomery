@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::time::Instant;
 
 #[cfg(feature = "gpu")]
 use burn::backend::Wgpu;
@@ -19,12 +20,13 @@ use montgomery::training::runtime::{
     validate as validate_native,
 };
 use montgomery::{
-    ModelId, ModelTask, PredictOptions, Predictor, annotate, annotate_segmentation, pack_weights,
-    pack_weights_to,
+    BenchmarkOptions, InferenceBenchmark, ModelId, ModelTask, PredictOptions, Predictor, annotate,
+    annotate_segmentation, pack_weights, pack_weights_to,
 };
 use serde::Serialize;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ValueEnum)]
+#[serde(rename_all = "lowercase")]
 enum DeviceSelection {
     /// Burn Flex backend on the CPU (default).
     Cpu,
@@ -47,6 +49,8 @@ struct Args {
 enum Command {
     /// Run detection, instance segmentation, or classification on an image.
     Predict(PredictArgs),
+    /// Measure cold-start and steady-state inference speed without loading an image.
+    Bench(BenchArgs),
     /// Pack an imported tensor-only state into a versioned native Burnpack artifact.
     PackWeights(PackWeightsArgs),
     /// Export the exact loaded Burn model weights to a validated portable ONNX artifact.
@@ -253,6 +257,43 @@ struct PredictArgs {
     json: bool,
 }
 
+#[derive(Debug, ClapArgs)]
+struct BenchArgs {
+    /// Montgomery .bpk model to benchmark; architecture and task are read from its metadata.
+    #[arg(long, value_name = "MODEL.bpk")]
+    model: PathBuf,
+
+    /// Compute device for inference.
+    #[arg(long, value_enum, default_value = "cpu")]
+    device: DeviceSelection,
+
+    /// Untimed steady-state warmup runs after the first cold inference.
+    #[arg(long, default_value_t = 3)]
+    warmup: usize,
+
+    /// Number of timed steady-state runs.
+    #[arg(long, default_value_t = 20)]
+    runs: usize,
+
+    /// Print the report as JSON.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Serialize)]
+struct BenchReport {
+    model: String,
+    task: ModelTask,
+    device: DeviceSelection,
+    adapter: Option<String>,
+    input_size_px: usize,
+    device_setup_ms: f64,
+    model_load_host_ms: f64,
+    cold_start_ms: f64,
+    #[serde(flatten)]
+    inference: InferenceBenchmark,
+}
+
 fn default_output(input: &std::path::Path, masks: bool) -> PathBuf {
     let stem = input
         .file_stem()
@@ -276,6 +317,7 @@ fn main() -> montgomery::Result<()> {
     let args = Args::parse();
     match args.command {
         Command::Predict(args) => predict(args),
+        Command::Bench(args) => bench(args),
         Command::PackWeights(args) => {
             let packed = match args.output {
                 Some(output) => pack_weights_to(args.architecture, &args.state, output)?,
@@ -468,6 +510,106 @@ fn predict(args: PredictArgs) -> montgomery::Result<()> {
                 .into(),
         ),
     }
+}
+
+fn bench(args: BenchArgs) -> montgomery::Result<()> {
+    if args.runs == 0 {
+        return Err("--runs must be at least 1".into());
+    }
+    let device_started = Instant::now();
+    match args.device {
+        DeviceSelection::Cpu => {
+            let device = Device::<Flex>::default();
+            run_bench::<Flex>(
+                &args,
+                device,
+                None,
+                device_started.elapsed().as_secs_f64() * 1e3,
+            )
+        }
+        #[cfg(feature = "gpu")]
+        DeviceSelection::Gpu => {
+            let (device, adapter) = montgomery::default_wgpu_device();
+            run_bench::<Wgpu>(
+                &args,
+                device,
+                Some(adapter),
+                device_started.elapsed().as_secs_f64() * 1e3,
+            )
+        }
+        #[cfg(not(feature = "gpu"))]
+        DeviceSelection::Gpu => Err(
+            "GPU inference requires building Montgomery with the gpu feature: \
+             cargo build --release --features gpu"
+                .into(),
+        ),
+    }
+}
+
+fn run_bench<B: Backend>(
+    args: &BenchArgs,
+    device: Device<B>,
+    adapter: Option<String>,
+    device_setup_ms: f64,
+) -> montgomery::Result<()> {
+    let load_started = Instant::now();
+    let predictor = Predictor::<B>::new_on_device(&args.model, device)?;
+    let model_load_host_ms = load_started.elapsed().as_secs_f64() * 1e3;
+    let inference = predictor.benchmark(BenchmarkOptions {
+        warmup_runs: args.warmup,
+        timed_runs: args.runs,
+    })?;
+
+    let report = BenchReport {
+        model: predictor.model_id().to_string(),
+        task: predictor.task(),
+        device: args.device,
+        adapter,
+        input_size_px: predictor.input_size(),
+        device_setup_ms,
+        model_load_host_ms,
+        cold_start_ms: device_setup_ms + model_load_host_ms + inference.first_inference_ms,
+        inference,
+    };
+    print_bench_report(&report, args.json)
+}
+
+fn print_bench_report(report: &BenchReport, json: bool) -> montgomery::Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(report)?);
+        return Ok(());
+    }
+
+    println!(
+        "Model: {} ({:?}, {} px)",
+        report.model, report.task, report.input_size_px
+    );
+    println!("Device: {:?}", report.device);
+    if let Some(adapter) = &report.adapter {
+        println!("Adapter: {adapter}");
+    }
+    println!("Cold start:       {:>9.2} ms", report.cold_start_ms);
+    println!("  Device setup:   {:>9.2} ms", report.device_setup_ms);
+    println!("  Model load host:{:>9.2} ms", report.model_load_host_ms);
+    println!(
+        "  First inference:{:>9.2} ms",
+        report.inference.first_inference_ms
+    );
+    println!(
+        "Steady state:     {:>9.2} ms mean  ({:.2} p50, {:.2} p95, {:.2} min, {:.2} max)",
+        report.inference.mean_ms,
+        report.inference.p50_ms,
+        report.inference.p95_ms,
+        report.inference.min_ms,
+        report.inference.max_ms
+    );
+    println!(
+        "Throughput:       {:>9.2} inferences/s  (timed runs: {}, warmup runs: {})",
+        report.inference.inferences_per_second,
+        report.inference.timed_runs,
+        report.inference.warmup_runs
+    );
+    Ok(())
 }
 
 fn run_predict<B: Backend>(

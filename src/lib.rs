@@ -703,6 +703,42 @@ impl PredictOptions {
     }
 }
 
+/// Controls a synthetic, batch-1 inference benchmark.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BenchmarkOptions {
+    /// Untimed steady-state runs after the first inference.
+    pub warmup_runs: usize,
+    /// Number of steady-state samples to record.
+    pub timed_runs: usize,
+}
+
+impl Default for BenchmarkOptions {
+    fn default() -> Self {
+        Self {
+            warmup_runs: 3,
+            timed_runs: 20,
+        }
+    }
+}
+
+/// Synchronized latency and throughput measurements from [`Predictor::benchmark`].
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct InferenceBenchmark {
+    pub warmup_runs: usize,
+    pub timed_runs: usize,
+    pub first_inference_ms: f64,
+    pub mean_ms: f64,
+    pub p50_ms: f64,
+    pub p95_ms: f64,
+    pub min_ms: f64,
+    pub max_ms: f64,
+    pub inferences_per_second: f64,
+}
+
+fn benchmark_percentile(sorted: &[f64], percentile: f64) -> f64 {
+    sorted[((sorted.len() - 1) as f64 * percentile).round() as usize]
+}
+
 #[cfg_attr(not(feature = "pretrained"), allow(dead_code))]
 enum RuntimeModel<B: Backend> {
     Yolox(Box<Yolox<B>>),
@@ -1847,6 +1883,48 @@ impl<B: Backend> Predictor<B> {
         self.input_size
     }
 
+    /// Benchmark task-aware batch-1 inference on a generated black image.
+    ///
+    /// Each sample includes preprocessing, model execution, postprocessing, and a synchronized
+    /// host result. Call this immediately after constructing the predictor when
+    /// `first_inference_ms` should represent a cold inference.
+    pub fn benchmark(&self, options: BenchmarkOptions) -> Result<InferenceBenchmark> {
+        if options.timed_runs == 0 {
+            return Err("timed benchmark runs must be at least 1".into());
+        }
+        let size = self.input_size as u32;
+        let image = DynamicImage::new_rgb8(size, size);
+
+        let first_started = std::time::Instant::now();
+        self.inference(&image)?;
+        let first_inference_ms = first_started.elapsed().as_secs_f64() * 1e3;
+        for _ in 0..options.warmup_runs {
+            self.inference(&image)?;
+        }
+
+        let timed_started = std::time::Instant::now();
+        let mut samples = Vec::with_capacity(options.timed_runs);
+        for _ in 0..options.timed_runs {
+            let started = std::time::Instant::now();
+            self.inference(&image)?;
+            samples.push(started.elapsed().as_secs_f64() * 1e3);
+        }
+        let timed_seconds = timed_started.elapsed().as_secs_f64();
+        samples.sort_by(f64::total_cmp);
+
+        Ok(InferenceBenchmark {
+            warmup_runs: options.warmup_runs,
+            timed_runs: options.timed_runs,
+            first_inference_ms,
+            mean_ms: samples.iter().sum::<f64>() / samples.len() as f64,
+            p50_ms: benchmark_percentile(&samples, 0.50),
+            p95_ms: benchmark_percentile(&samples, 0.95),
+            min_ms: samples[0],
+            max_ms: samples[samples.len() - 1],
+            inferences_per_second: options.timed_runs as f64 / timed_seconds,
+        })
+    }
+
     /// Decode or borrow an image and run the task represented by the loaded artifact.
     ///
     /// Accepts paths (`&str`, [`Path`], [`PathBuf`]), [`DynamicImage`], RGB/RGBA/grayscale
@@ -2989,6 +3067,13 @@ pub const COCO_CLASSES: [&str; 80] = [
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn selects_nearest_benchmark_percentiles() {
+        let samples = [1.0, 2.0, 3.0, 4.0, 5.0];
+        assert_eq!(benchmark_percentile(&samples, 0.50), 3.0);
+        assert_eq!(benchmark_percentile(&samples, 0.95), 5.0);
+    }
 
     #[test]
     fn annotation_labels_include_name_and_confidence_and_fit_the_canvas() {
