@@ -4,7 +4,7 @@
   <img alt="Montgomery" src="/docs/logo.svg" width="58%">
 </picture>
 
-Native object detection, instance segmentation, and image classification in Rust with [Burn](https://burn.dev).
+Native object detection, instance segmentation, and image classification in Rust with [Burn](https://burn.dev)
 
 <h3>
 
@@ -38,22 +38,24 @@ install [uv](https://docs.astral.sh/uv/) and run:
 
 ```console
 uv run --project tools python -c "from ultralytics import YOLO; YOLO('yolo26n.pt')"
-uv run --project tools tools/export_ultralytics_state.py yolo26n.pt target/yolo26n-state.pt
-montgomery pack-weights --model yolo26n --input target/yolo26n-state.pt
+uv run --project tools tools/export_checkpoint_state.py yolo26n.pt target/yolo26n-state.pt
+montgomery pack-weights --architecture yolo26n --state target/yolo26n-state.pt
 ```
 
 This creates `yolo26n.bpk`. Architecture, dataset, upstream version, format version, and licensing
-stay inside the artifact metadata. Run inference with the same short model name:
+stay inside the artifact metadata. Run inference by naming that artifact explicitly:
 
 ```console
-montgomery predict --model yolo26n --source image.jpg
+montgomery predict --model yolo26n.bpk --source image.jpg
 ```
 
 Useful options: `--json`, `--confidence 0.30`, `--output result.png`, `--masks`, and `--device gpu`.
-Pass `--weights another-name.bpk` only when you deliberately use a nonstandard filename.
+There is no implicit filename and no separate architecture flag: `predict --model` only accepts a
+self-describing Montgomery `.bpk` Burnpack.
 
-YOLOX accepts its official `.pth` directly through `pack-weights`. Other families use the
-tensor-only conversion shown above. Prediction always uses a Montgomery `.bpk` Burnpack.
+The conversion workflow is identical for every family, including YOLOX: pass the trusted upstream
+`.pt` or `.pth` checkpoint through `export_checkpoint_state.py`, then pass its tensor-only output
+through `pack-weights`. Normal prediction and training never accept upstream checkpoint formats.
 
 ## Supported models
 
@@ -88,8 +90,19 @@ fn main() -> montgomery::Result<()> {
 ## Train
 
 ```console
-montgomery train --model yolo26n --data dataset.yaml --epochs 100
+# Fresh initialization
+montgomery train --architecture yolo26n --data dataset.yaml --epochs 100
+
+# Pretrained initialization
+montgomery train --model yolo26n.bpk --data dataset.yaml --epochs 100
+
+# Exact continuation (model and dataset come from the training checkpoint)
+montgomery train --resume runs/train/checkpoints/last
 ```
+
+Exactly one initialization mode is required: `--architecture` means scratch, `--model` requires a
+pretrained `.bpk`, and `--resume` requires a full native training checkpoint. A Burnpack initializes
+a new run; it is not a resumable optimizer checkpoint.
 
 Every run contains:
 
@@ -109,11 +122,10 @@ and longer detection/segmentation runs still need work. Full methodology and lim
 ## Export ONNX
 
 ```console
-montgomery export-onnx --model yolo26n
+montgomery export-onnx --model yolo26n.bpk
 ```
 
-This reads `yolo26n.bpk` and writes `yolo26n.onnx`; use `--weights` or `--output` only to override
-those names.
+This reads the explicit Burnpack and writes `yolo26n.onnx`; use `--output` to select another path.
 
 The offline exporter validates the graph with ONNX Runtime. Setup details are in
 [tools/onnx/README.md](tools/onnx/README.md).

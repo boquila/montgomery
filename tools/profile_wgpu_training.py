@@ -36,10 +36,10 @@ class Workload:
 
 
 WORKLOADS = (
-    Workload("batch1-detect", "yolo26n", "coco8.yaml", "yolo26n-state.pt", 320, 1),
-    Workload("batch1-segment", "yolo26n-seg", "coco8-seg.yaml", "yolo26n-seg-state.pt", 320, 1),
-    Workload("highres-detect", "yolo26n", "coco8.yaml", "yolo26n-state.pt", 640, 2),
-    Workload("medium-segment", "yolo26m-seg", "coco8-seg.yaml", "yolo26m-seg-state.pt", 320, 2),
+    Workload("batch1-detect", "yolo26n", "coco8.yaml", "yolo26n.bpk", 320, 1),
+    Workload("batch1-segment", "yolo26n-seg", "coco8-seg.yaml", "yolo26n-seg.bpk", 320, 1),
+    Workload("highres-detect", "yolo26n", "coco8.yaml", "yolo26n.bpk", 640, 2),
+    Workload("medium-segment", "yolo26m-seg", "coco8-seg.yaml", "yolo26m-seg.bpk", 320, 2),
 )
 
 
@@ -69,8 +69,7 @@ def main() -> None:
         for tasks_max in args.tasks:
             for repeat in range(args.repeats):
                 command = [
-                str(args.binary), "train", "--model", workload.model,
-                "--weights", str(ROOT / "target" / workload.weights),
+                str(args.binary), "train", "--model", str(ROOT / "target" / workload.weights),
                 "--data", str(ROOT / "target" / "performance-comparison" / "data" / workload.data),
                 "--epochs", "1", "--batch", str(workload.batch), "--imgsz", str(workload.imgsz),
                 "--workers", "4", "--prefetch", "2", "--seed", "0",

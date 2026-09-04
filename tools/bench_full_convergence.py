@@ -140,18 +140,20 @@ def main() -> None:
         model = "yolo26n-seg" if task == "segment" else "yolo26n"
         pt = ROOT / "target" / f"{model}.pt"
         state = ROOT / "target" / f"{model}-state.pt"
+        burnpack = ROOT / "target" / f"{model}.bpk"
         if "ultralytics" in frameworks and not pt.exists():
             subprocess.run([sys.executable, "-c", f"from ultralytics import YOLO; YOLO('{model}.pt')"], cwd=ROOT, check=True)
             shutil.move(ROOT / f"{model}.pt", pt)
-        if "native" in frameworks and not state.exists():
+        if "native" in frameworks and not burnpack.exists():
             if not pt.exists():
                 subprocess.run([sys.executable, "-c", f"from ultralytics import YOLO; YOLO('{model}.pt')"], cwd=ROOT, check=True)
                 shutil.move(ROOT / f"{model}.pt", pt)
-            subprocess.run([sys.executable, str(ROOT / "tools" / "export_ultralytics_state.py"), str(pt), str(state)], cwd=ROOT, check=True)
+            subprocess.run([sys.executable, str(ROOT / "tools" / "export_checkpoint_state.py"), str(pt), str(state)], cwd=ROOT, check=True)
+            subprocess.run([str(BINARY), "pack-weights", "--architecture", model, "--state", str(state), "--output", str(burnpack)], cwd=ROOT, check=True)
 
         if "native" in frameworks:
             command = [
-                str(BINARY), "train", "--model", model, "--weights", str(state),
+                str(BINARY), "train", "--model", str(burnpack),
                 "--data", str(native_data), "--epochs", str(args.epochs), "--batch", str(args.batch),
                 "--imgsz", str(args.imgsz), "--workers", str(args.workers), "--prefetch", "2",
                 "--save-period", str(args.save_period), "--project", str(args.output / "native"),

@@ -4,6 +4,8 @@ use std::path::PathBuf;
 use burn::backend::Wgpu;
 use burn::tensor::{Device, backend::Backend};
 use burn_flex::Flex;
+#[cfg(feature = "training")]
+use clap::ArgGroup;
 use clap::{Args as ClapArgs, Parser, Subcommand, ValueEnum};
 #[cfg(feature = "onnx")]
 use montgomery::export::{
@@ -13,7 +15,8 @@ use montgomery::export::{
 use montgomery::training::automatic_worker_count;
 #[cfg(feature = "training")]
 use montgomery::training::runtime::{
-    TrainingRequest, export as export_training, train as train_native, validate as validate_native,
+    TrainingInitialization, TrainingRequest, export as export_training, train as train_native,
+    validate as validate_native,
 };
 use montgomery::{
     ModelId, ModelTask, PredictOptions, Predictor, annotate, annotate_segmentation, pack_weights,
@@ -44,7 +47,7 @@ struct Args {
 enum Command {
     /// Run detection, instance segmentation, or classification on an image.
     Predict(PredictArgs),
-    /// Pack an imported upstream checkpoint into a versioned native Burnpack artifact.
+    /// Pack an imported tensor-only state into a versioned native Burnpack artifact.
     PackWeights(PackWeightsArgs),
     /// Export the exact loaded Burn model weights to a validated portable ONNX artifact.
     #[cfg(feature = "onnx")]
@@ -62,11 +65,25 @@ enum Command {
 
 #[cfg(feature = "training")]
 #[derive(Debug, ClapArgs)]
+#[command(group(
+    ArgGroup::new("initialization")
+        .required(true)
+        .multiple(false)
+        .args(["architecture", "model", "resume"])
+))]
 struct TrainArgs {
+    /// Initialize a new model architecture from scratch.
     #[arg(long)]
-    model: ModelId,
-    #[arg(long)]
-    data: PathBuf,
+    architecture: Option<ModelId>,
+    /// Initialize from a pretrained Montgomery .bpk model; its architecture is read from metadata.
+    #[arg(long, value_name = "MODEL.bpk")]
+    model: Option<PathBuf>,
+    /// Resume a full native training checkpoint; its model and dataset configuration are retained.
+    #[arg(long, value_name = "CHECKPOINT")]
+    resume: Option<PathBuf>,
+    /// Dataset manifest for a scratch or pretrained run. Resume uses the checkpoint's dataset.
+    #[arg(long, required_unless_present = "resume", conflicts_with = "resume")]
+    data: Option<PathBuf>,
     #[arg(long, default_value_t = 100)]
     epochs: usize,
     #[arg(long, default_value_t = 8)]
@@ -90,12 +107,6 @@ struct TrainArgs {
     /// Run data -> forward -> loss -> backward without mutating model or optimizer state.
     #[arg(long)]
     dry_run: bool,
-    /// Resume a full native checkpoint. Model, task, classes, and dataset metadata are immutable.
-    #[arg(long)]
-    resume: Option<PathBuf>,
-    /// Initialize from an official tensor-only checkpoint. Mutually exclusive with --resume.
-    #[arg(long)]
-    weights: Option<PathBuf>,
     /// Confidence floor used for AP validation (low by default to preserve the PR curve).
     #[arg(long)]
     val_confidence: Option<f32>,
@@ -137,12 +148,9 @@ struct ExportTrainingArgs {
 #[cfg(feature = "onnx")]
 #[derive(Debug, ClapArgs)]
 struct ExportOnnxArgs {
-    /// Model architecture represented by the checkpoint.
-    #[arg(long)]
-    model: ModelId,
-    /// Local Montgomery .bpk artifact (defaults to <model>.bpk).
-    #[arg(long)]
-    weights: Option<PathBuf>,
+    /// Montgomery .bpk model to export; architecture is read from artifact metadata.
+    #[arg(long, value_name = "MODEL.bpk")]
+    model: PathBuf,
     /// Final ONNX path (defaults to <model>.onnx). A missing suffix is added explicitly.
     #[arg(long)]
     output: Option<PathBuf>,
@@ -193,11 +201,11 @@ struct ExportOnnxArgs {
 struct PackWeightsArgs {
     /// Model architecture represented by the checkpoint.
     #[arg(long)]
-    model: ModelId,
+    architecture: ModelId,
 
-    /// Official YOLOX .pth or tensor-only state produced by the Ultralytics development bridge.
-    #[arg(long)]
-    input: PathBuf,
+    /// Tensor-only state produced by tools/export_checkpoint_state.py.
+    #[arg(long, value_name = "STATE.pt")]
+    state: PathBuf,
 
     /// Native output artifact (defaults to <model>.bpk); must not already exist.
     #[arg(long)]
@@ -213,16 +221,9 @@ struct PredictArgs {
     #[arg(long)]
     source: PathBuf,
 
-    /// Model architecture and scale to run: yolox-nano/tiny/s/m/l/x, yolov3-tinyu,
-    /// yolov10n/s/m/b/l/x, yolo11n/s/m/l/x, yolo11n/s/m/l/x-seg, yolo11n/s/m/l/x-cls,
-    /// yolov8n/s/m/l/x, yolov8n/s/m/l/x-seg, yolov8n/s/m/l/x-cls, yolo12n/s/m/l/x,
-    /// yolo26n/s/m/l/x, yolo26n/s/m/l/x-seg, or yolo26n/s/m/l/x-cls.
-    #[arg(long)]
-    model: ModelId,
-
-    /// Local Montgomery .bpk artifact (defaults to <model>.bpk).
-    #[arg(long)]
-    weights: Option<PathBuf>,
+    /// Montgomery .bpk model to run; architecture and task are read from artifact metadata.
+    #[arg(long, value_name = "MODEL.bpk")]
+    model: PathBuf,
 
     /// Compute device for inference.
     #[arg(long, value_enum, default_value = "cpu")]
@@ -277,12 +278,12 @@ fn main() -> montgomery::Result<()> {
         Command::Predict(args) => predict(args),
         Command::PackWeights(args) => {
             let packed = match args.output {
-                Some(output) => pack_weights_to(args.model, &args.input, output)?,
-                None => pack_weights(args.model, &args.input)?,
+                Some(output) => pack_weights_to(args.architecture, &args.state, output)?,
+                None => pack_weights(args.architecture, &args.state)?,
             };
             eprintln!(
                 "Packed {} weights into {} ({} bytes, SHA-256 {})",
-                args.model,
+                args.architecture,
                 packed.path.display(),
                 packed.bytes,
                 packed.sha256,
@@ -293,8 +294,14 @@ fn main() -> montgomery::Result<()> {
         Command::ExportOnnx(args) => export_onnx_command(args),
         #[cfg(feature = "training")]
         Command::Train(args) => {
+            let initialization = match (args.architecture, args.model, args.resume) {
+                (Some(architecture), None, None) => TrainingInitialization::Scratch(architecture),
+                (None, Some(model), None) => TrainingInitialization::Pretrained(model),
+                (None, None, Some(checkpoint)) => TrainingInitialization::Resume(checkpoint),
+                _ => unreachable!("clap enforces exactly one training initialization mode"),
+            };
             let run = train_native(TrainingRequest {
-                model: args.model,
+                initialization,
                 data: args.data,
                 epochs: args.epochs,
                 batch_size: args.batch,
@@ -306,8 +313,6 @@ fn main() -> montgomery::Result<()> {
                 run_root: args.project,
                 name: args.name,
                 dry_run: args.dry_run,
-                resume: args.resume,
-                weights: args.weights,
                 val_confidence: args.val_confidence,
                 val_iou: args.val_iou,
                 max_detections: args.max_detections,
@@ -386,13 +391,12 @@ fn main() -> montgomery::Result<()> {
 
 #[cfg(feature = "onnx")]
 fn export_onnx_command(args: ExportOnnxArgs) -> montgomery::Result<()> {
-    let weights = args
-        .weights
-        .unwrap_or_else(|| PathBuf::from(args.model.artifact_filename()));
+    let weights = args.model;
+    let model = ModelId::from_burnpack(&weights)?;
     let output = args
         .output
-        .unwrap_or_else(|| PathBuf::from(format!("{}.onnx", args.model)));
-    let mut options = OnnxExportOptions::for_model(args.model, output);
+        .unwrap_or_else(|| weights.with_extension("onnx"));
+    let mut options = OnnxExportOptions::for_model(model, output);
     if let Some(imgsz) = &args.imgsz {
         let (height, width) = parse_imgsz(imgsz)?;
         options.input_shape = [args.batch, 3, height, width];
@@ -413,13 +417,13 @@ fn export_onnx_command(args: ExportOnnxArgs) -> montgomery::Result<()> {
     options.force = args.force;
     options.keep_intermediate = args.keep_intermediate;
     options.reproducible = args.reproducible;
-    let artifact = export_onnx(args.model, &weights, options)?;
+    let artifact = export_onnx(model, &weights, options)?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&artifact)?);
     } else {
         eprintln!(
             "Exported {} to {} ({} bytes, SHA-256 {}); sidecar {}",
-            args.model,
+            model,
             artifact.path.display(),
             artifact.bytes,
             artifact.sha256,
@@ -471,26 +475,20 @@ fn run_predict<B: Backend>(
     options: PredictOptions,
     device: Device<B>,
 ) -> montgomery::Result<()> {
-    let weights = args
-        .weights
-        .clone()
-        .unwrap_or_else(|| PathBuf::from(args.model.artifact_filename()));
-    if weights.extension().and_then(|value| value.to_str()) != Some("bpk") {
-        return Err(
-            "predict --weights requires a native .bpk artifact; convert upstream checkpoints with pack-weights"
-                .into(),
-        );
-    }
+    let model = args.model.clone();
     let output = args
         .output
         .clone()
         .unwrap_or_else(|| default_output(&args.source, args.masks));
 
-    eprintln!("Loading {} weights with Burn...", args.model);
-    let predictor: Predictor<B> =
-        Predictor::from_checkpoint_on_device(args.model, weights, device, options)?;
+    let predictor: Predictor<B> = Predictor::with_options_on_device(model, device, options)?;
+    eprintln!(
+        "Loaded {} ({}) with Burn.",
+        args.model.display(),
+        predictor.model_id()
+    );
 
-    match args.model.task() {
+    match predictor.task() {
         ModelTask::Classification => {
             let (image, classifications) = predictor.predict_classification_path(&args.source)?;
             report_classifications(

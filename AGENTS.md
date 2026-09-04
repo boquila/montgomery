@@ -9,7 +9,7 @@ For a new family, scale, or task, follow [docs/MODEL_BRINGUP.md](docs/MODEL_BRIN
 
 ## Repository map
 
-- `src/models/yolox/`: stable YOLOX nano/tiny/s/m/l/x implementation and official `.pth` import.
+- `src/models/yolox/`: stable YOLOX nano/tiny/s/m/l/x implementation and tensor-state import.
 - `src/models/yolov3_tiny/`, `yolov8/`, `yolov10/`, `yolo11/`, `yolo12/`, `yolo26/`:
   experimental Ultralytics-family graphs and native Burnpack loaders.
 - YOLOv8, YOLO11, and YOLO26 also provide `-seg` variants; YOLOv8, YOLO11, and YOLO26 provide
@@ -32,17 +32,18 @@ user-facing text.
 Run Python tools from the repository root with the tools project selected:
 
 ```console
-uv run --project tools tools/export_ultralytics_state.py yolo26n.pt target/yolo26n-state.pt
+uv run --project tools tools/export_checkpoint_state.py yolo26n.pt target/yolo26n-state.pt
 ```
 
 Stable YOLOX and Ultralytics-family models both run from native Burnpacks:
 
 ```console
-montgomery pack-weights --model yolox-nano --input target/yolox_nano.pth
-montgomery predict --model yolox-nano --source docs/dog_bike_man.jpg
+uv run --project tools tools/export_checkpoint_state.py target/yolox_nano.pth target/yolox-nano-state.pt
+montgomery pack-weights --architecture yolox-nano --state target/yolox-nano-state.pt
+montgomery predict --model yolox-nano.bpk --source docs/dog_bike_man.jpg
 
-montgomery pack-weights --model yolo26n --input target/yolo26n-state.pt
-montgomery predict --model yolo26n --source docs/dog_bike_man.jpg
+montgomery pack-weights --architecture yolo26n --state target/yolo26n-state.pt
+montgomery predict --model yolo26n.bpk --source docs/dog_bike_man.jpg
 ```
 
 Python/PyTorch is conversion- and development-time only; normal inference is Rust/Burn.

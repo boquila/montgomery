@@ -1027,7 +1027,7 @@ mod tests {
                 let checkpoint = std::path::PathBuf::from(concat!("target/", $id, "-state.pt"));
                 assert!(
                     checkpoint.exists(),
-                    "convert {}.pt with tools/export_ultralytics_state.py first",
+                    "convert {}.pt with tools/export_checkpoint_state.py first",
                     $id
                 );
                 let worker = std::thread::Builder::new()
@@ -1365,7 +1365,7 @@ mod tests {
                 let checkpoint = std::path::PathBuf::from(concat!("target/", $id, "-state.pt"));
                 assert!(
                     checkpoint.exists(),
-                    "convert {}.pt with tools/export_ultralytics_state.py first",
+                    "convert {}.pt with tools/export_checkpoint_state.py first",
                     $id
                 );
                 let worker = std::thread::Builder::new()
