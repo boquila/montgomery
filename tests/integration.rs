@@ -219,6 +219,24 @@ fn classifies_a_hot_dog() {
 }
 
 #[test]
+fn benchmarks_without_a_source() {
+    let output = montgomery(&[
+        "bench",
+        "--model",
+        "tests/assets/hot-dog-classifier.bpk",
+        "--warmup",
+        "0",
+        "--runs",
+        "1",
+        "--json",
+    ]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["model"], "yolo26n-cls");
+    assert!(report["inferences_per_second"].as_f64().unwrap() > 0.0);
+}
+
+#[test]
 fn prediction_options_enforce_the_public_threshold_contract() {
     for value in [0.0, 0.25, 1.0] {
         assert!(
@@ -343,7 +361,7 @@ fn cli_help_exposes_the_supported_workflows_and_coordinate_contract() {
     let output = montgomery(&["--help"]);
     assert!(output.status.success(), "{}", stderr(&output));
     let help = String::from_utf8_lossy(&output.stdout);
-    for command in ["predict", "pack-weights", "export-onnx", "train"] {
+    for command in ["predict", "bench", "pack-weights", "export-onnx", "train"] {
         assert!(help.contains(command), "missing {command} in:\n{help}");
     }
 

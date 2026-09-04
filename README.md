@@ -64,6 +64,12 @@ fn main() -> montgomery::Result<()> {
 montgomery predict --model best.bpk --source image.jpg --json
 ```
 
+Benchmark cold-start and steady-state inference without loading an image:
+
+```console
+montgomery bench --device gpu --model best.bpk
+```
+
 ## Train
 
 ```console
