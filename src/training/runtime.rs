@@ -14,7 +14,8 @@ use burn::{
     tensor::backend::Backend,
 };
 use burn_store::{ModuleSnapshot, PathFilter};
-use serde::Serialize;
+use cubecl::Runtime as _;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     ModelId,
@@ -233,26 +234,66 @@ enum VisionSampleLoader<'a> {
     },
 }
 
+#[derive(Clone, Copy)]
+enum VisionDatasetSplit {
+    Train,
+    Validation,
+}
+
+impl VisionDatasetSplit {
+    fn images(self, dataset: &crate::training::data::ResolvedDataset) -> &[PathBuf] {
+        match self {
+            Self::Train => &dataset.train_images,
+            Self::Validation => &dataset.val_images,
+        }
+    }
+
+    fn annotations(self, dataset: &crate::training::data::ResolvedDataset) -> Option<&PathBuf> {
+        match self {
+            Self::Train => dataset.train_annotations.as_ref(),
+            Self::Validation => dataset.val_annotations.as_ref(),
+        }
+    }
+
+    fn is_training(self) -> bool {
+        matches!(self, Self::Train)
+    }
+}
+
+fn order_images_by_target_density(
+    images: &[PathBuf],
+    counts: &[usize],
+) -> Result<Vec<PathBuf>, Box<dyn Error + Send + Sync>> {
+    if counts.len() != images.len() {
+        return Err("target-density index differs from the training image table".into());
+    }
+    let mut order = (0..images.len()).collect::<Vec<_>>();
+    order.sort_by(|left, right| {
+        counts[*right]
+            .cmp(&counts[*left])
+            .then_with(|| images[*left].cmp(&images[*right]))
+    });
+    Ok(order
+        .into_iter()
+        .map(|index| images[index].clone())
+        .collect())
+}
+
 impl<'a> VisionSampleLoader<'a> {
     fn new(
         dataset: &'a crate::training::data::ResolvedDataset,
         images: &'a [PathBuf],
-        training: bool,
+        split: VisionDatasetSplit,
     ) -> Result<Self, Box<dyn Error + Send + Sync>> {
         match dataset.format {
             DatasetFormat::Yolo => Ok(Self::Yolo { dataset, images }),
             DatasetFormat::Coco => {
-                let annotation = if images == dataset.train_images {
-                    dataset.train_annotations.as_ref()
-                } else if images == dataset.val_images {
-                    dataset.val_annotations.as_ref()
-                } else if images == dataset.test_images {
-                    dataset.test_annotations.as_ref()
-                } else {
-                    None
-                }
-                .ok_or("COCO split has no resolved annotation file")?;
-                let images_root = images
+                // Auto-batch probes may reorder samples, so never infer the split from equality.
+                let annotation = split
+                    .annotations(dataset)
+                    .ok_or("COCO split has no resolved annotation file")?;
+                let images_root = split
+                    .images(dataset)
                     .first()
                     .and_then(|path| path.parent())
                     .ok_or("COCO split contains no image root")?;
@@ -276,7 +317,7 @@ impl<'a> VisionSampleLoader<'a> {
                         })
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-                if training {
+                if split.is_training() {
                     for record in &mut index.records {
                         record.targets.retain(|target| !target.crowd);
                     }
@@ -296,6 +337,35 @@ impl<'a> VisionSampleLoader<'a> {
             Self::Yolo { images, .. } => images.len(),
             Self::Coco { index } => index.records.len(),
         }
+    }
+
+    /// Put annotation-dense samples first so a short segmentation memory probe observes the
+    /// dataset's largest raw instance counts instead of an arbitrary shuffled prefix.
+    fn images_by_target_density(
+        &self,
+        images: &[PathBuf],
+    ) -> Result<Vec<PathBuf>, Box<dyn Error + Send + Sync>> {
+        let counts = match self {
+            Self::Yolo { .. } => images
+                .iter()
+                .map(|image| {
+                    let labels = crate::training::data::manifest::yolo_label_path(image);
+                    if !labels.exists() {
+                        return Ok(0);
+                    }
+                    Ok(std::fs::read_to_string(labels)?
+                        .lines()
+                        .filter(|line| !line.trim().is_empty())
+                        .count())
+                })
+                .collect::<Result<Vec<_>, std::io::Error>>()?,
+            Self::Coco { index } => index
+                .records
+                .iter()
+                .map(|record| record.targets.len())
+                .collect(),
+        };
+        order_images_by_target_density(images, &counts)
     }
 
     fn load(
@@ -437,6 +507,7 @@ impl<'a> VisionEpochFormatter<'a> {
         task: crate::training::TaskKind,
         loader: VisionSampleLoader<'a>,
         training: bool,
+        shuffle: bool,
     ) -> Result<Self, Box<dyn Error + Send + Sync>> {
         let capacity = prefetch_sample_capacity(config.batch_size, config.prefetch);
         let worker_count = config.workers.max(1).min(capacity);
@@ -460,11 +531,11 @@ impl<'a> VisionEpochFormatter<'a> {
                 config.epochs,
             )?,
             pools,
-            order: crate::training::data::loader::epoch_permutation(
-                images.len(),
-                config.seed,
-                epoch,
-            ),
+            order: if shuffle {
+                crate::training::data::loader::epoch_permutation(images.len(), config.seed, epoch)
+            } else {
+                (0..images.len()).collect()
+            },
             epoch,
             next_sample: 0,
             pending: VecDeque::with_capacity(config.prefetch),
@@ -615,6 +686,7 @@ impl<'a, B: Backend> DetectionBatchSource<'a, B> {
                 crate::training::TaskKind::Detect,
                 loader,
                 training,
+                true,
             )?,
             device,
         })
@@ -649,6 +721,7 @@ impl<'a, B: Backend> SegmentationBatchSource<'a, B> {
         epoch: u64,
         loader: VisionSampleLoader<'a>,
         training: bool,
+        shuffle: bool,
     ) -> Result<Self, Box<dyn Error + Send + Sync>> {
         Ok(Self {
             formatter: VisionEpochFormatter::new(
@@ -658,6 +731,7 @@ impl<'a, B: Backend> SegmentationBatchSource<'a, B> {
                 crate::training::TaskKind::Segment,
                 loader,
                 training,
+                shuffle,
             )?,
             device,
         })
@@ -770,7 +844,7 @@ where
     Ok(target)
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TrainingInitialization {
     /// Construct the named architecture with freshly initialized parameters.
     Scratch(ModelId),
@@ -780,7 +854,7 @@ pub enum TrainingInitialization {
     Resume(PathBuf),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrainingRequest {
     pub initialization: TrainingInitialization,
     pub data: Option<PathBuf>,
@@ -803,16 +877,34 @@ pub struct TrainingRequest {
 }
 
 pub fn train(request: TrainingRequest) -> Result<PathBuf, Box<dyn Error + Send + Sync>> {
+    run_training(request, false)
+}
+
+/// Runs the bounded optimizer-step workload used by the CLI's isolated auto-batch worker.
+///
+/// This is public only because the package's binary is a separate crate; it is not a stable API.
+#[doc(hidden)]
+pub fn probe_batch(request: TrainingRequest) -> Result<PathBuf, Box<dyn Error + Send + Sync>> {
+    run_training(request, true)
+}
+
+fn run_training(
+    request: TrainingRequest,
+    probe_only: bool,
+) -> Result<PathBuf, Box<dyn Error + Send + Sync>> {
     let worker = std::thread::Builder::new()
         .name("montgomery-training".into())
         .stack_size(64 * 1024 * 1024)
-        .spawn(move || train_inner(request))?;
+        .spawn(move || train_inner(request, probe_only))?;
     worker.join().map_err(|_| {
         Box::<dyn Error + Send + Sync>::from("native training worker thread panicked")
     })?
 }
 
-fn train_inner(request: TrainingRequest) -> Result<PathBuf, Box<dyn Error + Send + Sync>> {
+fn train_inner(
+    request: TrainingRequest,
+    probe_only: bool,
+) -> Result<PathBuf, Box<dyn Error + Send + Sync>> {
     let resume = match &request.initialization {
         TrainingInitialization::Resume(path) => Some(path),
         TrainingInitialization::Scratch(_) | TrainingInitialization::Pretrained(_) => None,
@@ -999,6 +1091,7 @@ fn train_inner(request: TrainingRequest) -> Result<PathBuf, Box<dyn Error + Send
                 },
                 RunTaskOptions {
                     dry_run: request.dry_run,
+                    probe_only,
                     resume,
                     device: &device,
                 },
@@ -1008,7 +1101,11 @@ fn train_inner(request: TrainingRequest) -> Result<PathBuf, Box<dyn Error + Send
     macro_rules! run_detect {
         ($model:expr, $official:expr, $projection:expr) => {{
             let model = pretrained!($model, $official, $projection);
-            let loader = VisionSampleLoader::new(&dataset, &dataset.train_images, true)?;
+            let loader = VisionSampleLoader::new(
+                &dataset,
+                &dataset.train_images,
+                VisionDatasetSplit::Train,
+            )?;
             run_task(
                 model,
                 trainer,
@@ -1059,7 +1156,11 @@ fn train_inner(request: TrainingRequest) -> Result<PathBuf, Box<dyn Error + Send
                                 &dataset.val_images,
                                 &device,
                                 0,
-                                VisionSampleLoader::new(&dataset, &dataset.val_images, false)?,
+                                VisionSampleLoader::new(
+                                    &dataset,
+                                    &dataset.val_images,
+                                    VisionDatasetSplit::Validation,
+                                )?,
                                 false,
                             )?,
                             model_id,
@@ -1069,6 +1170,7 @@ fn train_inner(request: TrainingRequest) -> Result<PathBuf, Box<dyn Error + Send
                 },
                 RunTaskOptions {
                     dry_run: request.dry_run,
+                    probe_only,
                     resume,
                     device: &device,
                 },
@@ -1078,26 +1180,40 @@ fn train_inner(request: TrainingRequest) -> Result<PathBuf, Box<dyn Error + Send
     macro_rules! run_segment {
         ($model:expr, $official:expr, $projection:expr) => {{
             let model = pretrained!($model, $official, $projection);
-            let loader = VisionSampleLoader::new(&dataset, &dataset.train_images, true)?;
+            let probe_images = if probe_only {
+                let loader = VisionSampleLoader::new(
+                    &dataset,
+                    &dataset.train_images,
+                    VisionDatasetSplit::Train,
+                )?;
+                Some(loader.images_by_target_density(&dataset.train_images)?)
+            } else {
+                None
+            };
+            let training_images = probe_images.as_deref().unwrap_or(&dataset.train_images);
+            let loader =
+                VisionSampleLoader::new(&dataset, training_images, VisionDatasetSplit::Train)?;
             run_task(
                 model,
                 trainer,
                 SegmentationBatchSource::new(
                     &config,
-                    &dataset.train_images,
+                    training_images,
                     &device,
                     epoch,
                     loader.clone(),
                     true,
+                    !probe_only,
                 )?,
                 |epoch| {
                     SegmentationBatchSource::new(
                         &config,
-                        &dataset.train_images,
+                        training_images,
                         &device,
                         epoch,
                         loader.clone(),
                         true,
+                        !probe_only,
                     )
                 },
                 |model| {
@@ -1108,8 +1224,13 @@ fn train_inner(request: TrainingRequest) -> Result<PathBuf, Box<dyn Error + Send
                             &dataset.val_images,
                             &device,
                             0,
-                            VisionSampleLoader::new(&dataset, &dataset.val_images, false)?,
+                            VisionSampleLoader::new(
+                                &dataset,
+                                &dataset.val_images,
+                                VisionDatasetSplit::Validation,
+                            )?,
                             false,
+                            true,
                         )?,
                         model_id,
                         &config.validation,
@@ -1117,6 +1238,7 @@ fn train_inner(request: TrainingRequest) -> Result<PathBuf, Box<dyn Error + Send
                 },
                 RunTaskOptions {
                     dry_run: request.dry_run,
+                    probe_only,
                     resume,
                     device: &device,
                 },
@@ -1390,10 +1512,10 @@ fn train_inner(request: TrainingRequest) -> Result<PathBuf, Box<dyn Error + Send
             ReplacedProjection::Yolo26Segment
         ),
     }?;
-    if !request.dry_run && request.export_artifacts {
+    if !request.dry_run && !probe_only && request.export_artifacts {
         export_run_artifacts(&run)?;
     }
-    if !request.dry_run {
+    if !request.dry_run && !probe_only {
         write_run_summary(&run)?;
     }
     Ok(run)
@@ -1466,6 +1588,7 @@ fn export_run_artifacts(run: &std::path::Path) -> Result<(), Box<dyn Error + Sen
 #[derive(Clone, Copy)]
 struct RunTaskOptions<'a> {
     dry_run: bool,
+    probe_only: bool,
     resume: Option<&'a PathBuf>,
     device: &'a burn::tensor::Device<TrainBackend>,
 }
@@ -1519,29 +1642,37 @@ where
     let momentum = trainer.config.momentum;
     let weight_decay = trainer.config.weight_decay as f32;
     match trainer.config.optimizer {
-        OptimizerKind::AdamW => run_task_with_optimizer(
-            model,
-            trainer,
-            batches,
-            rebuild_batches,
-            options,
-            validator,
-            (
+        OptimizerKind::AdamW => {
+            let optimizer = (
                 crate::training::optimizer::selective_adamw::<TrainBackend, M>(
                     weight_decay,
                     gradient_clip,
                 ),
                 false,
-            ),
-        ),
-        OptimizerKind::Sgd => run_task_with_optimizer(
-            model,
-            trainer,
-            batches,
-            rebuild_batches,
-            options,
-            validator,
-            (
+            );
+            if options.probe_only {
+                probe_task_with_optimizer(
+                    model,
+                    trainer,
+                    batches,
+                    rebuild_batches,
+                    options,
+                    optimizer,
+                )
+            } else {
+                run_task_with_optimizer(
+                    model,
+                    trainer,
+                    batches,
+                    rebuild_batches,
+                    options,
+                    validator,
+                    optimizer,
+                )
+            }
+        }
+        OptimizerKind::Sgd => {
+            let optimizer = (
                 SgdConfig::new()
                     .with_momentum(Some(
                         MomentumConfig::new()
@@ -1554,9 +1685,138 @@ where
                     ))
                     .init(),
                 true,
-            ),
-        ),
+            );
+            if options.probe_only {
+                probe_task_with_optimizer(
+                    model,
+                    trainer,
+                    batches,
+                    rebuild_batches,
+                    options,
+                    optimizer,
+                )
+            } else {
+                run_task_with_optimizer(
+                    model,
+                    trainer,
+                    batches,
+                    rebuild_batches,
+                    options,
+                    validator,
+                    optimizer,
+                )
+            }
+        }
     }
+}
+
+struct LimitedBatchSource<S> {
+    inner: S,
+    limit: usize,
+    yielded: usize,
+}
+
+impl<T, S> EpochBatchSource<T> for LimitedBatchSource<S>
+where
+    S: EpochBatchSource<T>,
+{
+    fn batch_count(&self) -> usize {
+        self.limit
+    }
+
+    fn next_batch(&mut self) -> Result<Option<T>, String> {
+        if self.yielded == self.limit {
+            return Ok(None);
+        }
+        let batch = self.inner.next_batch()?;
+        if batch.is_some() {
+            self.yielded += 1;
+        }
+        Ok(batch)
+    }
+}
+
+fn probe_task_with_optimizer<M, O, F, S>(
+    mut model: M,
+    mut trainer: Trainer,
+    batches: S,
+    mut rebuild_batches: F,
+    options: RunTaskOptions<'_>,
+    optimizer: (O, bool),
+) -> Result<PathBuf, Box<dyn Error + Send + Sync>>
+where
+    M: TrainableTask<TrainBackend> + Clone,
+    O: Optimizer<M, TrainBackend>,
+    F: FnMut(u64) -> Result<S, Box<dyn Error + Send + Sync>>,
+    S: EpochBatchSource<M::Batch>,
+{
+    let (mut optimizer, external_weight_decay) = optimizer;
+    let mut ema_model = model.clone();
+    let mut ema_state = crate::training::ema::EmaState::new(0.9999)?;
+    ema_state.updates = trainer.state.ema_updates;
+    if let Some(path) = options.resume {
+        model = model.load_record(decode_record::<TrainBackend, _>(
+            std::fs::read(path.join("model.bin"))?,
+            options.device,
+        )?);
+        optimizer = optimizer.load_record(decode_record::<TrainBackend, _>(
+            std::fs::read(path.join("optimizer.bin"))?,
+            options.device,
+        )?);
+        ema_model = ema_model.load_record(decode_record::<TrainBackend, _>(
+            std::fs::read(path.join("ema.bin"))?,
+            options.device,
+        )?);
+    }
+
+    let limit = trainer.config.accumulation.min(batches.batch_count());
+    let mut batches = LimitedBatchSource {
+        inner: batches,
+        limit,
+        yielded: 0,
+    };
+    let (model, optimizer, _) = trainer.train_epoch::<TrainBackend, _, _, _, _>(
+        model,
+        optimizer,
+        &mut batches,
+        external_weight_decay,
+        |current, _step| {
+            ema_model =
+                crate::training::ema::update_model(ema_model.clone(), current, &mut ema_state)?;
+            Ok(())
+        },
+    )?;
+    // The first update materializes lazy Adam/SGD state. A second update is required so that the
+    // forward/backward graph is measured while that persistent optimizer state is already live.
+    let next = rebuild_batches(trainer.state.epoch as u64)?;
+    let limit = trainer.config.accumulation.min(next.batch_count());
+    let mut next = LimitedBatchSource {
+        inner: next,
+        limit,
+        yielded: 0,
+    };
+    let (model, optimizer, _) = trainer.train_epoch::<TrainBackend, _, _, _, _>(
+        model,
+        optimizer,
+        &mut next,
+        external_weight_decay,
+        |current, _step| {
+            ema_model =
+                crate::training::ema::update_model(ema_model.clone(), current, &mut ema_state)?;
+            Ok(())
+        },
+    )?;
+    TrainBackend::sync(options.device).map_err(|error| error.to_string())?;
+    let client = burn::backend::wgpu::WgpuRuntime::client(options.device);
+    if let Ok(usage) = client.memory_usage() {
+        eprintln!(
+            "AutoBatch probe allocator reservation after two steps: {:.2} GiB ({:.2} GiB active)",
+            usage.bytes_reserved as f64 / 1024.0_f64.powi(3),
+            usage.bytes_in_use as f64 / 1024.0_f64.powi(3),
+        );
+    }
+    std::hint::black_box((&model, &optimizer, &ema_model));
+    Ok(trainer.run.root)
 }
 
 fn run_task_with_optimizer<M, O, F, S, V>(
@@ -2040,7 +2300,11 @@ fn validate_inner(checkpoint: PathBuf) -> Result<ValidationSummary, Box<dyn Erro
                 &dataset.val_images,
                 &device,
                 manifest.state.epoch as u64,
-                VisionSampleLoader::new(&dataset, &dataset.val_images, false)?,
+                VisionSampleLoader::new(
+                    &dataset,
+                    &dataset.val_images,
+                    VisionDatasetSplit::Validation,
+                )?,
                 false,
             )?)
         };
@@ -2123,8 +2387,13 @@ fn validate_inner(checkpoint: PathBuf) -> Result<ValidationSummary, Box<dyn Erro
             &dataset.val_images,
             &device,
             manifest.state.epoch as u64,
-            VisionSampleLoader::new(&dataset, &dataset.val_images, false)?,
+            VisionSampleLoader::new(
+                &dataset,
+                &dataset.val_images,
+                VisionDatasetSplit::Validation,
+            )?,
             false,
+            true,
         )?;
         macro_rules! run_segment {
             ($model:expr) => {{
@@ -2975,6 +3244,25 @@ mod tests {
         assert_eq!(cache.peak, 4);
         assert_eq!(prefetch_sample_capacity(8, 2), 16);
         assert_eq!(prefetch_sample_capacity(usize::MAX, 2), usize::MAX);
+    }
+
+    #[test]
+    fn segmentation_probe_prioritizes_annotation_dense_images() {
+        let images = vec![
+            "sparse.jpg".into(),
+            "dense-b.jpg".into(),
+            "dense-a.jpg".into(),
+        ];
+        let ordered = order_images_by_target_density(&images, &[1, 8, 8]).unwrap();
+        assert_eq!(
+            ordered,
+            vec![
+                PathBuf::from("dense-a.jpg"),
+                PathBuf::from("dense-b.jpg"),
+                PathBuf::from("sparse.jpg")
+            ]
+        );
+        assert!(order_images_by_target_density(&images, &[1]).is_err());
     }
 
     #[derive(Module, Debug)]
