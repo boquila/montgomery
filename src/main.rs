@@ -1,5 +1,12 @@
 use std::path::PathBuf;
 use std::time::Instant;
+#[cfg(feature = "training")]
+use std::{
+    fmt,
+    process::{Command as ProcessCommand, Stdio},
+    str::FromStr,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 #[cfg(feature = "gpu")]
 use burn::backend::Wgpu;
@@ -16,8 +23,8 @@ use montgomery::export::{
 use montgomery::training::automatic_worker_count;
 #[cfg(feature = "training")]
 use montgomery::training::runtime::{
-    TrainingInitialization, TrainingRequest, export as export_training, train as train_native,
-    validate as validate_native,
+    TrainingInitialization, TrainingRequest, export as export_training,
+    probe_batch as probe_training_batch, train as train_native, validate as validate_native,
 };
 use montgomery::{
     BenchmarkOptions, InferenceBenchmark, ModelId, ModelTask, PredictOptions, Predictor, annotate,
@@ -65,6 +72,52 @@ enum Command {
     /// Export a native training checkpoint to the existing inference Burnpack format.
     #[cfg(feature = "training")]
     Export(ExportTrainingArgs),
+    /// Internal isolated worker used by automatic batch-size discovery.
+    #[cfg(feature = "training")]
+    #[command(name = "__batch-probe", hide = true)]
+    BatchProbe(BatchProbeArgs),
+}
+
+#[cfg(feature = "training")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RequestedBatchSize {
+    Fixed(usize),
+    Auto,
+}
+
+#[cfg(feature = "training")]
+impl Default for RequestedBatchSize {
+    fn default() -> Self {
+        Self::Fixed(8)
+    }
+}
+
+#[cfg(feature = "training")]
+impl fmt::Display for RequestedBatchSize {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Fixed(value) => value.fmt(formatter),
+            Self::Auto => formatter.write_str("-1"),
+        }
+    }
+}
+
+#[cfg(feature = "training")]
+impl FromStr for RequestedBatchSize {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        if value == "-1" {
+            return Ok(Self::Auto);
+        }
+        let parsed = value
+            .parse::<usize>()
+            .map_err(|_| "batch must be -1 (auto) or a positive integer".to_owned())?;
+        if parsed == 0 {
+            return Err("batch must be -1 (auto) or a positive integer".to_owned());
+        }
+        Ok(Self::Fixed(parsed))
+    }
 }
 
 #[cfg(feature = "training")]
@@ -90,8 +143,9 @@ struct TrainArgs {
     data: Option<PathBuf>,
     #[arg(long, default_value_t = 100)]
     epochs: usize,
-    #[arg(long, default_value_t = 8)]
-    batch: usize,
+    /// Images per microbatch; use -1 to benchmark this model and choose a conservative hardware-specific value.
+    #[arg(long, default_value_t, allow_hyphen_values = true)]
+    batch: RequestedBatchSize,
     #[arg(long, default_value_t = 1)]
     accumulation: usize,
     /// CPU preprocessing workers.
@@ -147,6 +201,14 @@ struct ExportTrainingArgs {
     checkpoint: PathBuf,
     #[arg(long)]
     output: PathBuf,
+}
+
+#[cfg(feature = "training")]
+#[derive(Debug, ClapArgs)]
+struct BatchProbeArgs {
+    /// JSON-encoded TrainingRequest prepared by the parent process.
+    #[arg(long)]
+    request: PathBuf,
 }
 
 #[cfg(feature = "onnx")]
@@ -305,6 +367,208 @@ fn default_output(input: &std::path::Path, masks: bool) -> PathBuf {
     input.with_file_name(format!("{stem}-{suffix}.png"))
 }
 
+#[cfg(feature = "training")]
+const AUTO_BATCH_MAX: usize = 1024;
+#[cfg(feature = "training")]
+const AUTO_BATCH_HEADROOM_PERCENT: usize = 80;
+#[cfg(feature = "training")]
+const BATCH_PROBE_SUCCESS: &str = "MONTGOMERY_BATCH_PROBE_OK";
+
+#[cfg(feature = "training")]
+struct AutoBatchWorkspace(PathBuf);
+
+#[cfg(feature = "training")]
+impl Drop for AutoBatchWorkspace {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+#[cfg(feature = "training")]
+fn maximum_fitting_batch<F>(maximum: usize, mut fits: F) -> Result<usize, String>
+where
+    F: FnMut(usize) -> Result<bool, String>,
+{
+    if maximum == 0 {
+        return Err("automatic batch sizing requires at least one training image".into());
+    }
+    if !fits(1)? {
+        return Err("batch 1 does not fit on the selected training device".into());
+    }
+    if maximum == 1 {
+        return Ok(1);
+    }
+
+    let mut fitting = 1;
+    let mut candidate = 2.min(maximum);
+    let failing = loop {
+        if fits(candidate)? {
+            fitting = candidate;
+            if candidate == maximum {
+                return Ok(candidate);
+            }
+            candidate = candidate.saturating_mul(2).min(maximum);
+        } else {
+            break candidate;
+        }
+    };
+
+    let mut low = fitting + 1;
+    let mut high = failing - 1;
+    while low <= high {
+        let middle = low + (high - low) / 2;
+        if fits(middle)? {
+            fitting = middle;
+            low = middle + 1;
+        } else {
+            high = middle - 1;
+        }
+    }
+    Ok(fitting)
+}
+
+#[cfg(feature = "training")]
+fn has_capacity_failure(output: &str) -> bool {
+    let output = output.to_ascii_lowercase();
+    [
+        "out of memory",
+        "out-of-memory",
+        "oom error",
+        "failed to allocate",
+        "memory allocation failed",
+        "memory allocation of",
+        "device lost",
+    ]
+    .iter()
+    .any(|pattern| output.contains(pattern))
+}
+
+#[cfg(feature = "training")]
+fn output_tail(output: &str) -> &str {
+    const MAX_CHARS: usize = 8_000;
+    if output.len() <= MAX_CHARS {
+        return output;
+    }
+    let mut start = output.len() - MAX_CHARS;
+    while !output.is_char_boundary(start) {
+        start += 1;
+    }
+    &output[start..]
+}
+
+#[cfg(feature = "training")]
+fn select_automatic_batch_size(request: &TrainingRequest) -> montgomery::Result<usize> {
+    if matches!(request.initialization, TrainingInitialization::Resume(_)) {
+        return Err("--batch -1 cannot be combined with --resume because exact resume retains the checkpoint batch size".into());
+    }
+    let dataset_path = request
+        .data
+        .as_ref()
+        .ok_or("automatic batch sizing requires --data")?;
+    let dataset = montgomery::training::data::DatasetManifest::load(dataset_path)?;
+    let maximum = dataset.train_images.len().min(AUTO_BATCH_MAX);
+    if maximum == 0 {
+        return Err("automatic batch sizing requires at least one training image".into());
+    }
+
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let workspace_path = PathBuf::from("target")
+        .join("auto-batch")
+        .join(format!("{}-{timestamp}", std::process::id()));
+    std::fs::create_dir_all(&workspace_path)?;
+    let workspace = AutoBatchWorkspace(workspace_path);
+    let request_path = workspace.0.join("request.json");
+    let executable = std::env::current_exe()?;
+    let mut outcomes = std::collections::HashMap::<usize, bool>::new();
+
+    let mut probe = |batch: usize| -> Result<bool, String> {
+        if let Some(result) = outcomes.get(&batch) {
+            return Ok(*result);
+        }
+        let mut probe_request = request.clone();
+        probe_request.batch_size = batch;
+        probe_request.run_root = workspace.0.join("runs");
+        probe_request.name = format!("probe-{batch}");
+        probe_request.dry_run = false;
+        probe_request.validation_enabled = false;
+        probe_request.export_artifacts = false;
+        let encoded = serde_json::to_vec(&probe_request).map_err(|error| error.to_string())?;
+        std::fs::write(&request_path, encoded).map_err(|error| error.to_string())?;
+
+        eprintln!("AutoBatch: probing batch {batch}...");
+        let child = ProcessCommand::new(&executable)
+            .arg("__batch-probe")
+            .arg("--request")
+            .arg(&request_path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|error| format!("failed to start isolated batch probe: {error}"))?;
+        let stdout = String::from_utf8_lossy(&child.stdout);
+        let stderr = String::from_utf8_lossy(&child.stderr);
+        let combined = format!("{stdout}\n{stderr}");
+        let result = if child.status.success() && stdout.contains(BATCH_PROBE_SUCCESS) {
+            eprintln!("AutoBatch: batch {batch} fits");
+            for diagnostic in stderr
+                .lines()
+                .filter(|line| line.contains("AutoBatch probe allocator reservation"))
+            {
+                eprintln!("{diagnostic}");
+            }
+            true
+        } else if has_capacity_failure(&combined) {
+            eprintln!("AutoBatch: batch {batch} exceeded available training memory");
+            false
+        } else {
+            return Err(format!(
+                "batch probe {batch} failed for a reason unrelated to training-memory capacity:\n{}",
+                output_tail(&combined)
+            ));
+        };
+        outcomes.insert(batch, result);
+        Ok(result)
+    };
+
+    let verified_maximum = maximum_fitting_batch(maximum, &mut probe)
+        .map_err(Box::<dyn std::error::Error + Send + Sync>::from)?;
+    let selected = verified_maximum.saturating_mul(AUTO_BATCH_HEADROOM_PERCENT) / 100;
+    let selected = selected.max(1);
+    if selected != verified_maximum
+        && !probe(selected).map_err(Box::<dyn std::error::Error + Send + Sync>::from)?
+    {
+        return Err(format!(
+            "conservative automatic batch {selected} unexpectedly failed after batch {verified_maximum} fit"
+        )
+        .into());
+    }
+    eprintln!(
+        "AutoBatch: selected batch {selected} (80% of verified maximum {verified_maximum}, search cap {maximum})"
+    );
+    Ok(selected)
+}
+
+#[cfg(feature = "training")]
+fn run_batch_probe(args: BatchProbeArgs) -> montgomery::Result<()> {
+    let encoded = std::fs::read(&args.request)?;
+    let mut request: TrainingRequest = serde_json::from_slice(&encoded)?;
+    if request.batch_size == 0 {
+        return Err("internal batch probe received batch size zero".into());
+    }
+    request.dry_run = false;
+    request.validation_enabled = false;
+    request.export_artifacts = false;
+    if let Err(error) = probe_training_batch(request) {
+        eprintln!("MONTGOMERY_BATCH_PROBE_ERROR: {error}");
+        return Err(error);
+    }
+    println!("{BATCH_PROBE_SUCCESS}");
+    Ok(())
+}
+
 fn main() -> montgomery::Result<()> {
     #[cfg(all(windows, feature = "training", debug_assertions))]
     if std::env::var_os("RUST_MIN_STACK").is_none() {
@@ -342,11 +606,15 @@ fn main() -> montgomery::Result<()> {
                 (None, None, Some(checkpoint)) => TrainingInitialization::Resume(checkpoint),
                 _ => unreachable!("clap enforces exactly one training initialization mode"),
             };
-            let run = train_native(TrainingRequest {
+            let requested_batch = args.batch;
+            let mut request = TrainingRequest {
                 initialization,
                 data: args.data,
                 epochs: args.epochs,
-                batch_size: args.batch,
+                batch_size: match requested_batch {
+                    RequestedBatchSize::Fixed(value) => value,
+                    RequestedBatchSize::Auto => 1,
+                },
                 accumulation: args.accumulation,
                 workers: args.workers,
                 prefetch: args.prefetch,
@@ -361,7 +629,11 @@ fn main() -> montgomery::Result<()> {
                 validation_enabled: !args.no_val,
                 export_artifacts: !args.no_export,
                 checkpoint_interval: args.save_period,
-            })?;
+            };
+            if requested_batch == RequestedBatchSize::Auto {
+                request.batch_size = select_automatic_batch_size(&request)?;
+            }
+            let run = train_native(request)?;
             eprintln!("Training run: {}", run.display());
             let best = run.join("exports/best.bpk");
             if best.exists() {
@@ -379,6 +651,8 @@ fn main() -> montgomery::Result<()> {
             }
             Ok(())
         }
+        #[cfg(feature = "training")]
+        Command::BatchProbe(args) => run_batch_probe(args),
         #[cfg(feature = "training")]
         Command::Val(args) => {
             let summary = validate_native(args.checkpoint)?;
@@ -887,5 +1161,65 @@ mod tests {
             default_output(std::path::Path::new("photos/dog.jpg"), true),
             PathBuf::from("photos/dog-segmentation.png")
         );
+    }
+
+    #[cfg(feature = "training")]
+    #[test]
+    fn parses_fixed_and_automatic_training_batch_sizes() {
+        assert_eq!("-1".parse(), Ok(RequestedBatchSize::Auto));
+        assert_eq!("16".parse(), Ok(RequestedBatchSize::Fixed(16)));
+        assert!("0".parse::<RequestedBatchSize>().is_err());
+        assert!("-2".parse::<RequestedBatchSize>().is_err());
+
+        let args = Args::try_parse_from([
+            "montgomery",
+            "train",
+            "--architecture",
+            "yolo26n",
+            "--data",
+            "dataset.yaml",
+            "--batch",
+            "-1",
+        ])
+        .expect("clap should accept -1 as the batch value");
+        let Command::Train(train) = args.command else {
+            panic!("expected train command");
+        };
+        assert_eq!(train.batch, RequestedBatchSize::Auto);
+    }
+
+    #[cfg(feature = "training")]
+    #[test]
+    fn automatic_batch_search_finds_exact_boundary() {
+        let mut probed = Vec::new();
+        let maximum = maximum_fitting_batch(100, |batch| {
+            probed.push(batch);
+            Ok(batch <= 37)
+        })
+        .unwrap();
+        assert_eq!(maximum, 37);
+        assert_eq!(&probed[..7], &[1, 2, 4, 8, 16, 32, 64]);
+    }
+
+    #[cfg(feature = "training")]
+    #[test]
+    fn automatic_batch_search_honors_dataset_cap_and_batch_one_failure() {
+        assert_eq!(maximum_fitting_batch(13, |_| Ok(true)), Ok(13));
+        assert_eq!(
+            maximum_fitting_batch(20, |batch| Ok(batch < 1)),
+            Err("batch 1 does not fit on the selected training device".into())
+        );
+        assert!(maximum_fitting_batch(0, |_| Ok(true)).is_err());
+    }
+
+    #[cfg(feature = "training")]
+    #[test]
+    fn only_capacity_signatures_are_treated_as_a_fitting_boundary() {
+        assert!(has_capacity_failure("DeviceError: Out of memory"));
+        assert!(has_capacity_failure(
+            "memory allocation of 8589934592 bytes failed"
+        ));
+        assert!(has_capacity_failure("GPU device lost"));
+        assert!(!has_capacity_failure("dataset image could not be decoded"));
     }
 }

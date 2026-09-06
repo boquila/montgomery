@@ -27,6 +27,7 @@ training = [
     "dep:rand_chacha",
     "dep:serde_yaml",
     "dep:sha2",
+    "dep:cubecl",
 ]
 # Experimental CPU configurations retained for backend measurements; neither changes the default path.
 # burn-flex's default features already include simd (macerator/gemm) and rayon; x86-v4 adds the
@@ -40,6 +41,7 @@ burn-cpu = { version = "=0.21.0-pre.4", optional = true }
 burn-flex = "=0.21.0-pre.4"
 burn-store = { version = "=0.21.0-pre.4", default-features = false, features = ["std", "pytorch", "burnpack", "memmap"], optional = true }
 burn-wgpu = { version = "=0.21.0-pre.4", optional = true }
+cubecl = { version = "=0.10.0-pre.4", default-features = false, optional = true }
 ciborium = { version = "0.2", optional = true }
 clap = { version = "4", features = ["derive"] }
 fast_image_resize = { version = "=6.0.0", features = ["image"] }

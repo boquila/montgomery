@@ -3375,6 +3375,7 @@ dependencies = [
  "burn-wgpu",
  "ciborium",
  "clap",
+ "cubecl",
  "fast_image_resize",
  "font8x8",
  "image",

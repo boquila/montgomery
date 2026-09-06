@@ -79,6 +79,9 @@ montgomery train --architecture yolo26n --data dataset.yaml --epochs 100
 # Pretrained initialization
 montgomery train --model yolo26n.bpk --data dataset.yaml --epochs 100
 
+# Automatically choose a hardware-specific batch size
+montgomery train --model yolo26n.bpk --data dataset.yaml --batch -1 --epochs 100
+
 # Exact continuation (model and dataset come from the training checkpoint)
 montgomery train --resume runs/train/checkpoints/last
 ```
@@ -96,6 +99,8 @@ Every run contains:
 Only the best and latest resumable models are retained.
 Use `--save-period` to control recovery checkpoints and `--workers` to override automatic CPU
 worker selection.
+`--batch -1` runs isolated WGPU optimizer-step probes, finds the largest fitting microbatch up to
+the training-set size (capped at 1024), and uses 80% of that verified maximum for runtime headroom.
 
 ## Export ONNX
 
