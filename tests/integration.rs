@@ -443,6 +443,51 @@ fn training_cli_requires_one_explicit_initialization_mode() {
     assert!(help.contains("--output <OUTPUT>"), "{help}");
 }
 
+#[cfg(feature = "training")]
+#[test]
+fn validation_cli_accepts_burnpack_and_dataset_or_checkpoint() {
+    let output = montgomery(&["val", "--help"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let help = String::from_utf8_lossy(&output.stdout);
+    for selector in [
+        "--checkpoint <CHECKPOINT>",
+        "--model <MODEL.bpk>",
+        "--data <DATASET.yaml>",
+    ] {
+        assert!(help.contains(selector), "missing {selector} in:\n{help}");
+    }
+
+    let output = montgomery(&["val", "--model", "missing.bpk"]);
+    assert!(!output.status.success());
+    assert!(stderr(&output).contains("--data <DATASET.yaml>"));
+
+    let output = montgomery(&[
+        "val",
+        "--checkpoint",
+        "missing-checkpoint",
+        "--model",
+        "missing.bpk",
+        "--data",
+        "missing.yaml",
+    ]);
+    assert!(!output.status.success());
+    assert!(stderr(&output).contains("cannot be used with"));
+
+    let output = montgomery(&["val", "--model", "upstream.pt", "--data", "missing.yaml"]);
+    assert!(!output.status.success());
+    assert!(stderr(&output).contains("native .bpk artifact"));
+
+    let output = montgomery(&[
+        "val",
+        "--model",
+        "tests/assets/hot-dog-classifier.bpk",
+        "--data",
+        "missing.yaml",
+    ]);
+    assert!(!output.status.success());
+    assert!(stderr(&output).contains("cannot open dataset manifest"));
+}
+
 #[test]
 fn cli_rejects_bad_requests_before_loading_models() {
     let cases: &[(&[&str], &str)] = &[
