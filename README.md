@@ -105,7 +105,7 @@ the training-set size (capped at 1024), and uses 80% of that verified maximum fo
 ## Export ONNX
 
 ```console
-montgomery export-onnx --model yolo26n.bpk
+montgomery export --model yolo26n.bpk --format onnx
 ```
 
 This reads the explicit Burnpack and writes `yolo26n.onnx`; use `--output` to select another path.

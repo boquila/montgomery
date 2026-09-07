@@ -50,10 +50,9 @@ Python/PyTorch is conversion- and development-time only; normal inference is Rus
 
 ## Verification
 
-CI installs the current stable Rust toolchain on every run. Before handing off changes, update the
-local stable toolchain (`rustup update stable`), confirm `rustc --version` matches current stable,
-and run the exact CI sequence below. Do not substitute `cargo check` for Clippy, filter the training
-tests, or omit `cargo build`:
+CI installs the current stable Rust toolchain on every run. Before handing off changes, run the
+exact CI sequence below. Do not substitute `cargo check` for Clippy, filter the training tests, or
+omit `cargo build`:
 
 ```console
 cargo fmt --check
