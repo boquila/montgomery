@@ -50,6 +50,14 @@ def ratio(entry: dict) -> float:
     return median(entry, "ultralytics") / median(entry, "native")
 
 
+def resource_median(entry: dict, framework: str, metric: str) -> float | None:
+    summary = entry.get("summary", {}).get(framework, {}).get("resources", {}).get(metric)
+    if not summary:
+        return None
+    value = summary.get("median")
+    return float(value) if value is not None else None
+
+
 def finish(figure, output: Path) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     figure.tight_layout()
@@ -170,15 +178,84 @@ def resolution_scaling(entries: dict[str, dict], output: Path) -> None:
             label="Ultralytics / PyTorch-CUDA",
         )
         axis.set_yticks(y, labels)
-        axis.invert_yaxis()
         axis.set_title(f"{imgsz} x {imgsz}", fontweight="bold", fontsize=15)
         axis.set_xlabel("External command wall time (seconds)")
         axis.spines[["top", "right"]].set_visible(False)
-    axes[0].legend(frameon=False, loc="lower right")
+    axes[0].invert_yaxis()
+    handles, legend_labels = axes[0].get_legend_handles_labels()
+    figure.legend(handles, legend_labels, frameon=False, ncol=2, loc="upper right")
     figure.suptitle(
         "Real-world training resolutions", x=0.04, ha="left", fontsize=20, fontweight="bold"
     )
     finish(figure, output / "resolution-scaling.png")
+
+
+def resolution_memory(
+    entries: dict[str, dict], output: Path, metric: str, title: str, filename: str
+) -> None:
+    path = output / filename
+    baseline_ids = [
+        f"{family}-{task}"
+        for family in FAMILIES
+        for task in ("detect", "segment")
+    ] + [f"{family}-detect" for family in ("yolov3-tinyu", "yolov10n", "yolo12n")]
+    baseline_ids = [
+        scenario_id
+        for scenario_id in baseline_ids
+        if scenario_id in entries and f"{scenario_id}-1280px" in entries
+    ]
+    available_ids = []
+    for scenario_id in baseline_ids:
+        candidates = (entries[scenario_id], entries[f"{scenario_id}-1280px"])
+        if all(
+            resource_median(entry, framework, metric) is not None
+            for entry in candidates
+            for framework in ("native", "ultralytics")
+        ):
+            available_ids.append(scenario_id)
+    if not available_ids:
+        path.unlink(missing_ok=True)
+        return
+
+    labels = [
+        scenario_id.replace("yolov", "YOLOv").replace("yolo", "YOLO")
+        for scenario_id in available_ids
+    ]
+    y = list(range(len(available_ids)))
+    figure, axes = plt.subplots(1, 2, figsize=(17, 8), sharex=True, sharey=True)
+    for axis, imgsz in zip(axes, (640, 1280)):
+        resolution_entries = [
+            entries[scenario_id] if imgsz == 640 else entries[f"{scenario_id}-1280px"]
+            for scenario_id in available_ids
+        ]
+        native = [
+            resource_median(entry, "native", metric) / 1024**3
+            for entry in resolution_entries
+        ]
+        ultra = [
+            resource_median(entry, "ultralytics", metric) / 1024**3
+            for entry in resolution_entries
+        ]
+        native_bars = axis.barh(
+            [value + 0.19 for value in y], native, height=0.36, color=NATIVE,
+            label="Montgomery / Burn-WGPU",
+        )
+        ultra_bars = axis.barh(
+            [value - 0.19 for value in y], ultra, height=0.36, color=ULTRA,
+            label="Ultralytics / PyTorch-CUDA",
+        )
+        axis.bar_label(native_bars, fmt="%.2f", padding=3, fontsize=8, color=TEXT)
+        axis.bar_label(ultra_bars, fmt="%.2f", padding=3, fontsize=8, color=TEXT)
+        axis.set_yticks(y, labels)
+        axis.set_title(f"{imgsz} x {imgsz}", fontweight="bold", fontsize=15)
+        axis.set_xlabel("Peak memory (GiB; median across trials)")
+        axis.margins(x=0.15)
+        axis.spines[["top", "right"]].set_visible(False)
+    axes[0].invert_yaxis()
+    handles, legend_labels = axes[0].get_legend_handles_labels()
+    figure.legend(handles, legend_labels, frameon=False, ncol=2, loc="upper right")
+    figure.suptitle(title, x=0.04, ha="left", fontsize=20, fontweight="bold")
+    finish(figure, path)
 
 
 def all_scenarios(entries: dict[str, dict], output: Path) -> None:
@@ -401,6 +478,20 @@ def main() -> None:
     axis_scaling(entries, args.output, "scale")
     axis_scaling(entries, args.output, "batch")
     resolution_scaling(entries, args.output)
+    resolution_memory(
+        entries,
+        args.output,
+        "peak_rss_bytes",
+        "Peak process-tree RAM by input resolution",
+        "resolution-ram.png",
+    )
+    resolution_memory(
+        entries,
+        args.output,
+        "peak_gpu_dedicated_bytes",
+        "Peak dedicated GPU memory (VRAM) by input resolution",
+        "resolution-vram.png",
+    )
     all_scenarios(entries, args.output)
     trial_ranges(entries, args.output)
     convergence(entries, args.output)

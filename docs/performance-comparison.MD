@@ -14,9 +14,20 @@
 | Default workload | 3 epochs, batch 2, one checkpoint per epoch |
 | Timed region | Complete command: startup, loading, training, and checkpoint writes |
 | Trials | 3 per detect/classify result; 2 per segment result |
+| Memory pass | One extra trial per 640/1280 cell; 100 ms target sampling interval |
 
 Every time below is the median command wall time. Lower is better. `Advantage` is always written
 for the winner, so `Ultralytics 2.50×` means Montgomery took 2.50 times as long.
+
+| Comparison detail | Montgomery | Ultralytics | Treatment |
+| --- | --- | --- | --- |
+| Input workload | Same model family, task, dataset, epochs, batch, and resolution | Same | Held constant |
+| Training recipe | FP32 AdamW, matched learning-rate settings, seed 0 | Same | Held constant |
+| CPU workers | 4 requested | 4 requested | Held constant |
+| Loader design | Threads, global prefetch queue of 2 batches | Processes, pinned memory, prefetch factor 4 per worker | Measured as part of each program |
+| GPU stack | Burn/WGPU over Vulkan | PyTorch over CUDA | Measured as part of each program |
+| Validation | Disabled inside timed training | Disabled inside timed training | Held constant |
+| Saving | Resumable checkpoint each epoch | Checkpoint each epoch | Held constant at the workflow level |
 
 ## Main result
 
@@ -67,6 +78,71 @@ These are the same nano models, batch 2, and 3 epochs. Only the model input chan
 The 1280 sweep is limited to nano models. In a preflight run, YOLO26m segmentation at 1280,
 batch 2 exceeded the RTX 5080's 16 GB VRAM in Burn/WGPU. It is not reported as a timing result, and
 the benchmark does not lower the batch size for only one framework.
+
+## RAM and VRAM
+
+These are end-to-end operational footprints, not model tensors in isolation. Both commands request
+four CPU data-loading workers. Montgomery implements them as threads with a global two-batch
+prefetch queue. Ultralytics uses four Python worker processes, pinned memory, and four prefetched
+tasks per worker. Those implementation choices are intentionally included because they determine
+what users must provision to run each program.
+On this Windows run, every native trial peaked at one OS process and every Ultralytics trial at six
+process-tree members: the environment launcher, trainer, and four loader workers.
+
+The tables show one dedicated memory-observation pass per cell. Values are sampled peaks in GiB;
+they are separate from the repeated timing medians above. The standard benchmark now records these
+measurements for every trial, so the next complete published run will report median memory peaks.
+Actual cadence is query-time dependent and is recorded with the sample count and duration.
+
+### Memory at 640 × 640
+
+All rows use batch 2 and 3 epochs.
+
+| Model | Task | Montgomery RAM | Ultralytics RAM | Montgomery VRAM | Ultralytics VRAM |
+| --- | --- | ---: | ---: | ---: | ---: |
+| YOLOv8n | Detect | **0.54 GiB** | 4.76 GiB | 1.14 GiB | **0.96 GiB** |
+| YOLOv8n | Segment | **0.59 GiB** | 4.76 GiB | 2.51 GiB | **1.42 GiB** |
+| YOLO11n | Detect | **0.53 GiB** | 4.74 GiB | 1.34 GiB | **1.05 GiB** |
+| YOLO11n | Segment | **0.57 GiB** | 4.82 GiB | 2.63 GiB | **1.47 GiB** |
+| YOLO26n | Detect | **0.55 GiB** | 4.77 GiB | 1.65 GiB | **1.13 GiB** |
+| YOLO26n | Segment | **0.60 GiB** | 4.84 GiB | 3.25 GiB | **1.62 GiB** |
+| YOLOv3-Tiny-U | Detect | **1.10 GiB** | 4.78 GiB | 2.31 GiB | **1.38 GiB** |
+| YOLOv10n | Detect | **0.56 GiB** | 4.80 GiB | 1.71 GiB | **1.19 GiB** |
+| YOLO12n | Detect | **0.54 GiB** | 4.79 GiB | 1.53 GiB | **1.15 GiB** |
+
+![Peak process-tree RAM at 640 and 1280](assets/resolution-ram.png)
+
+### Memory at 1280 × 1280
+
+All rows use batch 2 and 3 epochs.
+
+| Model | Task | Montgomery RAM | Ultralytics RAM | Montgomery VRAM | Ultralytics VRAM |
+| --- | --- | ---: | ---: | ---: | ---: |
+| YOLOv8n | Detect | **0.61 GiB** | 5.55 GiB | 4.56 GiB | **2.85 GiB** |
+| YOLOv8n | Segment | **0.66 GiB** | 5.41 GiB | 5.84 GiB | **3.80 GiB** |
+| YOLO11n | Detect | **0.59 GiB** | 5.55 GiB | 5.37 GiB | **2.97 GiB** |
+| YOLO11n | Segment | **0.63 GiB** | 5.43 GiB | 6.65 GiB | **3.55 GiB** |
+| YOLO26n | Detect | **0.62 GiB** | 5.56 GiB | 6.42 GiB | **3.62 GiB** |
+| YOLO26n | Segment | **0.67 GiB** | 5.46 GiB | 8.49 GiB | **4.38 GiB** |
+| YOLOv3-Tiny-U | Detect | **1.10 GiB** | 5.57 GiB | 4.60 GiB | **3.64 GiB** |
+| YOLOv10n | Detect | **0.61 GiB** | 5.62 GiB | 6.97 GiB | **3.55 GiB** |
+| YOLO12n | Detect | **0.59 GiB** | 5.59 GiB | 8.79 GiB | **4.42 GiB** |
+
+![Peak dedicated GPU memory at 640 and 1280](assets/resolution-vram.png)
+
+At 640, Montgomery uses 0.53-1.10 GiB of resident process-tree RAM versus 4.74-4.84 GiB for
+Ultralytics. At 1280, the ranges are 0.59-1.10 GiB and 5.41-5.62 GiB. Dedicated GPU memory moves in
+the other direction: Montgomery uses more VRAM in every measured cell, reaching 8.79 GiB for
+YOLO12n detection and 8.49 GiB for YOLO26n segmentation at 1280.
+
+RAM is the simultaneous sum of resident working sets for the root process and all descendants. On
+Windows, shared pages may appear in more than one process working set, so this is an operational
+footprint rather than an exact count of unique physical pages. The raw data also retains private
+committed bytes, per-PID peaks, process names/counts, dedicated VRAM, shared GPU memory, sampler
+provenance, sample counts, and any measurement errors. VRAM comes from Windows' per-process GPU
+counters rather than whole-device `nvidia-smi` usage.
+The observer itself runs in the benchmark parent and is excluded from these memory totals. Its
+final shutdown query is outside command wall time; concurrent sampling work is not corrected for.
 
 ## What batch size changes at 640 × 640
 
@@ -141,6 +217,8 @@ trial, the diamond is the median, and the horizontal line covers the minimum-to-
 - At **640 × 640, batch 4**, Montgomery catches up: YOLO26n detection is 1.05× faster and
   segmentation is 1.06× slower.
 - At the standard **224 × 224 classification resolution**, Montgomery wins every tested scale.
+- Montgomery uses much less process-tree RAM in the measured vision cells, while Ultralytics uses
+  less dedicated VRAM in every one of them.
 - The largest native optimization targets are high resolution, larger YOLO26 scales, and
   segmentation.
 
@@ -153,6 +231,9 @@ short developer-feedback workloads, not steady-state or model-quality benchmarks
 
 All 36 scenarios, individual trials, commands, medians, and environment metadata are in the
 [raw benchmark results](assets/training-benchmark-results.json).
+
+The one-pass 640/1280 resource sweep, including per-process RAM/VRAM records, is in the
+[raw memory results](assets/training-memory-results.json).
 
 Run the complete comparison after preparing the official checkpoints:
 
