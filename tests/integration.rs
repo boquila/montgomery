@@ -361,9 +361,16 @@ fn cli_help_exposes_the_supported_workflows_and_coordinate_contract() {
     let output = montgomery(&["--help"]);
     assert!(output.status.success(), "{}", stderr(&output));
     let help = String::from_utf8_lossy(&output.stdout);
-    for command in ["predict", "bench", "pack-weights", "export-onnx", "train"] {
+    for command in ["predict", "bench", "pack-weights", "export", "train"] {
         assert!(help.contains(command), "missing {command} in:\n{help}");
     }
+
+    let output = montgomery(&["export", "--help"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let help = String::from_utf8_lossy(&output.stdout);
+    assert!(help.contains("--model <MODEL.bpk>"), "{help}");
+    assert!(help.contains("--format <FORMAT>"), "{help}");
+    assert!(help.contains("onnx"), "{help}");
 
     let output = montgomery(&["predict", "--help"]);
     assert!(output.status.success(), "{}", stderr(&output));
@@ -378,6 +385,25 @@ fn cli_help_exposes_the_supported_workflows_and_coordinate_contract() {
     let help = String::from_utf8_lossy(&output.stdout);
     assert!(help.contains("--architecture <ARCHITECTURE>"), "{help}");
     assert!(help.contains("--state <STATE.pt>"), "{help}");
+}
+
+#[test]
+fn cli_export_requires_a_supported_format_before_loading_the_model() {
+    let output = montgomery(&["export", "--model", "missing.bpk"]);
+    assert!(!output.status.success());
+    assert!(stderr(&output).contains("--format <FORMAT>"));
+
+    let output = montgomery(&[
+        "export",
+        "--model",
+        "missing.bpk",
+        "--format",
+        "unsupported",
+    ]);
+    assert!(!output.status.success());
+    let error = stderr(&output);
+    assert!(error.contains("invalid value 'unsupported'"), "{error}");
+    assert!(error.contains("onnx"), "{error}");
 }
 
 #[cfg(feature = "training")]
@@ -409,6 +435,12 @@ fn training_cli_requires_one_explicit_initialization_mode() {
     let output = montgomery(&["train", "--model", "upstream.pt", "--data", "missing.yaml"]);
     assert!(!output.status.success());
     assert!(stderr(&output).contains("native .bpk artifact"));
+
+    let output = montgomery(&["export-checkpoint", "--help"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let help = String::from_utf8_lossy(&output.stdout);
+    assert!(help.contains("--checkpoint <CHECKPOINT>"), "{help}");
+    assert!(help.contains("--output <OUTPUT>"), "{help}");
 }
 
 #[test]

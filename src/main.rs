@@ -41,6 +41,13 @@ enum DeviceSelection {
     Gpu,
 }
 
+#[cfg(feature = "onnx")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum ExportFormat {
+    /// Open Neural Network Exchange format.
+    Onnx,
+}
+
 #[derive(Debug, Parser)]
 #[command(
     name = "montgomery",
@@ -60,9 +67,9 @@ enum Command {
     Bench(BenchArgs),
     /// Pack an imported tensor-only state into a versioned native Burnpack artifact.
     PackWeights(PackWeightsArgs),
-    /// Export the exact loaded Burn model weights to a validated portable ONNX artifact.
+    /// Export a Burnpack model to another artifact format.
     #[cfg(feature = "onnx")]
-    ExportOnnx(ExportOnnxArgs),
+    Export(ExportArgs),
     /// Train a model with the native Burn/WGPU trainer.
     #[cfg(feature = "training")]
     Train(TrainArgs),
@@ -71,7 +78,7 @@ enum Command {
     Val(ValArgs),
     /// Export a native training checkpoint to the existing inference Burnpack format.
     #[cfg(feature = "training")]
-    Export(ExportTrainingArgs),
+    ExportCheckpoint(ExportCheckpointArgs),
     /// Internal isolated worker used by automatic batch-size discovery.
     #[cfg(feature = "training")]
     #[command(name = "__batch-probe", hide = true)]
@@ -196,7 +203,7 @@ struct ValArgs {
 
 #[cfg(feature = "training")]
 #[derive(Debug, ClapArgs)]
-struct ExportTrainingArgs {
+struct ExportCheckpointArgs {
     #[arg(long)]
     checkpoint: PathBuf,
     #[arg(long)]
@@ -213,10 +220,13 @@ struct BatchProbeArgs {
 
 #[cfg(feature = "onnx")]
 #[derive(Debug, ClapArgs)]
-struct ExportOnnxArgs {
+struct ExportArgs {
     /// Montgomery .bpk model to export; architecture is read from artifact metadata.
     #[arg(long, value_name = "MODEL.bpk")]
     model: PathBuf,
+    /// Artifact format to export.
+    #[arg(long, value_enum)]
+    format: ExportFormat,
     /// Final ONNX path (defaults to <model>.onnx). A missing suffix is added explicitly.
     #[arg(long)]
     output: Option<PathBuf>,
@@ -597,7 +607,7 @@ fn main() -> montgomery::Result<()> {
             Ok(())
         }
         #[cfg(feature = "onnx")]
-        Command::ExportOnnx(args) => export_onnx_command(args),
+        Command::Export(args) => export_command(args),
         #[cfg(feature = "training")]
         Command::Train(args) => {
             let initialization = match (args.architecture, args.model, args.resume) {
@@ -697,7 +707,7 @@ fn main() -> montgomery::Result<()> {
             Ok(())
         }
         #[cfg(feature = "training")]
-        Command::Export(args) => {
+        Command::ExportCheckpoint(args) => {
             let output = export_training(args.checkpoint, args.output)?;
             eprintln!("Exported inference artifact to {}", output.display());
             Ok(())
@@ -706,7 +716,14 @@ fn main() -> montgomery::Result<()> {
 }
 
 #[cfg(feature = "onnx")]
-fn export_onnx_command(args: ExportOnnxArgs) -> montgomery::Result<()> {
+fn export_command(args: ExportArgs) -> montgomery::Result<()> {
+    match args.format {
+        ExportFormat::Onnx => export_onnx_command(args),
+    }
+}
+
+#[cfg(feature = "onnx")]
+fn export_onnx_command(args: ExportArgs) -> montgomery::Result<()> {
     let weights = args.model;
     let model = ModelId::from_burnpack(&weights)?;
     let output = args
