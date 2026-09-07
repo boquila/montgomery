@@ -39,6 +39,8 @@ def main() -> None:
     parser.add_argument("--skip-prime", action="store_true")
     parser.add_argument("--keep-runs", action="store_true")
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--resource-sample-ms", type=float, default=100.0)
+    parser.add_argument("--no-resource-monitor", action="store_true")
     parser.add_argument("--publish", action="store_true")
     args = parser.parse_args()
 
@@ -61,6 +63,8 @@ def main() -> None:
         str(args.repeats),
         "--segmentation-repeats",
         str(args.segmentation_repeats),
+        "--resource-sample-ms",
+        str(args.resource_sample_ms),
     ]
     for scenario in args.scenario:
         command.extend(("--scenario", scenario))
@@ -70,6 +74,7 @@ def main() -> None:
         (args.skip_prime, "--skip-prime"),
         (args.keep_runs, "--keep-runs"),
         (args.resume, "--resume"),
+        (args.no_resource_monitor, "--no-resource-monitor"),
     ):
         if enabled:
             command.append(flag)

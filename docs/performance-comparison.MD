@@ -1,228 +1,251 @@
-# Native training performance
+# Montgomery vs Ultralytics training performance
 
-Montgomery native training is competitive today, but not uniformly faster. On the tested RTX 5080,
-it wins **22 of 30** comparisons and **all 12** smallest-variant family/task comparisons,
-including every tested classification model and the detection-only YOLOv3-Tiny-U, YOLOv10n, and
-YOLO12n models. YOLOv8n segmentation is **1.94× faster** than Ultralytics. YOLO26n detection and
-segmentation are both ahead at batch 2.
+## What was tested
 
-![Median wall time for the nine family and task comparisons](assets/family-task-overview.png)
+| Setting | Value |
+| --- | --- |
+| GPU | NVIDIA GeForce RTX 5080, 16 GB |
+| Montgomery | Burn/WGPU, Vulkan driver 610.47 |
+| Ultralytics | 8.4.117, PyTorch 2.11, CUDA 13.0 |
+| Precision | FP32 for both |
+| Main vision resolution | **640 × 640** model input |
+| High vision resolution | **1280 × 1280** model input |
+| Classification resolution | **224 × 224** model input |
+| Default workload | 3 epochs, batch 2, one checkpoint per epoch |
+| Timed region | Complete command: startup, loading, training, and checkpoint writes |
+| Trials | 3 per detect/classify result; 2 per segment result |
+| Memory pass | One extra trial per 640/1280 cell; 100 ms target sampling interval |
 
-## At a glance
+Every time below is the median command wall time. Lower is better. `Advantage` is always written
+for the winner, so `Ultralytics 2.50×` means Montgomery took 2.50 times as long.
 
-These are medians of complete training commands. A speedup above `1.00×` favors Montgomery.
-
-| Model | Task | Montgomery | Ultralytics | Native speedup |
-| --- | --- | ---: | ---: | ---: |
-| YOLOv8n | Classify | 2.95 s | 12.11 s | **4.10×** |
-| YOLOv8n | Detect | 5.46 s | 12.29 s | **2.25×** |
-| YOLOv8n | Segment | 6.64 s | 12.86 s | **1.94×** |
-| YOLO11n | Classify | 4.46 s | 12.50 s | **2.80×** |
-| YOLO11n | Detect | 7.82 s | 12.92 s | **1.65×** |
-| YOLO11n | Segment | 9.39 s | 13.47 s | **1.43×** |
-| YOLO26n | Classify | 4.71 s | 12.54 s | **2.66×** |
-| YOLO26n | Detect | 13.58 s | 14.33 s | **1.06×** |
-| YOLO26n | Segment | 15.00 s | 16.21 s | **1.08×** |
-
-The detect-only families use the same dataset and settings:
-
-| Model | Montgomery | Ultralytics | Native speedup |
-| --- | ---: | ---: | ---: |
-| YOLOv3-Tiny-U | 4.44 s | 11.97 s | **2.70×** |
-| YOLOv10n | 11.95 s | 13.97 s | **1.17×** |
-| YOLO12n | 13.17 s | 13.99 s | **1.06×** |
-
-![Speedup heatmap for model families and tasks](assets/task-speedup-heatmap.png)
-
-## Segmentation optimization
-
-The original mask loss created a separate slice, matrix multiplication, BCE, and reduction graph
-for every positive match. It now groups positives per image and evaluates one padded batched matrix
-multiplication. The same change removes repeated prototype tensors. YOLO26's identical one-to-many
-and detached one-to-one semantic targets are evaluated once.
-
-Vectorizing the mask loss reduced the same 48-step YOLOv8n-seg command from **98.08 s to 9.64 s**.
-The runtime and checkpoint work described below reduced the current full-command median again to
-**6.64 s**, which is **1.94× faster** than Ultralytics' 12.86 s median.
-
-![YOLOv8n segmentation before and after vectorizing the mask loss](assets/segmentation-before-after.png)
-
-The correctness pass also aligned mask-crop lower bounds with Ultralytics and applied the shared
-segmentation gain to the YOLO26 semantic term. Unit tests cover padded grouping, scalar loss parity,
-backpropagation, semantic-value equality, and detached gradients.
-
-## Runtime and checkpoint optimization
-
-Burn/WGPU's grouped-convolution backward falls through a generic path. The light heads now use an
-exact channelwise 3×3 stencil only while building an autodiff graph; normal inference and stored
-parameters are unchanged. Forward values and weight gradients are tested against grouped
-convolution. Together with flattened role-separated AdamW updates, this cut YOLO26n detection from
-23.76 s to 13.58 s and YOLO11n segmentation from 17.38 s to 9.39 s.
-
-Full resumable checkpoints still contain the model, EMA, and optimizer in FP32. Their independent
-immutable snapshots are downloaded and encoded concurrently instead of making three serial
-GPU-to-host passes, and hashing plus atomic file publication overlap the next epoch on a bounded
-worker. Assignment targets stay on the host instead of being uploaded and immediately downloaded
-each step. AdamW moment tensors are stored as two flat parameter-role groups rather than one record
-per tensor. Resume, atomic-publication, and step-for-step optimizer parity are tested.
-
-## Scale comparison
-
-YOLO26 classification stays ahead through medium. Detection wins at nano and small and is 6.4%
-slower at medium. Segmentation wins at nano, is effectively tied at small, and remains the largest
-medium-scale gap.
-
-| Model | Task | Montgomery | Ultralytics | Native speedup |
-| --- | --- | ---: | ---: | ---: |
-| YOLO26n | Classify | 4.71 s | 12.54 s | **2.66×** |
-| YOLO26n | Detect | 13.58 s | 14.33 s | **1.06×** |
-| YOLO26n | Segment | 15.00 s | 16.21 s | **1.08×** |
-| YOLO26s | Classify | 5.19 s | 12.92 s | **2.49×** |
-| YOLO26s | Detect | 14.42 s | 15.42 s | **1.07×** |
-| YOLO26s | Segment | 16.78 s | 16.71 s | 1.00× |
-| YOLO26m | Classify | 7.79 s | 13.96 s | **1.79×** |
-| YOLO26m | Detect | 17.54 s | 16.49 s | 0.94× |
-| YOLO26m | Segment | 25.84 s | 18.85 s | 0.73× |
-
-![YOLO26 scale comparison](assets/model-scale.png)
-
-## Batch scaling
-
-The batch sweep uses YOLO26n and changes only batch size. Native wins all three tasks at batch 4;
-batch 1 exposes fixed WGPU dispatch and synchronization costs.
-
-| Task | Batch | Montgomery | Ultralytics | Native speedup |
-| --- | ---: | ---: | ---: | ---: |
-| Classify | 1 | 7.62 s | 13.89 s | **1.82×** |
-| Classify | 2 | 4.71 s | 12.54 s | **2.66×** |
-| Classify | 4 | 3.15 s | 12.29 s | **3.90×** |
-| Detect | 1 | 18.71 s | 17.67 s | 0.94× |
-| Detect | 2 | 13.58 s | 14.33 s | **1.06×** |
-| Detect | 4 | 8.29 s | 12.56 s | **1.51×** |
-| Segment | 1 | 24.70 s | 21.91 s | 0.89× |
-| Segment | 2 | 15.00 s | 16.21 s | **1.08×** |
-| Segment | 4 | 10.49 s | 13.69 s | **1.30×** |
-
-![Batch-size scaling](assets/batch-scaling.png)
-
-## Resolution scaling
-
-This sweep uses YOLO26n detection, batch 2, and three epochs.
-
-| Image size | Montgomery | Ultralytics | Native speedup |
-| ---: | ---: | ---: | ---: |
-| 64 px | 11.50 s | 13.98 s | **1.22×** |
-| 128 px | 12.32 s | 13.99 s | **1.14×** |
-| 320 px | 13.58 s | 14.33 s | **1.06×** |
-| 640 px | 17.10 s | 14.11 s | 0.82× |
-
-![YOLO26n detection resolution scaling](assets/resolution-scaling.png)
-
-The near-flat Ultralytics results show that framework and process overhead dominate these deliberately
-small jobs. Native wins through 320 px; 640 px still exposes backend work to do.
-
-## Ten-epoch smoke runs
-
-The longer runs exercise checkpointing, scheduling, loss reduction, and validation. They are still
-too small to measure real model quality.
-
-| Task | Montgomery | Ultralytics | Native speedup |
-| --- | ---: | ---: | ---: |
-| Classify | 15.26 s | 22.31 s | **1.46×** |
-| Detect | 35.34 s | 28.77 s | 0.81× |
-| Segment | 44.79 s | 32.51 s | 0.73× |
-
-![Normalized loss over ten epochs](assets/convergence-normalized.png)
-
-Loss magnitudes are normalized in the chart because the trainers report and reduce components
-differently. Both losses stay finite and decrease, but this is a smoke signal rather than a claim of
-equal optimization dynamics.
-
-Post-training validation is outside the timed region:
-
-| Task | Montgomery | Ultralytics | Interpretation |
+| Comparison detail | Montgomery | Ultralytics | Treatment |
 | --- | --- | --- | --- |
-| Classify | top-1 16.7%, top-5 91.7% | top-1 41.7%, top-5 91.7% | 12 validation images; not quality evidence |
-| Detect | mAP50 0.0, mAP50-95 0.0 | mAP50 0.0, mAP50-95 0.0 | 4 validation images; the run is too short |
-| Segment | box/mask mAP 0.0 | box/mask mAP 0.0 | 4 validation images; the run is too short |
+| Input workload | Same model family, task, dataset, epochs, batch, and resolution | Same | Held constant |
+| Training recipe | FP32 AdamW, matched learning-rate settings, seed 0 | Same | Held constant |
+| CPU workers | 4 requested | 4 requested | Held constant |
+| Loader design | Threads, global prefetch queue of 2 batches | Processes, pinned memory, prefetch factor 4 per worker | Measured as part of each program |
+| GPU stack | Burn/WGPU over Vulkan | PyTorch over CUDA | Measured as part of each program |
+| Validation | Disabled inside timed training | Disabled inside timed training | Held constant |
+| Saving | Resumable checkpoint each epoch | Checkpoint each epoch | Held constant at the workflow level |
 
-The benchmark proves that both implementations train, checkpoint, and validate the tested tasks. It
-does **not** establish COCO or ImageNet convergence parity. That requires full datasets and standard
-training schedules.
+## Main result
 
-## All measured scenarios
+| Workload | Resolution | Comparisons | Montgomery wins | Ultralytics wins | Result |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Nano detection + segmentation | **640 × 640** | 9 | 4 | 5 | Near parity in 3 cells; YOLOv8n detect is the clear Montgomery win |
+| Nano detection + segmentation | **1280 × 1280** | 9 | 0 | 9 | Ultralytics is **2.50–3.94× faster** |
+| Nano classification | **224 × 224** | 3 | 3 | 0 | Montgomery is **2.71–4.13× faster** |
 
-![All 30 benchmark scenarios](assets/all-scenarios-speedup.png)
+![Nano model timing at 640 and 1280](assets/resolution-scaling.png)
 
-![Effective end-to-end throughput](assets/effective-throughput.png)
+## Detection and segmentation at 640 × 640
 
-![Per-trial repeatability](assets/trial-repeatability.png)
+All rows use batch 2 and 3 epochs.
 
-![First measured run versus warm runs](assets/first-vs-warm.png)
+| Model | Task | Resolution | Montgomery | Ultralytics | Winner | Advantage |
+| --- | --- | ---: | ---: | ---: | --- | ---: |
+| YOLOv8n | Detect | 640 × 640 | **9.74 s** | 12.02 s | Montgomery | **1.23×** |
+| YOLOv8n | Segment | 640 × 640 | **12.52 s** | 12.77 s | Montgomery | 1.02× |
+| YOLO11n | Detect | 640 × 640 | **12.32 s** | 12.70 s | Montgomery | 1.03× |
+| YOLO11n | Segment | 640 × 640 | 14.93 s | **13.32 s** | Ultralytics | 1.12× |
+| YOLO26n | Detect | 640 × 640 | 16.97 s | **14.34 s** | Ultralytics | 1.18× |
+| YOLO26n | Segment | 640 × 640 | 21.12 s | **15.65 s** | Ultralytics | 1.35× |
+| YOLOv3-Tiny-U | Detect | 640 × 640 | **11.42 s** | 11.83 s | Montgomery | 1.04× |
+| YOLOv10n | Detect | 640 × 640 | 19.03 s | **13.66 s** | Ultralytics | 1.39× |
+| YOLO12n | Detect | 640 × 640 | 19.65 s | **13.74 s** | Ultralytics | 1.43× |
 
-Per-trial values, medians, environment metadata, and captured commands are preserved in the
+Only YOLOv8n detection has a Montgomery lead greater than 5%. The other three Montgomery wins are
+within 4% and should be treated as near-parity.
+
+## Detection and segmentation at 1280 × 1280
+
+These are the same nano models, batch 2, and 3 epochs. Only the model input changes from 640 to
+1280, which increases canvas area by 4×.
+
+| Model | Task | Resolution | Montgomery | Ultralytics | Winner | Advantage |
+| --- | --- | ---: | ---: | ---: | --- | ---: |
+| YOLOv8n | Detect | 1280 × 1280 | 31.55 s | **12.64 s** | Ultralytics | **2.50×** |
+| YOLOv8n | Segment | 1280 × 1280 | 40.74 s | **13.80 s** | Ultralytics | **2.95×** |
+| YOLO11n | Detect | 1280 × 1280 | 34.74 s | **13.42 s** | Ultralytics | **2.59×** |
+| YOLO11n | Segment | 1280 × 1280 | 43.49 s | **14.85 s** | Ultralytics | **2.93×** |
+| YOLO26n | Detect | 1280 × 1280 | 43.29 s | **15.05 s** | Ultralytics | **2.88×** |
+| YOLO26n | Segment | 1280 × 1280 | 58.62 s | **16.60 s** | Ultralytics | **3.53×** |
+| YOLOv3-Tiny-U | Detect | 1280 × 1280 | 44.56 s | **13.12 s** | Ultralytics | **3.40×** |
+| YOLOv10n | Detect | 1280 × 1280 | 56.11 s | **14.25 s** | Ultralytics | **3.94×** |
+| YOLO12n | Detect | 1280 × 1280 | 56.05 s | **15.04 s** | Ultralytics | **3.73×** |
+
+The 1280 sweep is limited to nano models. In a preflight run, YOLO26m segmentation at 1280,
+batch 2 exceeded the RTX 5080's 16 GB VRAM in Burn/WGPU. It is not reported as a timing result, and
+the benchmark does not lower the batch size for only one framework.
+
+## RAM and VRAM
+
+These are end-to-end operational footprints, not model tensors in isolation. Both commands request
+four CPU data-loading workers. Montgomery implements them as threads with a global two-batch
+prefetch queue. Ultralytics uses four Python worker processes, pinned memory, and four prefetched
+tasks per worker. Those implementation choices are intentionally included because they determine
+what users must provision to run each program.
+On this Windows run, every native trial peaked at one OS process and every Ultralytics trial at six
+process-tree members: the environment launcher, trainer, and four loader workers.
+
+The tables show one dedicated memory-observation pass per cell. Values are sampled peaks in GiB;
+they are separate from the repeated timing medians above. The standard benchmark now records these
+measurements for every trial, so the next complete published run will report median memory peaks.
+Actual cadence is query-time dependent and is recorded with the sample count and duration.
+
+### Memory at 640 × 640
+
+All rows use batch 2 and 3 epochs.
+
+| Model | Task | Montgomery RAM | Ultralytics RAM | Montgomery VRAM | Ultralytics VRAM |
+| --- | --- | ---: | ---: | ---: | ---: |
+| YOLOv8n | Detect | **0.54 GiB** | 4.76 GiB | 1.14 GiB | **0.96 GiB** |
+| YOLOv8n | Segment | **0.59 GiB** | 4.76 GiB | 2.51 GiB | **1.42 GiB** |
+| YOLO11n | Detect | **0.53 GiB** | 4.74 GiB | 1.34 GiB | **1.05 GiB** |
+| YOLO11n | Segment | **0.57 GiB** | 4.82 GiB | 2.63 GiB | **1.47 GiB** |
+| YOLO26n | Detect | **0.55 GiB** | 4.77 GiB | 1.65 GiB | **1.13 GiB** |
+| YOLO26n | Segment | **0.60 GiB** | 4.84 GiB | 3.25 GiB | **1.62 GiB** |
+| YOLOv3-Tiny-U | Detect | **1.10 GiB** | 4.78 GiB | 2.31 GiB | **1.38 GiB** |
+| YOLOv10n | Detect | **0.56 GiB** | 4.80 GiB | 1.71 GiB | **1.19 GiB** |
+| YOLO12n | Detect | **0.54 GiB** | 4.79 GiB | 1.53 GiB | **1.15 GiB** |
+
+![Peak process-tree RAM at 640 and 1280](assets/resolution-ram.png)
+
+### Memory at 1280 × 1280
+
+All rows use batch 2 and 3 epochs.
+
+| Model | Task | Montgomery RAM | Ultralytics RAM | Montgomery VRAM | Ultralytics VRAM |
+| --- | --- | ---: | ---: | ---: | ---: |
+| YOLOv8n | Detect | **0.61 GiB** | 5.55 GiB | 4.56 GiB | **2.85 GiB** |
+| YOLOv8n | Segment | **0.66 GiB** | 5.41 GiB | 5.84 GiB | **3.80 GiB** |
+| YOLO11n | Detect | **0.59 GiB** | 5.55 GiB | 5.37 GiB | **2.97 GiB** |
+| YOLO11n | Segment | **0.63 GiB** | 5.43 GiB | 6.65 GiB | **3.55 GiB** |
+| YOLO26n | Detect | **0.62 GiB** | 5.56 GiB | 6.42 GiB | **3.62 GiB** |
+| YOLO26n | Segment | **0.67 GiB** | 5.46 GiB | 8.49 GiB | **4.38 GiB** |
+| YOLOv3-Tiny-U | Detect | **1.10 GiB** | 5.57 GiB | 4.60 GiB | **3.64 GiB** |
+| YOLOv10n | Detect | **0.61 GiB** | 5.62 GiB | 6.97 GiB | **3.55 GiB** |
+| YOLO12n | Detect | **0.59 GiB** | 5.59 GiB | 8.79 GiB | **4.42 GiB** |
+
+![Peak dedicated GPU memory at 640 and 1280](assets/resolution-vram.png)
+
+At 640, Montgomery uses 0.53-1.10 GiB of resident process-tree RAM versus 4.74-4.84 GiB for
+Ultralytics. At 1280, the ranges are 0.59-1.10 GiB and 5.41-5.62 GiB. Dedicated GPU memory moves in
+the other direction: Montgomery uses more VRAM in every measured cell, reaching 8.79 GiB for
+YOLO12n detection and 8.49 GiB for YOLO26n segmentation at 1280.
+
+RAM is the simultaneous sum of resident working sets for the root process and all descendants. On
+Windows, shared pages may appear in more than one process working set, so this is an operational
+footprint rather than an exact count of unique physical pages. The raw data also retains private
+committed bytes, per-PID peaks, process names/counts, dedicated VRAM, shared GPU memory, sampler
+provenance, sample counts, and any measurement errors. VRAM comes from Windows' per-process GPU
+counters rather than whole-device `nvidia-smi` usage.
+The observer itself runs in the benchmark parent and is excluded from these memory totals. Its
+final shutdown query is outside command wall time; concurrent sampling work is not corrected for.
+
+## What batch size changes at 640 × 640
+
+These YOLO26n runs use 3 epochs. The batch-2 rows are the main-table results above.
+
+| Task | Resolution | Batch | Montgomery | Ultralytics | Winner | Advantage |
+| --- | ---: | ---: | ---: | ---: | --- | ---: |
+| Detect | 640 × 640 | 1 | 25.54 s | **17.40 s** | Ultralytics | 1.47× |
+| Detect | 640 × 640 | 2 | 16.97 s | **14.34 s** | Ultralytics | 1.18× |
+| Detect | 640 × 640 | 4 | **12.17 s** | 12.75 s | Montgomery | 1.05× |
+| Segment | 640 × 640 | 1 | 31.22 s | **22.04 s** | Ultralytics | 1.42× |
+| Segment | 640 × 640 | 2 | 21.12 s | **15.65 s** | Ultralytics | 1.35× |
+| Segment | 640 × 640 | 4 | 16.43 s | **15.54 s** | Ultralytics | 1.06× |
+
+Larger batches amortize Montgomery's fixed dispatch and synchronization costs. At batch 4,
+detection moves slightly ahead and segmentation comes within 6%.
+
+![YOLO26n batch-size timing](assets/batch-scaling.png)
+
+## What model size changes at 640 × 640
+
+These YOLO26 runs use batch 2 and 3 epochs.
+
+| Model | Task | Resolution | Montgomery | Ultralytics | Winner | Advantage |
+| --- | --- | ---: | ---: | ---: | --- | ---: |
+| YOLO26n | Detect | 640 × 640 | 16.97 s | **14.34 s** | Ultralytics | 1.18× |
+| YOLO26n | Segment | 640 × 640 | 21.12 s | **15.65 s** | Ultralytics | 1.35× |
+| YOLO26s | Detect | 640 × 640 | 21.11 s | **14.79 s** | Ultralytics | 1.43× |
+| YOLO26s | Segment | 640 × 640 | 28.56 s | **16.41 s** | Ultralytics | 1.74× |
+| YOLO26m | Detect | 640 × 640 | 38.31 s | **16.69 s** | Ultralytics | 2.30× |
+| YOLO26m | Segment | 640 × 640 | 61.66 s | **18.83 s** | Ultralytics | 3.27× |
+
+The Burn/WGPU gap grows with YOLO26 model size, especially for segmentation.
+
+![YOLO26 model-size timing](assets/model-scale.png)
+
+## Classification at 224 × 224
+
+Classification uses its standard 224 × 224 input. It is not run at 640 or 1280.
+
+| Model | Resolution | Montgomery | Ultralytics | Winner | Advantage |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| YOLOv8n-cls | 224 × 224 | **2.90 s** | 11.98 s | Montgomery | **4.13×** |
+| YOLO11n-cls | 224 × 224 | **4.52 s** | 12.23 s | Montgomery | **2.71×** |
+| YOLO26n-cls | 224 × 224 | **4.53 s** | 12.55 s | Montgomery | **2.77×** |
+| YOLO26s-cls | 224 × 224 | **4.96 s** | 12.72 s | Montgomery | **2.56×** |
+| YOLO26m-cls | 224 × 224 | **7.45 s** | 13.44 s | Montgomery | **1.80×** |
+
+## Ten-epoch smoke test
+
+This checks longer execution, checkpointing, scheduling, and validation. The datasets are too small
+to make model-quality claims.
+
+| Task | Resolution | Batch | Montgomery | Ultralytics | Winner | Advantage |
+| --- | ---: | ---: | ---: | ---: | --- | ---: |
+| Classify | 224 × 224 | 2 | **15.79 s** | 22.16 s | Montgomery | 1.40× |
+| Detect | 640 × 640 | 2 | 54.37 s | **29.12 s** | Ultralytics | 1.87× |
+| Segment | 640 × 640 | 2 | 69.78 s | **33.89 s** | Ultralytics | 2.06× |
+
+## Trial repeatability
+
+The chart below uses separate, aligned panels with the same time scale. Each circle is one measured
+trial, the diamond is the median, and the horizontal line covers the minimum-to-maximum range.
+
+![Aligned per-trial timing ranges](assets/trial-repeatability.png)
+
+## Bottom line
+
+- For nano models at **640 × 640, batch 2**, the result is mixed. YOLOv8n detection is Montgomery's
+  only clear win.
+- At **1280 × 1280, batch 2**, Ultralytics wins every tested model by 2.50–3.94×.
+- At **640 × 640, batch 4**, Montgomery catches up: YOLO26n detection is 1.05× faster and
+  segmentation is 1.06× slower.
+- At the standard **224 × 224 classification resolution**, Montgomery wins every tested scale.
+- Montgomery uses much less process-tree RAM in the measured vision cells, while Ultralytics uses
+  less dedicated VRAM in every one of them.
+- The largest native optimization targets are high resolution, larger YOLO26 scales, and
+  segmentation.
+
+## Data and reproduction
+
+The benchmark uses the same upstream checkpoint for both frameworks, FP32, AdamW, four data-loading
+workers, seed zero, alternating framework order, and matched augmentation settings where both APIs
+expose them. Detection and segmentation use 32 training images; classification uses 48. These are
+short developer-feedback workloads, not steady-state or model-quality benchmarks.
+
+All 36 scenarios, individual trials, commands, medians, and environment metadata are in the
 [raw benchmark results](assets/training-benchmark-results.json).
 
-## Methodology
+The one-pass 640/1280 resource sweep, including per-process RAM/VRAM records, is in the
+[raw memory results](assets/training-memory-results.json).
 
-- Hardware: NVIDIA GeForce RTX 5080; native Burn/WGPU used Vulkan driver 610.47.
-- Software: Montgomery/Burn release build with fat LTO versus Ultralytics 8.4.117 and PyTorch 2.11
-  CUDA 13.0.
-- Timing: external wall clock around the complete command, including startup, model loading,
-  training, and checkpoint writes. Validation is excluded and recorded separately.
-- Precision: FP32 for both implementations.
-- Optimizer: AdamW, `lr0=0.001`, `lrf=0.05`, weight decay `0.0005`, momentum `0.9`, cosine decay,
-  and no warmup. Nominal batch size equals actual batch size.
-- Data loading: four workers; native prefetch depth two.
-- Sampling: seed zero, alternating framework order, three trials normally and two for expensive
-  segmentation cells.
-- Inputs: the same real source fixtures, deterministically replicated with hard links. Classification
-  uses 48 train/12 validation images; detection and segmentation use 32 train/4 validation images.
-- Weights: the same upstream `.pt` checkpoint supplies both runs; native uses its tensor-only export.
-- YOLOX is not in this matrix because Ultralytics does not provide a YOLOX training implementation;
-  comparing it with the separate official YOLOX trainer would not be a 1:1 Ultralytics comparison.
-- Warmup: native WGPU compilation is primed outside the measured trials. The first-vs-warm plot still
-  exposes residual first-run effects.
-- Augmentation policies and optimizer settings are matched where both APIs expose them. Random-number
-  generators, scheduler details, and some loss reductions are not bit-identical.
-
-This methodology emphasizes repeatable developer feedback and short-job latency. It is not
-steady-state multi-hour throughput or a cross-framework quality leaderboard.
-
-## Reproduce it
-
-The complete comparison is one command after installing the pinned GPU benchmark environment and
-preparing the upstream checkpoints:
+Run the complete comparison after preparing the official checkpoints:
 
 ```console
 uv run --project tools tools/benchmark_training.py --publish
 ```
 
-It builds Montgomery in release mode, prepares deterministic datasets, primes WGPU, runs the matrix,
-validates the ten-epoch checkpoints, renders every chart, and publishes JSON and images under
-`docs/assets/`.
-
-For a quick iteration on one bottleneck:
+Run one model at both vision resolutions:
 
 ```console
-uv run --project tools tools/benchmark_training.py --scenario yolov8n-segment --repeats 1 --segmentation-repeats 1
+uv run --project tools tools/benchmark_training.py \
+  --scenario yolov8n-detect \
+  --scenario yolov8n-detect-1280px \
+  --repeats 1
 ```
-
-Use `--list` on `tools/bench_training_matrix.py` to see every scenario. Runs can be resumed, and full
-checkpoints can be retained with `--keep-runs`; they are deleted by default to keep output small.
-
-## Follow-up status
-
-- WGPU aggregation was swept at 8, 16, 32, 64, and 128 queued tasks across batch-1 detect/segment,
-  640 px detect, and YOLO26m segment. The existing 32-task default was best overall; higher values
-  consistently regressed, while apparent 16-task wins disappeared on repeat trials. Re-run with
-  `uv run --project tools tools/profile_wgpu_training.py`.
-- Long runs now extract full-precision model/EMA/optimizer records only on a fitness improvement,
-  every `--save-period` epochs (10 by default), at early stop, and at completion. Publication still
-  overlaps the next epoch, and only `best`/`last` remain.
-- The same profile isolates medium segmentation: backward is about 54–57% of measured GPU step
-  time. Mask/semantic ablations and alternate depthwise kernels did not clear the 5% acceptance
-  gate, so no correctness-risking shortcut was retained.
-- A strict full-COCO runner now rejects partial datasets and executes matched detect/segment
-  training plus validation: `uv run --project tools tools/bench_full_convergence.py --download`. Full
-  convergence results are still required before any quality-parity claim.

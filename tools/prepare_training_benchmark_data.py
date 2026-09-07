@@ -59,20 +59,28 @@ def prepare_yolo(task: str, source_name: str, output_name: str) -> None:
                 link_or_copy(image, destination / "images" / split / f"{stem}{image.suffix.lower()}")
                 if label.exists():
                     link_or_copy(label, destination / "labels" / split / f"{stem}.txt")
-    names_line = next(
-        line
-        for line in (SOURCE / ("coco8-seg-local.yaml" if task == "segment" else "coco8-local.yaml"))
-        .read_text(encoding="utf-8")
-        .splitlines()
-        if line.startswith("names:")
+    source_manifest = SOURCE / (
+        "coco8-seg-local.yaml" if task == "segment" else "coco8-local.yaml"
     )
+    manifest_lines = source_manifest.read_text(encoding="utf-8").splitlines()
+    names_index = next(
+        index for index, line in enumerate(manifest_lines) if line.startswith("names:")
+    )
+    names_lines = [manifest_lines[names_index]]
+    if manifest_lines[names_index].strip() == "names:":
+        for line in manifest_lines[names_index + 1 :]:
+            if line and not line[0].isspace():
+                break
+            if line.strip():
+                names_lines.append(line)
+    names_block = "\n".join(names_lines)
     manifest = OUTPUT / f"{output_name}.yaml"
     manifest.write_text(
         f"path: {destination.as_posix()}\n"
         "train: images/train\n"
         "val: images/val\n"
         "format: yolo\n"
-        f"{names_line}\n",
+        f"{names_block}\n",
         encoding="utf-8",
     )
 

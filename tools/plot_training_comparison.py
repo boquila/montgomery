@@ -50,6 +50,14 @@ def ratio(entry: dict) -> float:
     return median(entry, "ultralytics") / median(entry, "native")
 
 
+def resource_median(entry: dict, framework: str, metric: str) -> float | None:
+    summary = entry.get("summary", {}).get(framework, {}).get("resources", {}).get(metric)
+    if not summary:
+        return None
+    value = summary.get("median")
+    return float(value) if value is not None else None
+
+
 def finish(figure, output: Path) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     figure.tight_layout()
@@ -70,7 +78,7 @@ def family_task_overview(entries: dict[str, dict], output: Path) -> None:
     axis.set_yticks(y, labels)
     axis.invert_yaxis()
     axis.set_xlabel("External command wall time (seconds, lower is better)")
-    axis.set_title("Training command time across families and tasks", loc="left", fontsize=20, fontweight="bold")
+    axis.set_title("Training command time: 224 px classify / 640 px vision", loc="left", fontsize=20, fontweight="bold")
     axis.legend(frameon=False, ncol=2, loc="lower right")
     axis.spines[["top", "right"]].set_visible(False)
     finish(figure, output / "family-task-overview.png")
@@ -104,19 +112,19 @@ def axis_scaling(entries: dict[str, dict], output: Path, axis_kind: str) -> None
     if axis_kind == "scale":
         x_values = ("n", "s", "m")
         path = output / "model-scale.png"
-        title = "YOLO26 model-scale behavior"
+        title = "YOLO26 model-scale behavior: 640 x 640, batch 2"
         xlabel = "Model scale"
         scenario_id = lambda task, value: f"yolo26{value}-{task}"
     else:
         x_values = (1, 2, 4)
         path = output / "batch-scaling.png"
-        title = "Batch-size behavior"
+        title = "YOLO26n batch-size behavior: 640 x 640, 3 epochs"
         xlabel = "Batch size"
         scenario_id = lambda task, value: (
             f"yolo26n-{task}" if value == 2 else f"yolo26n-{task}-batch{value}"
         )
-    figure, axes = plt.subplots(1, 3, figsize=(14, 4.8), sharey=False)
-    for task, axis in zip(TASKS, axes):
+    figure, axes = plt.subplots(1, 2, figsize=(11, 4.8), sharey=False)
+    for task, axis in zip(("detect", "segment"), axes):
         present = [(value, entries.get(scenario_id(task, value))) for value in x_values]
         present = [(value, entry) for value, entry in present if entry]
         xs = [value for value, _ in present]
@@ -132,20 +140,122 @@ def axis_scaling(entries: dict[str, dict], output: Path, axis_kind: str) -> None
 
 
 def resolution_scaling(entries: dict[str, dict], output: Path) -> None:
-    values = (64, 128, 320, 640)
-    scenario_ids = [f"yolo26n-detect-{value}px" if value != 320 else "yolo26n-detect" for value in values]
-    present = [(value, entries.get(scenario_id)) for value, scenario_id in zip(values, scenario_ids)]
-    present = [(value, entry) for value, entry in present if entry]
-    figure, axis = plt.subplots(figsize=(9, 5.5))
-    xs = [value for value, _ in present]
-    axis.plot(xs, [median(entry, "native") for _, entry in present], marker="o", linewidth=3, color=NATIVE, label="Montgomery")
-    axis.plot(xs, [median(entry, "ultralytics") for _, entry in present], marker="o", linewidth=3, color=ULTRA, label="Ultralytics")
-    axis.set_title("YOLO26n detection resolution scaling", loc="left", fontsize=20, fontweight="bold")
-    axis.set_xlabel("Square training canvas (pixels)")
-    axis.set_ylabel("External command wall time (seconds)")
-    axis.legend(frameon=False)
-    axis.spines[["top", "right"]].set_visible(False)
+    baseline_ids = [
+        f"{family}-{task}"
+        for family in FAMILIES
+        for task in ("detect", "segment")
+    ] + [f"{family}-detect" for family in ("yolov3-tinyu", "yolov10n", "yolo12n")]
+    baseline_ids = [
+        scenario_id
+        for scenario_id in baseline_ids
+        if scenario_id in entries and f"{scenario_id}-1280px" in entries
+    ]
+    if not baseline_ids:
+        return
+    labels = [
+        scenario_id.replace("yolov", "YOLOv").replace("yolo", "YOLO")
+        for scenario_id in baseline_ids
+    ]
+    y = list(range(len(baseline_ids)))
+    figure, axes = plt.subplots(1, 2, figsize=(16, 8), sharey=True)
+    for axis, imgsz in zip(axes, (640, 1280)):
+        resolution_entries = [
+            entries[scenario_id] if imgsz == 640 else entries[f"{scenario_id}-1280px"]
+            for scenario_id in baseline_ids
+        ]
+        axis.barh(
+            [value + 0.19 for value in y],
+            [median(entry, "native") for entry in resolution_entries],
+            height=0.36,
+            color=NATIVE,
+            label="Montgomery / Burn-WGPU",
+        )
+        axis.barh(
+            [value - 0.19 for value in y],
+            [median(entry, "ultralytics") for entry in resolution_entries],
+            height=0.36,
+            color=ULTRA,
+            label="Ultralytics / PyTorch-CUDA",
+        )
+        axis.set_yticks(y, labels)
+        axis.set_title(f"{imgsz} x {imgsz}", fontweight="bold", fontsize=15)
+        axis.set_xlabel("External command wall time (seconds)")
+        axis.spines[["top", "right"]].set_visible(False)
+    axes[0].invert_yaxis()
+    handles, legend_labels = axes[0].get_legend_handles_labels()
+    figure.legend(handles, legend_labels, frameon=False, ncol=2, loc="upper right")
+    figure.suptitle(
+        "Real-world training resolutions", x=0.04, ha="left", fontsize=20, fontweight="bold"
+    )
     finish(figure, output / "resolution-scaling.png")
+
+
+def resolution_memory(
+    entries: dict[str, dict], output: Path, metric: str, title: str, filename: str
+) -> None:
+    path = output / filename
+    baseline_ids = [
+        f"{family}-{task}"
+        for family in FAMILIES
+        for task in ("detect", "segment")
+    ] + [f"{family}-detect" for family in ("yolov3-tinyu", "yolov10n", "yolo12n")]
+    baseline_ids = [
+        scenario_id
+        for scenario_id in baseline_ids
+        if scenario_id in entries and f"{scenario_id}-1280px" in entries
+    ]
+    available_ids = []
+    for scenario_id in baseline_ids:
+        candidates = (entries[scenario_id], entries[f"{scenario_id}-1280px"])
+        if all(
+            resource_median(entry, framework, metric) is not None
+            for entry in candidates
+            for framework in ("native", "ultralytics")
+        ):
+            available_ids.append(scenario_id)
+    if not available_ids:
+        path.unlink(missing_ok=True)
+        return
+
+    labels = [
+        scenario_id.replace("yolov", "YOLOv").replace("yolo", "YOLO")
+        for scenario_id in available_ids
+    ]
+    y = list(range(len(available_ids)))
+    figure, axes = plt.subplots(1, 2, figsize=(17, 8), sharex=True, sharey=True)
+    for axis, imgsz in zip(axes, (640, 1280)):
+        resolution_entries = [
+            entries[scenario_id] if imgsz == 640 else entries[f"{scenario_id}-1280px"]
+            for scenario_id in available_ids
+        ]
+        native = [
+            resource_median(entry, "native", metric) / 1024**3
+            for entry in resolution_entries
+        ]
+        ultra = [
+            resource_median(entry, "ultralytics", metric) / 1024**3
+            for entry in resolution_entries
+        ]
+        native_bars = axis.barh(
+            [value + 0.19 for value in y], native, height=0.36, color=NATIVE,
+            label="Montgomery / Burn-WGPU",
+        )
+        ultra_bars = axis.barh(
+            [value - 0.19 for value in y], ultra, height=0.36, color=ULTRA,
+            label="Ultralytics / PyTorch-CUDA",
+        )
+        axis.bar_label(native_bars, fmt="%.2f", padding=3, fontsize=8, color=TEXT)
+        axis.bar_label(ultra_bars, fmt="%.2f", padding=3, fontsize=8, color=TEXT)
+        axis.set_yticks(y, labels)
+        axis.set_title(f"{imgsz} x {imgsz}", fontweight="bold", fontsize=15)
+        axis.set_xlabel("Peak memory (GiB; median across trials)")
+        axis.margins(x=0.15)
+        axis.spines[["top", "right"]].set_visible(False)
+    axes[0].invert_yaxis()
+    handles, legend_labels = axes[0].get_legend_handles_labels()
+    figure.legend(handles, legend_labels, frameon=False, ncol=2, loc="upper right")
+    figure.suptitle(title, x=0.04, ha="left", fontsize=20, fontweight="bold")
+    finish(figure, path)
 
 
 def all_scenarios(entries: dict[str, dict], output: Path) -> None:
@@ -164,19 +274,90 @@ def all_scenarios(entries: dict[str, dict], output: Path) -> None:
 
 
 def trial_ranges(entries: dict[str, dict], output: Path) -> None:
-    selected = [entries[key] for key in (f"{family}-{task}" for family in FAMILIES for task in TASKS) if key in entries]
-    labels = [entry["scenario"]["id"] for entry in selected]
-    figure, axis = plt.subplots(figsize=(12, 7))
-    for index, entry in enumerate(selected):
-        for offset, framework, color in ((-0.12, "native", NATIVE), (0.12, "ultralytics", ULTRA)):
+    selected = [
+        entries[key]
+        for key in (f"{family}-{task}" for family in FAMILIES for task in TASKS)
+        if key in entries
+    ]
+    labels = []
+    for entry in selected:
+        scenario = entry["scenario"]
+        model = scenario["id"].split("-")[0].replace("yolov", "YOLOv").replace("yolo", "YOLO")
+        labels.append(f"{model} — {scenario['task'].title()} ({scenario['imgsz']} px)")
+
+    figure, axes = plt.subplots(1, 2, figsize=(15, 8), sharex=True, sharey=True)
+    for axis, framework, color, title in (
+        (axes[0], "native", NATIVE, "Montgomery / Burn-WGPU"),
+        (axes[1], "ultralytics", ULTRA, "Ultralytics / PyTorch-CUDA"),
+    ):
+        for index, entry in enumerate(selected):
+            if index % 2 == 0:
+                axis.axhspan(index - 0.5, index + 0.5, color="#eef2f7", zorder=0)
             samples = [float(trial["wall_seconds"]) for trial in entry["trials"][framework]]
-            axis.scatter(samples, [index + offset] * len(samples), color=color, s=45, alpha=0.8)
-            axis.plot([min(samples), max(samples)], [index + offset] * 2, color=color, linewidth=2)
-    axis.set_yticks(range(len(labels)), labels)
-    axis.invert_yaxis()
-    axis.set_xlabel("Seconds · dots are individual alternating trials")
-    axis.set_title("Trial repeatability", loc="left", fontsize=20, fontweight="bold")
-    axis.spines[["top", "right"]].set_visible(False)
+            sample_median = median(entry, framework)
+            axis.plot(
+                [min(samples), max(samples)],
+                [index, index],
+                color=color,
+                linewidth=4,
+                alpha=0.55,
+                solid_capstyle="round",
+                zorder=1,
+            )
+            axis.scatter(
+                samples,
+                [index] * len(samples),
+                color=color,
+                edgecolor="white",
+                linewidth=0.8,
+                s=48,
+                alpha=0.8,
+                zorder=2,
+            )
+            axis.scatter(
+                [sample_median],
+                [index],
+                color=color,
+                edgecolor=TEXT,
+                linewidth=1,
+                marker="D",
+                s=76,
+                zorder=3,
+            )
+            axis.annotate(
+                f"{sample_median:.2f}",
+                (sample_median, index),
+                xytext=(8, 0),
+                textcoords="offset points",
+                va="center",
+                color=TEXT,
+                fontsize=9,
+                fontweight="bold",
+            )
+        axis.set_title(title, color=color, fontsize=14, fontweight="bold")
+        axis.set_xlabel("External command wall time (seconds)")
+        axis.grid(axis="x")
+        axis.grid(axis="y", visible=False)
+        axis.spines[["top", "right", "left"]].set_visible(False)
+        axis.tick_params(axis="y", length=0)
+
+    axes[0].set_yticks(range(len(labels)), labels)
+    axes[0].invert_yaxis()
+    axes[1].tick_params(labelleft=False)
+    figure.suptitle(
+        "Trial repeatability",
+        x=0.06,
+        ha="left",
+        fontsize=20,
+        fontweight="bold",
+    )
+    figure.text(
+        0.06,
+        0.94,
+        "Circles are individual alternating trials; diamonds are medians; lines span min–max.",
+        color="#475569",
+        fontsize=10,
+    )
     finish(figure, output / "trial-repeatability.png")
 
 
@@ -297,6 +478,20 @@ def main() -> None:
     axis_scaling(entries, args.output, "scale")
     axis_scaling(entries, args.output, "batch")
     resolution_scaling(entries, args.output)
+    resolution_memory(
+        entries,
+        args.output,
+        "peak_rss_bytes",
+        "Peak process-tree RAM by input resolution",
+        "resolution-ram.png",
+    )
+    resolution_memory(
+        entries,
+        args.output,
+        "peak_gpu_dedicated_bytes",
+        "Peak dedicated GPU memory (VRAM) by input resolution",
+        "resolution-vram.png",
+    )
     all_scenarios(entries, args.output)
     trial_ranges(entries, args.output)
     convergence(entries, args.output)
