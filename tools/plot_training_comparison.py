@@ -70,7 +70,7 @@ def family_task_overview(entries: dict[str, dict], output: Path) -> None:
     axis.set_yticks(y, labels)
     axis.invert_yaxis()
     axis.set_xlabel("External command wall time (seconds, lower is better)")
-    axis.set_title("Training command time across families and tasks", loc="left", fontsize=20, fontweight="bold")
+    axis.set_title("Training command time: 224 px classify / 640 px vision", loc="left", fontsize=20, fontweight="bold")
     axis.legend(frameon=False, ncol=2, loc="lower right")
     axis.spines[["top", "right"]].set_visible(False)
     finish(figure, output / "family-task-overview.png")
@@ -104,13 +104,13 @@ def axis_scaling(entries: dict[str, dict], output: Path, axis_kind: str) -> None
     if axis_kind == "scale":
         x_values = ("n", "s", "m")
         path = output / "model-scale.png"
-        title = "YOLO26 model-scale behavior"
+        title = "YOLO26 model-scale behavior: 224 px classify / 640 px vision"
         xlabel = "Model scale"
         scenario_id = lambda task, value: f"yolo26{value}-{task}"
     else:
         x_values = (1, 2, 4)
         path = output / "batch-scaling.png"
-        title = "Batch-size behavior"
+        title = "Batch-size behavior: 224 px classify / 640 px vision"
         xlabel = "Batch size"
         scenario_id = lambda task, value: (
             f"yolo26n-{task}" if value == 2 else f"yolo26n-{task}-batch{value}"
@@ -132,19 +132,52 @@ def axis_scaling(entries: dict[str, dict], output: Path, axis_kind: str) -> None
 
 
 def resolution_scaling(entries: dict[str, dict], output: Path) -> None:
-    values = (64, 128, 320, 640)
-    scenario_ids = [f"yolo26n-detect-{value}px" if value != 320 else "yolo26n-detect" for value in values]
-    present = [(value, entries.get(scenario_id)) for value, scenario_id in zip(values, scenario_ids)]
-    present = [(value, entry) for value, entry in present if entry]
-    figure, axis = plt.subplots(figsize=(9, 5.5))
-    xs = [value for value, _ in present]
-    axis.plot(xs, [median(entry, "native") for _, entry in present], marker="o", linewidth=3, color=NATIVE, label="Montgomery")
-    axis.plot(xs, [median(entry, "ultralytics") for _, entry in present], marker="o", linewidth=3, color=ULTRA, label="Ultralytics")
-    axis.set_title("YOLO26n detection resolution scaling", loc="left", fontsize=20, fontweight="bold")
-    axis.set_xlabel("Square training canvas (pixels)")
-    axis.set_ylabel("External command wall time (seconds)")
-    axis.legend(frameon=False)
-    axis.spines[["top", "right"]].set_visible(False)
+    baseline_ids = [
+        f"{family}-{task}"
+        for family in FAMILIES
+        for task in ("detect", "segment")
+    ] + [f"{family}-detect" for family in ("yolov3-tinyu", "yolov10n", "yolo12n")]
+    baseline_ids = [
+        scenario_id
+        for scenario_id in baseline_ids
+        if scenario_id in entries and f"{scenario_id}-1280px" in entries
+    ]
+    if not baseline_ids:
+        return
+    labels = [
+        scenario_id.replace("yolov", "YOLOv").replace("yolo", "YOLO")
+        for scenario_id in baseline_ids
+    ]
+    y = list(range(len(baseline_ids)))
+    figure, axes = plt.subplots(1, 2, figsize=(16, 8), sharey=True)
+    for axis, imgsz in zip(axes, (640, 1280)):
+        resolution_entries = [
+            entries[scenario_id] if imgsz == 640 else entries[f"{scenario_id}-1280px"]
+            for scenario_id in baseline_ids
+        ]
+        axis.barh(
+            [value + 0.19 for value in y],
+            [median(entry, "native") for entry in resolution_entries],
+            height=0.36,
+            color=NATIVE,
+            label="Montgomery / Burn-WGPU",
+        )
+        axis.barh(
+            [value - 0.19 for value in y],
+            [median(entry, "ultralytics") for entry in resolution_entries],
+            height=0.36,
+            color=ULTRA,
+            label="Ultralytics / PyTorch-CUDA",
+        )
+        axis.set_yticks(y, labels)
+        axis.invert_yaxis()
+        axis.set_title(f"{imgsz} x {imgsz}", fontweight="bold", fontsize=15)
+        axis.set_xlabel("External command wall time (seconds)")
+        axis.spines[["top", "right"]].set_visible(False)
+    axes[0].legend(frameon=False, loc="lower right")
+    figure.suptitle(
+        "Real-world training resolutions", x=0.04, ha="left", fontsize=20, fontweight="bold"
+    )
     finish(figure, output / "resolution-scaling.png")
 
 

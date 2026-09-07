@@ -94,31 +94,37 @@ class Scenario:
 
 
 # Each axis has an explicit baseline, so plots do not silently compare several variables at once.
+# Classification retains its architecture-defined 224 px input. Detection and segmentation use a
+# real-world 640 px baseline, with the complete nano-family matrix repeated at 1280 px.
 SCENARIOS = [
     # Family x task coverage.
     *(Scenario(f"{model}-{task}", "family-task", f"{model}-{suffix}" if suffix else model, task,
-               224 if task == "classify" else 320, 2, 3)
+               224 if task == "classify" else 640, 2, 3)
       for model in ("yolov8n", "yolo11n", "yolo26n")
       for task, suffix in (("classify", "cls"), ("detect", ""), ("segment", "seg"))),
     # Detect-only families at the same settings as the other nano detectors.
-    *(Scenario(f"{model}-detect", "family-task", model, "detect", 320, 2, 3)
+    *(Scenario(f"{model}-detect", "family-task", model, "detect", 640, 2, 3)
+      for model in ("yolov3-tinyu", "yolov10n", "yolo12n")),
+    # Repeat every nano detection and segmentation comparison at 1280 px.
+    *(Scenario(f"{model}-{task}-1280px", "resolution", f"{model}-{suffix}" if suffix else model,
+               task, 1280, 2, 3)
+      for model in ("yolov8n", "yolo11n", "yolo26n")
+      for task, suffix in (("detect", ""), ("segment", "seg"))),
+    *(Scenario(f"{model}-detect-1280px", "resolution", model, "detect", 1280, 2, 3)
       for model in ("yolov3-tinyu", "yolov10n", "yolo12n")),
     # YOLO26 scale coverage at fixed task settings.
     *(Scenario(f"yolo26{scale}-{task}", "scale", f"yolo26{scale}-{suffix}" if suffix else f"yolo26{scale}",
-               task, 224 if task == "classify" else 320, 2, 3)
+               task, 224 if task == "classify" else 640, 2, 3)
       for scale in ("s", "m")
       for task, suffix in (("classify", "cls"), ("detect", ""), ("segment", "seg"))),
     # Batch scaling around the family/task YOLO26n baseline.
     *(Scenario(f"yolo26n-{task}-batch{batch}", "batch", f"yolo26n-{suffix}" if suffix else "yolo26n",
-               task, 224 if task == "classify" else 320, batch, 3)
+               task, 224 if task == "classify" else 640, batch, 3)
       for task, suffix in (("classify", "cls"), ("detect", ""), ("segment", "seg"))
       for batch in (1, 4)),
-    # Detection resolution scaling around the 320 px baseline.
-    *(Scenario(f"yolo26n-detect-{imgsz}px", "resolution", "yolo26n", "detect", imgsz, 2, 3)
-      for imgsz in (64, 128, 640)),
     # Longer convergence sanity checks.
     *(Scenario(f"yolo26n-{task}-10epochs", "convergence", f"yolo26n-{suffix}" if suffix else "yolo26n",
-               task, 224 if task == "classify" else 320, 2, 10)
+               task, 224 if task == "classify" else 640, 2, 10)
       for task, suffix in (("classify", "cls"), ("detect", ""), ("segment", "seg"))),
 ]
 
@@ -397,7 +403,7 @@ def main() -> None:
     output_root = output.parent
     output_root.mkdir(parents=True, exist_ok=True)
     new_result: dict[str, Any] = {
-        "schema": "montgomery-training-comparison-v1",
+        "schema": "montgomery-training-comparison-v2",
         "created_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "methodology": {
             "timer": "external process wall clock",
@@ -413,6 +419,9 @@ def main() -> None:
             "validation_in_timed_region": False,
             "post_training_validation": "first trial of each ten-epoch convergence scenario",
             "checkpoint_each_epoch": True,
+            "classification_imgsz": 224,
+            "vision_baseline_imgsz": 640,
+            "vision_resolution_sweep": [640, 1280],
         },
         "host": {
             "platform": platform.platform(),
