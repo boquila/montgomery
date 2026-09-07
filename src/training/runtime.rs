@@ -2264,23 +2264,111 @@ pub fn validate(checkpoint: PathBuf) -> Result<ValidationSummary, Box<dyn Error 
     })?
 }
 
+/// Validate a native inference Burnpack against the validation split in a dataset manifest.
+pub fn validate_burnpack(
+    model: PathBuf,
+    data: PathBuf,
+) -> Result<ValidationSummary, Box<dyn Error + Send + Sync>> {
+    let worker = std::thread::Builder::new()
+        .name("montgomery-burnpack-validation".into())
+        .stack_size(64 * 1024 * 1024)
+        .spawn(move || validate_burnpack_inner(model, data))?;
+    worker.join().map_err(|_| {
+        Box::<dyn Error + Send + Sync>::from("native validation worker thread panicked")
+    })?
+}
+
+enum ValidationWeights {
+    Checkpoint(Vec<u8>),
+    Burnpack(PathBuf),
+}
+
+fn load_validation_model<M>(
+    mut model: M,
+    weights: ValidationWeights,
+    device: &burn::tensor::Device<Wgpu>,
+) -> Result<M, Box<dyn Error + Send + Sync>>
+where
+    M: Module<Wgpu>,
+{
+    match weights {
+        ValidationWeights::Checkpoint(bytes) => {
+            model = model.load_record(decode_record::<Wgpu, _>(bytes, device)?);
+        }
+        ValidationWeights::Burnpack(path) => {
+            let mut store = burn_store::BurnpackStore::from_file(path)
+                .with_from_adapter(burn_store::HalfPrecisionAdapter::new())
+                .allow_partial(true)
+                .zero_copy(true);
+            let result = model.load_from(&mut store)?;
+            if result
+                .missing
+                .iter()
+                .any(|(path, _)| !path.contains(".o2m_") && !path.starts_with("head.proto.sem_"))
+            {
+                return Err(
+                    format!("inference artifact is missing model tensors:\n{result}").into(),
+                );
+            }
+        }
+    }
+    Ok(model)
+}
+
 fn validate_inner(checkpoint: PathBuf) -> Result<ValidationSummary, Box<dyn Error + Send + Sync>> {
     let manifest = crate::training::checkpoint::load(&checkpoint)?;
     let dataset = DatasetManifest::load(&manifest.config.data)?;
-    if dataset.class_names != manifest.config.model.class_names {
-        return Err("validation dataset class table differs from checkpoint metadata".into());
+    let bytes = std::fs::read(checkpoint.join("ema.bin"))
+        .or_else(|_| std::fs::read(checkpoint.join("model.bin")))?;
+    validate_resolved(
+        manifest.config,
+        dataset,
+        manifest.state.epoch as u64,
+        ValidationWeights::Checkpoint(bytes),
+    )
+}
+
+fn validate_burnpack_inner(
+    model: PathBuf,
+    data: PathBuf,
+) -> Result<ValidationSummary, Box<dyn Error + Send + Sync>> {
+    let model_id = ModelId::from_burnpack(&model)?;
+    let metadata = crate::artifact_metadata(&model)?;
+    let dataset = DatasetManifest::load(&data)?;
+    let class_names = metadata
+        .class_names
+        .unwrap_or_else(|| crate::catalog_class_names(model_id));
+    let input_size = metadata
+        .input_size
+        .unwrap_or_else(|| model_id.default_input_size());
+    let spec = ModelSpec::new(model_id, class_names, Some([input_size, input_size]))?;
+    let config = TrainingConfig::yolox(spec, data, PathBuf::from("runs"));
+    validate_resolved(config, dataset, 0, ValidationWeights::Burnpack(model))
+}
+
+fn validate_resolved(
+    config: TrainingConfig,
+    dataset: crate::training::data::ResolvedDataset,
+    epoch: u64,
+    weights: ValidationWeights,
+) -> Result<ValidationSummary, Box<dyn Error + Send + Sync>> {
+    if dataset.class_names != config.model.class_names {
+        return Err("validation dataset class table differs from model metadata".into());
+    }
+    if (config.model.task == crate::training::TaskKind::Classify)
+        != (dataset.format == DatasetFormat::ClassificationFolders)
+    {
+        return Err("classification models require classification folders; detector models require YOLO/COCO annotations".into());
     }
     if dataset.val_images.is_empty() {
         return Err("dataset manifest has no validation images".into());
     }
     let (device, adapter) = crate::default_wgpu_device();
     eprintln!("Validation adapter: {adapter}");
-    let bytes = std::fs::read(checkpoint.join("ema.bin"))
-        .or_else(|_| std::fs::read(checkpoint.join("model.bin")))?;
-    let classes = manifest.config.model.num_classes;
-    if manifest.config.model.task == crate::training::TaskKind::Detect {
+    let classes = config.model.num_classes;
+    if config.model.task == crate::training::TaskKind::Detect {
         let batches: Box<dyn EpochBatchSource<DetectionBatch<Wgpu>> + '_> = if matches!(
-            manifest.config.model.architecture,
+            config.model.architecture,
             ModelId::YoloxNano
                 | ModelId::YoloxTiny
                 | ModelId::YoloxS
@@ -2289,17 +2377,17 @@ fn validate_inner(checkpoint: PathBuf) -> Result<ValidationSummary, Box<dyn Erro
                 | ModelId::YoloxX
         ) {
             Box::new(VecDeque::from(build_yolox_validation_batches(
-                &manifest.config,
+                &config,
                 &dataset,
                 &dataset.val_images,
                 &device,
             )?))
         } else {
             Box::new(DetectionBatchSource::new(
-                &manifest.config,
+                &config,
                 &dataset.val_images,
                 &device,
-                manifest.state.epoch as u64,
+                epoch,
                 VisionSampleLoader::new(
                     &dataset,
                     &dataset.val_images,
@@ -2310,17 +2398,16 @@ fn validate_inner(checkpoint: PathBuf) -> Result<ValidationSummary, Box<dyn Erro
         };
         macro_rules! run_detect {
             ($model:expr) => {{
-                validate_detection_model(
-                    $model,
-                    bytes,
+                let model = load_validation_model($model, weights, &device)?;
+                validate_detection_loaded(
+                    model,
                     batches,
-                    manifest.config.model.architecture,
-                    &manifest.config.validation,
-                    &device,
+                    config.model.architecture,
+                    &config.validation,
                 )
             }};
         }
-        return match manifest.config.model.architecture {
+        return match config.model.architecture {
             ModelId::YoloxNano => run_detect!(Yolox::yolox_nano(classes, &device)),
             ModelId::YoloxTiny => run_detect!(Yolox::yolox_tiny(classes, &device)),
             ModelId::YoloxS => run_detect!(Yolox::yolox_s(classes, &device)),
@@ -2378,15 +2465,15 @@ fn validate_inner(checkpoint: PathBuf) -> Result<ValidationSummary, Box<dyn Erro
             ModelId::Yolo12M => run_detect!(Yolo12MConfig.init_with_classes(classes, &device)),
             ModelId::Yolo12L => run_detect!(Yolo12LConfig.init_with_classes(classes, &device)),
             ModelId::Yolo12X => run_detect!(Yolo12XConfig.init_with_classes(classes, &device)),
-            _ => Err("checkpoint model is not a supported detector".into()),
+            _ => Err("model is not a supported detector".into()),
         };
     }
-    if manifest.config.model.task == crate::training::TaskKind::Segment {
+    if config.model.task == crate::training::TaskKind::Segment {
         let batches = SegmentationBatchSource::new(
-            &manifest.config,
+            &config,
             &dataset.val_images,
             &device,
-            manifest.state.epoch as u64,
+            epoch,
             VisionSampleLoader::new(
                 &dataset,
                 &dataset.val_images,
@@ -2397,17 +2484,16 @@ fn validate_inner(checkpoint: PathBuf) -> Result<ValidationSummary, Box<dyn Erro
         )?;
         macro_rules! run_segment {
             ($model:expr) => {{
-                validate_segmentation_model(
-                    $model,
-                    bytes,
+                let model = load_validation_model($model, weights, &device)?;
+                validate_segmentation_loaded(
+                    model,
                     batches,
-                    manifest.config.model.architecture,
-                    &manifest.config.validation,
-                    &device,
+                    config.model.architecture,
+                    &config.validation,
                 )
             }};
         }
-        return match manifest.config.model.architecture {
+        return match config.model.architecture {
             ModelId::Yolo11NSeg => run_segment!(
                 crate::models::yolo11::Yolo11SegNConfig.init_with_classes(classes, &device)
             ),
@@ -2453,33 +2539,31 @@ fn validate_inner(checkpoint: PathBuf) -> Result<ValidationSummary, Box<dyn Erro
             ModelId::Yolo26XSeg => run_segment!(
                 crate::models::yolo26::Yolo26SegXConfig.init_with_classes(classes, &device)
             ),
-            _ => Err("checkpoint model is not a supported segmenter".into()),
+            _ => Err("model is not a supported segmenter".into()),
         };
     }
-    if manifest.config.model.task != crate::training::TaskKind::Classify {
-        return Err("checkpoint task is not supported by native validation".into());
+    if config.model.task != crate::training::TaskKind::Classify {
+        return Err("model task is not supported by native validation".into());
     }
     let batches = ClassificationBatchSource::new(
-        &manifest.config,
+        &config,
         &dataset,
         &dataset.val_images,
         &device,
-        manifest.state.epoch as u64,
+        epoch,
         false,
     )?;
     macro_rules! run {
         ($config:expr) => {{
-            let model = $config.init_with_classes(classes, &device);
-            validate_classification_model(
-                model,
-                bytes,
-                batches,
-                manifest.config.model.architecture,
+            let model = load_validation_model(
+                $config.init_with_classes(classes, &device),
+                weights,
                 &device,
-            )
+            )?;
+            validate_classification_loaded(model, batches, config.model.architecture)
         }};
     }
-    match manifest.config.model.architecture {
+    match config.model.architecture {
         ModelId::Yolo11NCls => run!(Yolo11ClsNConfig),
         ModelId::Yolo11SCls => run!(Yolo11ClsSConfig),
         ModelId::Yolo11MCls => run!(Yolo11ClsMConfig),
@@ -2495,23 +2579,8 @@ fn validate_inner(checkpoint: PathBuf) -> Result<ValidationSummary, Box<dyn Erro
         ModelId::Yolov8MCls => run!(Yolov8ClsMConfig),
         ModelId::Yolov8LCls => run!(Yolov8ClsLConfig),
         ModelId::Yolov8XCls => run!(Yolov8ClsXConfig),
-        _ => Err("checkpoint model is not a supported classifier".into()),
+        _ => Err("model is not a supported classifier".into()),
     }
-}
-
-fn validate_classification_model<M, S>(
-    model: M,
-    bytes: Vec<u8>,
-    batches: S,
-    model_id: ModelId,
-    device: &burn::tensor::Device<Wgpu>,
-) -> Result<ValidationSummary, Box<dyn Error + Send + Sync>>
-where
-    M: burn::module::Module<Wgpu> + ClassificationForward,
-    S: EpochBatchSource<ClassificationBatch<Wgpu>>,
-{
-    let model = model.load_record(decode_record::<Wgpu, _>(bytes, device)?);
-    validate_classification_loaded(model, batches, model_id)
 }
 
 fn validate_classification_loaded<M, S>(
@@ -2714,22 +2783,6 @@ end_to_end_detection_forward!(
     crate::models::yolo26::Yolo26X<Wgpu>,
 );
 
-fn validate_detection_model<M, S>(
-    model: M,
-    bytes: Vec<u8>,
-    batches: S,
-    model_id: ModelId,
-    validation: &crate::training::config::ValidationConfig,
-    device: &burn::tensor::Device<Wgpu>,
-) -> Result<ValidationSummary, Box<dyn Error + Send + Sync>>
-where
-    M: burn::module::Module<Wgpu> + DetectionForward,
-    S: EpochBatchSource<DetectionBatch<Wgpu>>,
-{
-    let model = model.load_record(decode_record::<Wgpu, _>(bytes, device)?);
-    validate_detection_loaded(model, batches, model_id, validation)
-}
-
 fn validate_detection_loaded<M, S>(
     model: M,
     mut batches: S,
@@ -2876,22 +2929,6 @@ end_to_end_segmentation_forward!(
     crate::models::yolo26::Yolo26SegL<Wgpu>,
     crate::models::yolo26::Yolo26SegX<Wgpu>,
 );
-
-fn validate_segmentation_model<M, S>(
-    model: M,
-    bytes: Vec<u8>,
-    batches: S,
-    model_id: ModelId,
-    validation: &crate::training::config::ValidationConfig,
-    device: &burn::tensor::Device<Wgpu>,
-) -> Result<ValidationSummary, Box<dyn Error + Send + Sync>>
-where
-    M: Module<Wgpu> + SegmentationForward,
-    S: EpochBatchSource<SegmentationBatch<Wgpu>>,
-{
-    let model = model.load_record(decode_record::<Wgpu, _>(bytes, device)?);
-    validate_segmentation_loaded(model, batches, model_id, validation)
-}
 
 fn validate_segmentation_loaded<M, S>(
     model: M,

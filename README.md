@@ -102,6 +102,15 @@ worker selection.
 `--batch -1` runs isolated WGPU optimizer-step probes, finds the largest fitting microbatch up to
 the training-set size (capped at 1024), and uses 80% of that verified maximum for runtime headroom.
 
+## Validation
+
+```console
+montgomery val --model best.bpk --data dataset.yaml
+```
+
+Reports task-appropriate metrics for the dataset's validation split. Use `--json` for structured
+output, or `--checkpoint checkpoints/best` to validate a resumable training checkpoint.
+
 ## Export ONNX
 
 ```console

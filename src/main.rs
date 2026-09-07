@@ -25,6 +25,7 @@ use montgomery::training::automatic_worker_count;
 use montgomery::training::runtime::{
     TrainingInitialization, TrainingRequest, export as export_training,
     probe_batch as probe_training_batch, train as train_native, validate as validate_native,
+    validate_burnpack,
 };
 use montgomery::{
     BenchmarkOptions, InferenceBenchmark, ModelId, ModelTask, PredictOptions, Predictor, annotate,
@@ -73,7 +74,7 @@ enum Command {
     /// Train a model with the native Burn/WGPU trainer.
     #[cfg(feature = "training")]
     Train(TrainArgs),
-    /// Validate and inspect a resumable native training checkpoint.
+    /// Validate a Burnpack model and dataset, or inspect a resumable training checkpoint.
     #[cfg(feature = "training")]
     Val(ValArgs),
     /// Export a native training checkpoint to the existing inference Burnpack format.
@@ -194,9 +195,28 @@ struct TrainArgs {
 
 #[cfg(feature = "training")]
 #[derive(Debug, ClapArgs)]
+#[command(group(
+    ArgGroup::new("validation_source")
+        .required(true)
+        .multiple(false)
+        .args(["checkpoint", "model"])
+))]
 struct ValArgs {
-    #[arg(long)]
-    checkpoint: PathBuf,
+    /// Resumable training checkpoint; its saved model and dataset settings are retained.
+    #[arg(long, value_name = "CHECKPOINT")]
+    checkpoint: Option<PathBuf>,
+    /// Montgomery .bpk model to validate; architecture and input size come from metadata.
+    #[arg(long, value_name = "MODEL.bpk", requires = "data")]
+    model: Option<PathBuf>,
+    /// Dataset manifest whose validation split and class table will be used.
+    #[arg(
+        long,
+        value_name = "DATASET.yaml",
+        requires = "model",
+        conflicts_with = "checkpoint"
+    )]
+    data: Option<PathBuf>,
+    /// Print the validation summary as JSON.
     #[arg(long)]
     json: bool,
 }
@@ -665,7 +685,11 @@ fn main() -> montgomery::Result<()> {
         Command::BatchProbe(args) => run_batch_probe(args),
         #[cfg(feature = "training")]
         Command::Val(args) => {
-            let summary = validate_native(args.checkpoint)?;
+            let summary = match (args.checkpoint, args.model, args.data) {
+                (Some(checkpoint), None, None) => validate_native(checkpoint)?,
+                (None, Some(model), Some(data)) => validate_burnpack(model, data)?,
+                _ => unreachable!("clap enforces the validation source arguments"),
+            };
             if args.json {
                 println!("{}", serde_json::to_string_pretty(&summary)?);
             } else if let (Some(box_metrics), Some(mask_metrics)) =
