@@ -104,19 +104,19 @@ def axis_scaling(entries: dict[str, dict], output: Path, axis_kind: str) -> None
     if axis_kind == "scale":
         x_values = ("n", "s", "m")
         path = output / "model-scale.png"
-        title = "YOLO26 model-scale behavior: 224 px classify / 640 px vision"
+        title = "YOLO26 model-scale behavior: 640 x 640, batch 2"
         xlabel = "Model scale"
         scenario_id = lambda task, value: f"yolo26{value}-{task}"
     else:
         x_values = (1, 2, 4)
         path = output / "batch-scaling.png"
-        title = "Batch-size behavior: 224 px classify / 640 px vision"
+        title = "YOLO26n batch-size behavior: 640 x 640, 3 epochs"
         xlabel = "Batch size"
         scenario_id = lambda task, value: (
             f"yolo26n-{task}" if value == 2 else f"yolo26n-{task}-batch{value}"
         )
-    figure, axes = plt.subplots(1, 3, figsize=(14, 4.8), sharey=False)
-    for task, axis in zip(TASKS, axes):
+    figure, axes = plt.subplots(1, 2, figsize=(11, 4.8), sharey=False)
+    for task, axis in zip(("detect", "segment"), axes):
         present = [(value, entries.get(scenario_id(task, value))) for value in x_values]
         present = [(value, entry) for value, entry in present if entry]
         xs = [value for value, _ in present]
@@ -197,19 +197,90 @@ def all_scenarios(entries: dict[str, dict], output: Path) -> None:
 
 
 def trial_ranges(entries: dict[str, dict], output: Path) -> None:
-    selected = [entries[key] for key in (f"{family}-{task}" for family in FAMILIES for task in TASKS) if key in entries]
-    labels = [entry["scenario"]["id"] for entry in selected]
-    figure, axis = plt.subplots(figsize=(12, 7))
-    for index, entry in enumerate(selected):
-        for offset, framework, color in ((-0.12, "native", NATIVE), (0.12, "ultralytics", ULTRA)):
+    selected = [
+        entries[key]
+        for key in (f"{family}-{task}" for family in FAMILIES for task in TASKS)
+        if key in entries
+    ]
+    labels = []
+    for entry in selected:
+        scenario = entry["scenario"]
+        model = scenario["id"].split("-")[0].replace("yolov", "YOLOv").replace("yolo", "YOLO")
+        labels.append(f"{model} — {scenario['task'].title()} ({scenario['imgsz']} px)")
+
+    figure, axes = plt.subplots(1, 2, figsize=(15, 8), sharex=True, sharey=True)
+    for axis, framework, color, title in (
+        (axes[0], "native", NATIVE, "Montgomery / Burn-WGPU"),
+        (axes[1], "ultralytics", ULTRA, "Ultralytics / PyTorch-CUDA"),
+    ):
+        for index, entry in enumerate(selected):
+            if index % 2 == 0:
+                axis.axhspan(index - 0.5, index + 0.5, color="#eef2f7", zorder=0)
             samples = [float(trial["wall_seconds"]) for trial in entry["trials"][framework]]
-            axis.scatter(samples, [index + offset] * len(samples), color=color, s=45, alpha=0.8)
-            axis.plot([min(samples), max(samples)], [index + offset] * 2, color=color, linewidth=2)
-    axis.set_yticks(range(len(labels)), labels)
-    axis.invert_yaxis()
-    axis.set_xlabel("Seconds · dots are individual alternating trials")
-    axis.set_title("Trial repeatability", loc="left", fontsize=20, fontweight="bold")
-    axis.spines[["top", "right"]].set_visible(False)
+            sample_median = median(entry, framework)
+            axis.plot(
+                [min(samples), max(samples)],
+                [index, index],
+                color=color,
+                linewidth=4,
+                alpha=0.55,
+                solid_capstyle="round",
+                zorder=1,
+            )
+            axis.scatter(
+                samples,
+                [index] * len(samples),
+                color=color,
+                edgecolor="white",
+                linewidth=0.8,
+                s=48,
+                alpha=0.8,
+                zorder=2,
+            )
+            axis.scatter(
+                [sample_median],
+                [index],
+                color=color,
+                edgecolor=TEXT,
+                linewidth=1,
+                marker="D",
+                s=76,
+                zorder=3,
+            )
+            axis.annotate(
+                f"{sample_median:.2f}",
+                (sample_median, index),
+                xytext=(8, 0),
+                textcoords="offset points",
+                va="center",
+                color=TEXT,
+                fontsize=9,
+                fontweight="bold",
+            )
+        axis.set_title(title, color=color, fontsize=14, fontweight="bold")
+        axis.set_xlabel("External command wall time (seconds)")
+        axis.grid(axis="x")
+        axis.grid(axis="y", visible=False)
+        axis.spines[["top", "right", "left"]].set_visible(False)
+        axis.tick_params(axis="y", length=0)
+
+    axes[0].set_yticks(range(len(labels)), labels)
+    axes[0].invert_yaxis()
+    axes[1].tick_params(labelleft=False)
+    figure.suptitle(
+        "Trial repeatability",
+        x=0.06,
+        ha="left",
+        fontsize=20,
+        fontweight="bold",
+    )
+    figure.text(
+        0.06,
+        0.94,
+        "Circles are individual alternating trials; diamonds are medians; lines span min–max.",
+        color="#475569",
+        fontsize=10,
+    )
     finish(figure, output / "trial-repeatability.png")
 
 
