@@ -1,13 +1,18 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::Arc};
 
-use burn::tensor::{Tensor, TensorData, Transaction, activation, backend::Backend};
+use burn::tensor::{Int, Tensor, TensorData, Transaction, activation, backend::Backend};
 
 use crate::training::{
-    assign::tal::{TalGroundTruth, TalPrediction, assign},
-    geometry::{FeatureLevelLayout, make_anchors},
+    assign::tal::{TalGroundTruth, TalPredictions, assign},
+    geometry::{AnchorPoint, FeatureLevelLayout, make_anchors},
 };
 
-use super::common::{LossOutput, bce_with_logits_tensor, log_softmax, scalar_values};
+use super::common::{DeferredScalar, LossOutput, log_softmax};
+
+pub type DetectionLossWithMatches<B> = (
+    LossOutput<B>,
+    Vec<crate::training::loss::segmentation::MaskMatch>,
+);
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DetectionLossConfig {
@@ -61,68 +66,83 @@ pub fn dfl_loss(logits: &[f32], distance: f32) -> Result<f32, &'static str> {
     Ok(-log_prob[left] * left_weight - log_prob[right] * right_weight)
 }
 
-/// Differentiable TAL/CIoU/DFL (or direct-side L1) criterion.
-///
-/// TAL uses detached host values to make discrete matches deterministic. Dense target tensors are
-/// uploaded once and all numeric losses are evaluated against the connected model outputs.
-pub fn tensor_loss<B: Backend>(
-    raw_boxes: Tensor<B, 3>,
-    raw_scores: Tensor<B, 3>,
-    levels: &[FeatureLevelLayout],
-    targets: &[Vec<TalGroundTruth>],
-    config: DetectionLossConfig,
-) -> Result<LossOutput<B>, &'static str> {
-    Ok(tensor_loss_with_matches(raw_boxes, raw_scores, levels, targets, config)?.0)
+struct AnchorGeometry<B: Backend> {
+    anchors: Arc<[AnchorPoint]>,
+    anchor_tensor: Tensor<B, 3>,
+    stride_tensor: Tensor<B, 3>,
 }
 
-/// Detection criterion plus the positive anchor/target mapping consumed by prototype-mask loss.
-pub fn tensor_loss_with_matches<B: Backend>(
+struct PreparedDetectionLoss<B: Backend> {
+    raw_boxes: Tensor<B, 3>,
+    raw_scores: Tensor<B, 3>,
+    distances: Tensor<B, 3>,
+    decoded: Tensor<B, 3>,
+    anchors: Arc<[AnchorPoint]>,
+    anchor_tensor: Tensor<B, 3>,
+    stride_tensor: Tensor<B, 3>,
+    device: B::Device,
+    batch: usize,
+    classes: usize,
+    anchor_count: usize,
+    config: DetectionLossConfig,
+    profile_started: Option<std::time::Instant>,
+}
+
+fn prepare_detection_loss<B: Backend>(
     raw_boxes: Tensor<B, 3>,
     raw_scores: Tensor<B, 3>,
     levels: &[FeatureLevelLayout],
-    targets: &[Vec<TalGroundTruth>],
+    target_batch: usize,
     config: DetectionLossConfig,
-) -> Result<
-    (
-        LossOutput<B>,
-        Vec<crate::training::loss::segmentation::MaskMatch>,
-    ),
-    &'static str,
-> {
+    shared_geometry: Option<AnchorGeometry<B>>,
+) -> Result<PreparedDetectionLoss<B>, &'static str> {
     let profile_started =
         std::env::var_os("MONTGOMERY_PROFILE_TAL").map(|_| std::time::Instant::now());
     let [batch, box_channels, anchor_count] = raw_boxes.dims();
     let [score_batch, classes, score_anchors] = raw_scores.dims();
     if score_batch != batch
         || score_anchors != anchor_count
-        || targets.len() != batch
+        || target_batch != batch
         || box_channels != 4 * config.reg_max
         || config.reg_max == 0
         || config.top_k == 0
     {
         return Err("invalid modern detection prediction/configuration shapes");
     }
-    let anchors = make_anchors(levels);
-    if anchors.len() != anchor_count {
-        return Err("feature-level layout does not match prediction anchors");
-    }
     let device = raw_boxes.device();
-    let mut anchor_xy = Vec::with_capacity(anchor_count * 2);
-    let mut stride_values = Vec::with_capacity(anchor_count);
-    for anchor in &anchors {
-        anchor_xy.extend(anchor.grid_xy);
-        stride_values.push(anchor.stride);
-    }
-    let anchor_tensor = Tensor::<B, 2>::from_data(
-        TensorData::new(anchor_xy.clone(), [anchor_count, 2]),
-        &device,
-    )
-    .unsqueeze::<3>();
-    let stride_tensor = Tensor::<B, 2>::from_data(
-        TensorData::new(stride_values.clone(), [anchor_count, 1]),
-        &device,
-    )
-    .unsqueeze::<3>();
+    let geometry = if let Some(shared) = shared_geometry {
+        if shared.anchors.len() != anchor_count {
+            return Err("shared feature-level geometry does not match prediction anchors");
+        }
+        shared
+    } else {
+        let anchors = Arc::<[AnchorPoint]>::from(make_anchors(levels));
+        if anchors.len() != anchor_count {
+            return Err("feature-level layout does not match prediction anchors");
+        }
+        let mut anchor_xy = Vec::with_capacity(anchor_count * 2);
+        let mut stride_values = Vec::with_capacity(anchor_count);
+        for anchor in anchors.iter() {
+            anchor_xy.extend(anchor.grid_xy);
+            stride_values.push(anchor.stride);
+        }
+        let anchor_tensor =
+            Tensor::<B, 2>::from_data(TensorData::new(anchor_xy, [anchor_count, 2]), &device)
+                .unsqueeze::<3>();
+        let stride_tensor =
+            Tensor::<B, 2>::from_data(TensorData::new(stride_values, [anchor_count, 1]), &device)
+                .unsqueeze::<3>();
+        AnchorGeometry {
+            anchors,
+            anchor_tensor,
+            stride_tensor,
+        }
+    };
+    let AnchorGeometry {
+        anchors,
+        anchor_tensor,
+        stride_tensor,
+    } = geometry;
     let distances = if config.reg_max > 1 {
         let projection = Tensor::<B, 4>::from_data(
             TensorData::new(
@@ -152,16 +172,150 @@ pub fn tensor_loss_with_matches<B: Backend>(
         ],
         2,
     ) * stride_tensor.clone();
+    Ok(PreparedDetectionLoss {
+        raw_boxes,
+        raw_scores,
+        distances,
+        decoded,
+        anchors,
+        anchor_tensor,
+        stride_tensor,
+        device,
+        batch,
+        classes,
+        anchor_count,
+        config,
+        profile_started,
+    })
+}
 
-    let [decoded_data, score_data] = Transaction::default()
-        .register(decoded.clone().detach())
+/// Differentiable TAL/CIoU/DFL (or direct-side L1) criterion.
+///
+/// TAL uses detached host values to make discrete matches deterministic. Dense target tensors are
+/// uploaded once and all numeric losses are evaluated against the connected model outputs.
+pub fn tensor_loss<B: Backend>(
+    raw_boxes: Tensor<B, 3>,
+    raw_scores: Tensor<B, 3>,
+    levels: &[FeatureLevelLayout],
+    targets: &[Vec<TalGroundTruth>],
+    config: DetectionLossConfig,
+) -> Result<LossOutput<B>, &'static str> {
+    Ok(tensor_loss_with_matches(raw_boxes, raw_scores, levels, targets, config)?.0)
+}
+
+/// Evaluate two independent detection heads with one detached assignment readback transaction.
+pub fn tensor_dual_loss<B: Backend>(
+    many: (Tensor<B, 3>, Tensor<B, 3>, DetectionLossConfig),
+    one: (Tensor<B, 3>, Tensor<B, 3>, DetectionLossConfig),
+    levels: &[FeatureLevelLayout],
+    targets: &[Vec<TalGroundTruth>],
+) -> Result<(LossOutput<B>, LossOutput<B>), &'static str> {
+    let (many, one) = tensor_dual_loss_with_matches(many, one, levels, targets)?;
+    Ok((many.0, one.0))
+}
+
+/// Dual-head detection criterion retaining both positive anchor/target mappings.
+pub fn tensor_dual_loss_with_matches<B: Backend>(
+    many: (Tensor<B, 3>, Tensor<B, 3>, DetectionLossConfig),
+    one: (Tensor<B, 3>, Tensor<B, 3>, DetectionLossConfig),
+    levels: &[FeatureLevelLayout],
+    targets: &[Vec<TalGroundTruth>],
+) -> Result<(DetectionLossWithMatches<B>, DetectionLossWithMatches<B>), &'static str> {
+    let (many_boxes, many_scores, many_config) = many;
+    let (one_boxes, one_scores, one_config) = one;
+    let many = prepare_detection_loss(
+        many_boxes,
+        many_scores,
+        levels,
+        targets.len(),
+        many_config,
+        None,
+    )?;
+    let shared_geometry = AnchorGeometry {
+        anchors: many.anchors.clone(),
+        anchor_tensor: many.anchor_tensor.clone(),
+        stride_tensor: many.stride_tensor.clone(),
+    };
+    let one = prepare_detection_loss(
+        one_boxes,
+        one_scores,
+        levels,
+        targets.len(),
+        one_config,
+        Some(shared_geometry),
+    )?;
+    let profile_started = many.profile_started;
+    let [many_decoded, many_score, one_decoded, one_score] = Transaction::default()
+        .register(many.decoded.clone().detach())
         .register(activation::sigmoid(
-            raw_scores.clone().detach().swap_dims(1, 2),
+            many.raw_scores.clone().detach().swap_dims(1, 2),
+        ))
+        .register(one.decoded.clone().detach())
+        .register(activation::sigmoid(
+            one.raw_scores.clone().detach().swap_dims(1, 2),
+        ))
+        .execute()
+        .try_into()
+        .expect("dual assignment transaction must preserve all tensors");
+    let readback_elapsed = profile_started.map(|started| started.elapsed());
+    let many =
+        finish_prepared_detection_loss(many, targets, many_decoded, many_score, readback_elapsed)?;
+    let one =
+        finish_prepared_detection_loss(one, targets, one_decoded, one_score, readback_elapsed)?;
+    Ok((many, one))
+}
+
+/// Detection criterion plus the positive anchor/target mapping consumed by prototype-mask loss.
+pub fn tensor_loss_with_matches<B: Backend>(
+    raw_boxes: Tensor<B, 3>,
+    raw_scores: Tensor<B, 3>,
+    levels: &[FeatureLevelLayout],
+    targets: &[Vec<TalGroundTruth>],
+    config: DetectionLossConfig,
+) -> Result<DetectionLossWithMatches<B>, &'static str> {
+    let prepared =
+        prepare_detection_loss(raw_boxes, raw_scores, levels, targets.len(), config, None)?;
+    let profile_started = prepared.profile_started;
+    let [decoded_data, score_data] = Transaction::default()
+        .register(prepared.decoded.clone().detach())
+        .register(activation::sigmoid(
+            prepared.raw_scores.clone().detach().swap_dims(1, 2),
         ))
         .execute()
         .try_into()
         .expect("assignment transaction must preserve both tensors");
     let readback_elapsed = profile_started.map(|started| started.elapsed());
+    finish_prepared_detection_loss(
+        prepared,
+        targets,
+        decoded_data,
+        score_data,
+        readback_elapsed,
+    )
+}
+
+fn finish_prepared_detection_loss<B: Backend>(
+    prepared: PreparedDetectionLoss<B>,
+    targets: &[Vec<TalGroundTruth>],
+    decoded_data: TensorData,
+    score_data: TensorData,
+    readback_elapsed: Option<std::time::Duration>,
+) -> Result<DetectionLossWithMatches<B>, &'static str> {
+    let PreparedDetectionLoss {
+        raw_boxes,
+        raw_scores,
+        distances,
+        decoded,
+        anchors,
+        anchor_tensor,
+        stride_tensor,
+        device,
+        batch,
+        classes,
+        anchor_count,
+        config,
+        profile_started,
+    } = prepared;
     let host_started = profile_started.map(|_| std::time::Instant::now());
     let decoded_host = decoded_data
         .as_slice::<f32>()
@@ -170,7 +324,8 @@ pub fn tensor_loss_with_matches<B: Backend>(
         .as_slice::<f32>()
         .map_err(|_| "scores are not f32")?;
     let mut dense_boxes = vec![0_f32; batch * anchor_count * 4];
-    let mut dense_scores = vec![0_f32; batch * anchor_count * classes];
+    let mut positive_score_indices = Vec::new();
+    let mut positive_scores = Vec::new();
     let mut dense_weights = vec![0_f32; batch * anchor_count];
     let mut dense_distribution = vec![0_f32; batch * anchor_count * 4 * config.reg_max];
     let mut foreground = 0;
@@ -178,33 +333,16 @@ pub fn tensor_loss_with_matches<B: Backend>(
     let mut mask_matches = Vec::new();
     for (image, image_targets) in targets.iter().enumerate().take(batch) {
         target_count += image_targets.len();
-        let predictions = (0..anchor_count)
-            .map(|anchor| {
-                let box_offset = (image * anchor_count + anchor) * 4;
-                let score_offset = (image * anchor_count + anchor) * classes;
-                let [xmin, ymin, xmax, ymax]: [f32; 4] =
-                    decoded_host[box_offset..box_offset + 4].try_into().unwrap();
-                if [xmin, ymin, xmax, ymax]
-                    .into_iter()
-                    .any(|value| !value.is_finite())
-                {
-                    return Err("decoded box edges are not finite");
-                }
-                // DFL-free YOLO26 distances are raw signed outputs. Early in fine-tuning they can
-                // decode to inverted edges; those predictions have zero overlap and must remain
-                // valid assignment candidates rather than aborting the complete batch.
-                Ok(TalPrediction {
-                    bbox: crate::training::geometry::BoxXyxy {
-                        xmin,
-                        ymin,
-                        xmax,
-                        ymax,
-                    },
-                    class_scores: score_host[score_offset..score_offset + classes].to_vec(),
-                })
-            })
-            .collect::<Result<Vec<_>, &'static str>>()?;
-        for matched in assign(image_targets, &predictions, &anchors, config.top_k)? {
+        let box_start = image * anchor_count * 4;
+        let score_start = image * anchor_count * classes;
+        // DFL-free YOLO26 distances are raw signed outputs. Early in fine-tuning they can decode
+        // to inverted edges; those predictions have zero overlap and remain valid candidates.
+        let predictions = TalPredictions::new(
+            &decoded_host[box_start..box_start + anchor_count * 4],
+            &score_host[score_start..score_start + anchor_count * classes],
+            classes,
+        )?;
+        for matched in assign(image_targets, predictions, &anchors, config.top_k)? {
             let truth = &image_targets[matched.gt_index];
             if truth.class_id >= classes {
                 return Err("target class is outside prediction channels");
@@ -216,7 +354,8 @@ pub fn tensor_loss_with_matches<B: Backend>(
                 truth.bbox.xmax,
                 truth.bbox.ymax,
             ]);
-            dense_scores[flat * classes + truth.class_id] = matched.target_score;
+            positive_score_indices.push((flat * classes + truth.class_id) as i64);
+            positive_scores.push(matched.target_score);
             dense_weights[flat] = matched.target_score;
             foreground += 1;
             mask_matches.push(crate::training::loss::segmentation::MaskMatch {
@@ -254,17 +393,18 @@ pub fn tensor_loss_with_matches<B: Backend>(
         TensorData::new(dense_boxes, [batch, anchor_count, 4]),
         &device,
     );
-    let score_sum = dense_scores.iter().copied().sum::<f32>().max(1.0) as f64;
-    let target_scores = Tensor::from_data(
-        TensorData::new(dense_scores, [batch, anchor_count, classes]),
-        &device,
-    );
+    let score_sum = positive_scores.iter().copied().sum::<f32>().max(1.0) as f64;
     let target_weights = Tensor::from_data(
         TensorData::new(dense_weights, [batch, anchor_count, 1]),
         &device,
     );
-    let class_loss =
-        bce_with_logits_tensor(raw_scores.swap_dims(1, 2), target_scores).sum() / score_sum;
+    let class_loss = sparse_classification_loss(
+        raw_scores,
+        positive_score_indices,
+        positive_scores,
+        score_sum,
+        &device,
+    );
     let ciou = ciou_tensor(decoded, target_boxes.clone());
     let box_loss = ((ciou.neg() + 1.0) * target_weights.clone()).sum() / score_sum;
     let regression_loss = if config.reg_max > 1 {
@@ -308,13 +448,11 @@ pub fn tensor_loss_with_matches<B: Backend>(
     let total = box_loss.clone() * config.box_gain as f64
         + class_loss.clone() * config.class_gain as f64
         + regression_loss.clone() * config.regression_gain as f64;
-    let [box_value, class_value, regression_value, value] =
-        scalar_values([box_loss, class_loss, regression_loss, total.clone()]);
     if let (Some(readback), Some(host), Some(loss_started)) =
         (readback_elapsed, host_elapsed, loss_started)
     {
         eprintln!(
-            "tal-profile top_k={} anchors={} foreground={} readback_ms={:.3} host_ms={:.3} loss_ms={:.3}",
+            "tal-profile top_k={} anchors={} foreground={} readback_ms={:.3} host_ms={:.3} loss_enqueue_ms={:.3}",
             config.top_k,
             anchor_count,
             foreground,
@@ -323,30 +461,54 @@ pub fn tensor_loss_with_matches<B: Backend>(
             loss_started.elapsed().as_secs_f64() * 1e3,
         );
     }
-    let mut components = BTreeMap::new();
-    components.insert("box_loss".into(), box_value);
-    components.insert("classification_loss".into(), class_value);
-    components.insert(
-        if config.reg_max > 1 {
-            "dfl_loss"
-        } else {
-            "l1_loss"
-        }
-        .into(),
-        regression_value,
-    );
+    let deferred = vec![
+        DeferredScalar::component("box_loss", box_loss),
+        DeferredScalar::component("classification_loss", class_loss),
+        DeferredScalar::component(
+            if config.reg_max > 1 {
+                "dfl_loss"
+            } else {
+                "l1_loss"
+            },
+            regression_loss,
+        ),
+        DeferredScalar::total(total.clone()),
+    ];
     Ok((
         LossOutput {
             total,
-            total_value: value,
-            deferred_component: None,
-            components,
+            total_value: 0.0,
+            deferred,
+            components: BTreeMap::new(),
             targets: target_count,
             foreground,
-            finite: value.is_finite(),
+            finite: true,
         },
         mask_matches,
     ))
+}
+
+fn sparse_classification_loss<B: Backend>(
+    raw_scores: Tensor<B, 3>,
+    positive_indices: Vec<i64>,
+    positive_scores: Vec<f32>,
+    normalization: f64,
+    device: &B::Device,
+) -> Tensor<B, 1> {
+    let [batch, classes, anchors] = raw_scores.dims();
+    let logits = raw_scores
+        .swap_dims(1, 2)
+        .reshape([batch * anchors * classes]);
+    let zero_target_loss = (logits.clone() - activation::log_sigmoid(logits.clone())).sum();
+    if positive_indices.is_empty() {
+        return zero_target_loss / normalization;
+    }
+    debug_assert_eq!(positive_indices.len(), positive_scores.len());
+    let count = positive_indices.len();
+    let indices =
+        Tensor::<B, 1, Int>::from_data(TensorData::new(positive_indices, [count]), device);
+    let scores = Tensor::<B, 1>::from_data(TensorData::new(positive_scores, [count]), device);
+    (zero_target_loss - (logits.select(0, indices) * scores).sum()) / normalization
 }
 
 fn ciou_tensor<B: Backend>(predicted: Tensor<B, 3>, target: Tensor<B, 3>) -> Tensor<B, 3> {
@@ -412,6 +574,112 @@ mod tests {
     }
 
     #[test]
+    fn sparse_classification_matches_dense_bce() {
+        use burn::tensor::Tensor;
+        use burn_flex::Flex;
+
+        let device = Default::default();
+        let raw_scores = Tensor::<Flex, 3>::from_data(
+            TensorData::new(vec![-2.0, 0.5, 1.2, 3.0, -0.7, 0.1], [1, 2, 3]),
+            &device,
+        );
+        let dense_targets = Tensor::<Flex, 3>::from_data(
+            TensorData::new(vec![0.0, 0.0, 0.75, 0.0, 0.4, 0.0], [1, 3, 2]),
+            &device,
+        );
+        let dense = super::super::common::bce_with_logits_tensor(
+            raw_scores.clone().swap_dims(1, 2),
+            dense_targets,
+        )
+        .sum()
+            / 1.15;
+        let sparse =
+            sparse_classification_loss(raw_scores, vec![2, 4], vec![0.75, 0.4], 1.15, &device);
+        let dense = super::super::common::scalar_value(dense);
+        let sparse = super::super::common::scalar_value(sparse);
+        assert!(
+            (dense - sparse).abs() < 1e-6,
+            "dense={dense} sparse={sparse}"
+        );
+    }
+
+    #[test]
+    fn sparse_classification_matches_dense_bce_gradients_at_detection_shape() {
+        use burn::{backend::Autodiff, tensor::Tensor};
+        use burn_flex::Flex;
+
+        type B = Autodiff<Flex>;
+        const BATCH: usize = 2;
+        const CLASSES: usize = 80;
+        const ANCHORS: usize = 840;
+
+        let device = Default::default();
+        let count = BATCH * CLASSES * ANCHORS;
+        let logits = (0..count)
+            .map(|index| ((index * 37 % 101) as f32 - 50.0) / 17.0)
+            .collect::<Vec<_>>();
+        let positive_indices = (0..count)
+            .step_by(997)
+            .map(|index| index as i64)
+            .collect::<Vec<_>>();
+        let positive_scores = positive_indices
+            .iter()
+            .enumerate()
+            .map(|(index, _)| 0.2 + (index % 7) as f32 * 0.1)
+            .collect::<Vec<_>>();
+        let normalization = positive_scores.iter().copied().sum::<f32>().max(1.0) as f64;
+        let mut targets = vec![0.0; count];
+        for (&index, &score) in positive_indices.iter().zip(&positive_scores) {
+            targets[index as usize] = score;
+        }
+
+        let dense_logits = Tensor::<B, 3>::from_data(
+            TensorData::new(logits.clone(), [BATCH, CLASSES, ANCHORS]),
+            &device,
+        )
+        .require_grad();
+        let dense_targets =
+            Tensor::<B, 3>::from_data(TensorData::new(targets, [BATCH, ANCHORS, CLASSES]), &device);
+        let dense_loss = super::super::common::bce_with_logits_tensor(
+            dense_logits.clone().swap_dims(1, 2),
+            dense_targets,
+        )
+        .sum()
+            / normalization;
+        let dense_gradient = dense_logits
+            .grad(&dense_loss.backward())
+            .unwrap()
+            .into_data();
+
+        let sparse_logits =
+            Tensor::<B, 3>::from_data(TensorData::new(logits, [BATCH, CLASSES, ANCHORS]), &device)
+                .require_grad();
+        let sparse_loss = sparse_classification_loss(
+            sparse_logits.clone(),
+            positive_indices,
+            positive_scores,
+            normalization,
+            &device,
+        );
+        let sparse_gradient = sparse_logits
+            .grad(&sparse_loss.backward())
+            .unwrap()
+            .into_data();
+
+        for (dense, sparse) in dense_gradient
+            .as_slice::<f32>()
+            .unwrap()
+            .iter()
+            .zip(sparse_gradient.as_slice::<f32>().unwrap())
+        {
+            assert!(
+                (dense - sparse).abs() < 2e-6,
+                "dense={dense} sparse={sparse}"
+            );
+        }
+    }
+
+    #[test]
     fn direct_loss_treats_inverted_early_predictions_as_zero_overlap() {
         use burn::tensor::Tensor;
         use burn_flex::Flex;
@@ -438,5 +706,93 @@ mod tests {
         assert!(loss.finite);
         assert_eq!(loss.targets, 1);
         assert_eq!(loss.foreground, 0);
+    }
+
+    #[test]
+    fn dual_loss_matches_two_independent_dfl_losses() {
+        use burn::tensor::Tensor;
+        use burn_flex::Flex;
+
+        let device = Default::default();
+        let levels = [FeatureLevelLayout {
+            height: 2,
+            width: 2,
+            stride: 8,
+        }];
+        let config_many = DetectionLossConfig::dfl([16, 16], 4);
+        let config_one = DetectionLossConfig::dfl([16, 16], 1);
+        let many_boxes = Tensor::<Flex, 3>::from_data(
+            TensorData::new(
+                (0..256)
+                    .map(|index| (index % 17) as f32 * 0.03 - 0.2)
+                    .collect(),
+                [1, 64, 4],
+            ),
+            &device,
+        );
+        let one_boxes = Tensor::<Flex, 3>::from_data(
+            TensorData::new(
+                (0..256)
+                    .map(|index| (index % 13) as f32 * 0.025 - 0.1)
+                    .collect(),
+                [1, 64, 4],
+            ),
+            &device,
+        );
+        let many_scores = Tensor::<Flex, 3>::from_data(
+            TensorData::new(vec![0.2, 1.1, -0.4, 0.7, -0.3, 0.6, 0.9, 0.1], [1, 2, 4]),
+            &device,
+        );
+        let one_scores = Tensor::<Flex, 3>::from_data(
+            TensorData::new(vec![0.8, -0.2, 0.5, 1.2, 0.4, 0.7, -0.5, 0.3], [1, 2, 4]),
+            &device,
+        );
+        let targets = vec![vec![TalGroundTruth {
+            class_id: 1,
+            bbox: crate::training::geometry::BoxXyxy::new([1.0, 1.0, 15.0, 15.0]).unwrap(),
+        }]];
+
+        let expected_many = tensor_loss_with_matches(
+            many_boxes.clone(),
+            many_scores.clone(),
+            &levels,
+            &targets,
+            config_many,
+        )
+        .unwrap();
+        let expected_one = tensor_loss_with_matches(
+            one_boxes.clone(),
+            one_scores.clone(),
+            &levels,
+            &targets,
+            config_one,
+        )
+        .unwrap();
+        let (actual_many, actual_one) = tensor_dual_loss_with_matches(
+            (many_boxes, many_scores, config_many),
+            (one_boxes, one_scores, config_one),
+            &levels,
+            &targets,
+        )
+        .unwrap();
+
+        let expected_totals = super::super::common::scalar_values([
+            expected_many.0.total.clone(),
+            expected_one.0.total.clone(),
+        ]);
+        let actual_totals = super::super::common::scalar_values([
+            actual_many.0.total.clone(),
+            actual_one.0.total.clone(),
+        ]);
+        for (expected, actual) in expected_totals.into_iter().zip(actual_totals) {
+            assert!(
+                (expected - actual).abs() < 1e-5,
+                "independent={expected} dual={actual}"
+            );
+        }
+        assert_eq!(expected_many.1, actual_many.1);
+        assert_eq!(expected_one.1, actual_one.1);
+        assert_eq!(expected_many.0.foreground, actual_many.0.foreground);
+        assert_eq!(expected_one.0.foreground, actual_one.0.foreground);
     }
 }

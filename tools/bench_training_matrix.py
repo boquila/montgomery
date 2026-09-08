@@ -26,7 +26,10 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from benchmark_resources import ResourceMonitor
+try:
+    from benchmark_resources import ResourceMonitor
+except ModuleNotFoundError:  # Allow importing the benchmark as tools.bench_training_matrix.
+    from tools.benchmark_resources import ResourceMonitor
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -215,10 +218,23 @@ def run_observed(
     command: list[str], resource_interval_seconds: float | None
 ) -> tuple[subprocess.CompletedProcess[str], float, dict[str, Any] | None]:
     """Run a command while observing its complete process tree."""
+    environment = os.environ.copy()
+    # Performance/debug knobs inherited from a developer shell must never affect only one side of
+    # the comparison. The benchmark owns its runtime policy explicitly.
+    for variable in (
+        "MONTGOMERY_PROFILE_TRAINING",
+        "MONTGOMERY_PROFILE_TAL",
+        "CUBECL_DEBUG_LOG",
+        "CUBECL_DEBUG_OPTION",
+        "CUBECL_AUTOTUNE_LEVEL",
+        "CUBECL_WGPU_MAX_TASKS",
+    ):
+        environment.pop(variable, None)
     started = time.perf_counter()
     process = subprocess.Popen(
         command,
         cwd=ROOT,
+        env=environment,
         text=True,
         encoding="utf-8",
         errors="replace",
@@ -305,6 +321,11 @@ def run_once(
             if metadata_path.exists()
             else {}
         )
+        if framework == "native" and framework_metadata.get("arithmetic") != "strict-fp32":
+            raise RuntimeError(
+                "native benchmark binary is not a strict-FP32 training build "
+                f"(reported {framework_metadata.get('arithmetic')!r})"
+            )
         curve = read_curve(metrics, framework, scenario.task)
     except Exception as error:
         raise ObservedCommandError(
@@ -484,8 +505,12 @@ def resource_values(
     return values
 
 
-def summarize(trials: list[dict[str, Any]]) -> dict[str, Any]:
+def summarize(
+    trials: list[dict[str, Any]],
+    resource_trials: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     seconds = [trial["wall_seconds"] for trial in trials]
+    resource_trials = trials if resource_trials is None else resource_trials
     return {
         "median_seconds": statistics.median(seconds),
         "min_seconds": min(seconds),
@@ -494,25 +519,29 @@ def summarize(trials: list[dict[str, Any]]) -> dict[str, Any]:
         "stdev_seconds": statistics.stdev(seconds) if len(seconds) > 1 else 0.0,
         "resources": {
             "peak_process_count": summarize_values(
-                resource_values(trials, "process_tree", "peak_process_count")
+                resource_values(resource_trials, "process_tree", "peak_process_count")
             ),
             "peak_rss_bytes": summarize_values(
-                resource_values(trials, "process_tree", "peak_rss_bytes")
+                resource_values(resource_trials, "process_tree", "peak_rss_bytes")
             ),
             "peak_private_bytes": summarize_values(
-                resource_values(trials, "process_tree", "peak_private_bytes")
+                resource_values(resource_trials, "process_tree", "peak_private_bytes")
             ),
             "peak_gpu_dedicated_bytes": summarize_values(
-                resource_values(trials, "gpu", "peak_dedicated_bytes")
+                resource_values(resource_trials, "gpu", "peak_dedicated_bytes")
             ),
             "peak_gpu_shared_bytes": summarize_values(
-                resource_values(trials, "gpu", "peak_shared_bytes")
+                resource_values(resource_trials, "gpu", "peak_shared_bytes")
             ),
         },
     }
 
 
-def selected_scenarios(names: list[str]) -> list[Scenario]:
+def selected_scenarios(names: list[str], docs_matrix: bool = False) -> list[Scenario]:
+    if names and docs_matrix:
+        raise ValueError("--docs-matrix cannot be combined with --scenario")
+    if docs_matrix:
+        return [scenario for scenario in SCENARIOS if scenario.group in {"family-task", "resolution"}]
     if not names:
         return SCENARIOS
     by_id = {scenario.id: scenario for scenario in SCENARIOS}
@@ -542,6 +571,11 @@ def main() -> None:
         help="repeats for the substantially slower segmentation cells",
     )
     parser.add_argument("--scenario", action="append", default=[])
+    parser.add_argument(
+        "--docs-matrix",
+        action="store_true",
+        help="select the 21 classification, 640 px, and 1280 px report scenarios",
+    )
     parser.add_argument(
         "--native-binary",
         type=Path,
@@ -580,34 +614,39 @@ def main() -> None:
         None if args.no_resource_monitor else args.resource_sample_ms / 1000.0
     )
 
-    scenarios = selected_scenarios(args.scenario)
+    try:
+        scenarios = selected_scenarios(args.scenario, args.docs_matrix)
+    except ValueError as error:
+        parser.error(str(error))
     subprocess.run([sys.executable, str(DATA_SCRIPT)], cwd=ROOT, check=True)
     validate_assets(scenarios)
     output = args.output.resolve()
     output_root = output.parent
     output_root.mkdir(parents=True, exist_ok=True)
     new_result: dict[str, Any] = {
-        "schema": "montgomery-training-comparison-v3",
+        "schema": "montgomery-training-comparison-v5",
         "created_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "methodology": {
             "timer": "external process wall clock",
             "repeats": args.repeats,
             "segmentation_repeats": args.segmentation_repeats,
-            "native_prime_before_measurement": not args.skip_prime,
+            "symmetric_prime_before_measurement": not args.skip_prime,
             "alternating_framework_order": True,
             "workers": 4,
             "native_prefetch": 2,
             "seed": 0,
-            "precision": "FP32",
+            "precision": "strict FP32",
             "optimizer": "AdamW",
             "validation_in_timed_region": False,
             "post_training_validation": "first trial of each ten-epoch convergence scenario",
             "checkpoint_each_epoch": True,
+            "checkpoint_semantics": "full optimizer/model state remains resumable for both",
             "classification_imgsz": 224,
             "vision_baseline_imgsz": 640,
             "vision_resolution_sweep": [640, 1280],
             "resource_monitoring": {
                 "enabled": not args.no_resource_monitor,
+                "separate_pass_per_framework": not args.no_resource_monitor,
                 "target_sample_interval_ms": args.resource_sample_ms,
                 "scope": "training/validation root process plus recursive descendants",
                 "ram": "simultaneous process-tree RSS and private/USS peaks",
@@ -615,10 +654,7 @@ def main() -> None:
                     "per-process dedicated and shared counters where the operating system or "
                     "driver exposes them; never substituted with whole-device usage"
                 ),
-                "timing_effect": (
-                    "final observer shutdown is outside command wall time; concurrent sampling "
-                    "work is not corrected for"
-                ),
+                "timing_effect": "observer disabled during every reported timing trial",
             },
             "data_loading": {
                 "workers_requested_each": 4,
@@ -664,20 +700,22 @@ def main() -> None:
         print(f"[{index}/{len(scenarios)}] {scenario.id}", flush=True)
         entry: dict[str, Any] = {"scenario": asdict(scenario), "trials": {}}
         if not args.skip_prime:
-            print("  priming native WGPU kernels", flush=True)
-            try:
-                entry["native_prime"] = run_once(
-                    "native",
-                    scenario,
-                    output_root,
-                    "prime",
-                    keep_logs=True,
-                    keep_run=args.keep_runs,
-                    resource_interval_seconds=resource_interval_seconds,
-                )
-            except ObservedCommandError as error:
-                persist_failure(result, output, error)
-                raise
+            entry["prime"] = {}
+            for framework in ("native", "ultralytics"):
+                print(f"  priming {framework}", flush=True)
+                try:
+                    entry["prime"][framework] = run_once(
+                        framework,
+                        scenario,
+                        output_root,
+                        "prime",
+                        keep_logs=True,
+                        keep_run=args.keep_runs,
+                        resource_interval_seconds=None,
+                    )
+                except ObservedCommandError as error:
+                    persist_failure(result, output, error)
+                    raise
         repeats = args.segmentation_repeats if scenario.task == "segment" else args.repeats
         entry["repeat_count"] = repeats
         for repeat in range(repeats):
@@ -692,33 +730,50 @@ def main() -> None:
                         f"trial-{repeat + 1}",
                         keep_run=args.keep_runs,
                         validate=scenario.group == "convergence" and repeat == 0,
-                        resource_interval_seconds=resource_interval_seconds,
+                        resource_interval_seconds=None,
                     )
                 except ObservedCommandError as error:
                     persist_failure(result, output, error)
                     raise
                 entry["trials"].setdefault(framework, []).append(trial)
-                usage = trial.get("resources")
-                if usage:
-                    ram = usage["process_tree"]["peak_rss_bytes"]
-                    vram = usage["gpu"]["peak_dedicated_bytes"]
-                    details = []
-                    if ram is not None:
-                        details.append(f"RAM {ram / 1024**3:.2f} GiB")
-                    if vram is not None:
-                        details.append(f"VRAM {vram / 1024**3:.2f} GiB")
-                    elif not usage["gpu"]["available"]:
-                        details.append("VRAM unavailable")
-                    if usage["sampling"]["monitoring_errors"] or usage["gpu"][
-                        "sampling_errors"
-                    ]:
-                        details.append("telemetry warning")
-                    suffix = f" | {', '.join(details)}" if details else ""
-                else:
-                    suffix = ""
-                print(f"    {trial['wall_seconds']:.3f}s{suffix}", flush=True)
+                print(f"    {trial['wall_seconds']:.3f}s", flush=True)
+        resource_trials: dict[str, list[dict[str, Any]]] = {}
+        if resource_interval_seconds is not None:
+            for framework in ("native", "ultralytics"):
+                print(f"  resource pass: {framework}", flush=True)
+                try:
+                    resource_trial = run_once(
+                        framework,
+                        scenario,
+                        output_root,
+                        "resource",
+                        keep_run=args.keep_runs,
+                        resource_interval_seconds=resource_interval_seconds,
+                    )
+                except ObservedCommandError as error:
+                    persist_failure(result, output, error)
+                    raise
+                resource_trials[framework] = [resource_trial]
+                usage = resource_trial["resources"]
+                ram = usage["process_tree"]["peak_rss_bytes"]
+                vram = usage["gpu"]["peak_dedicated_bytes"]
+                details = []
+                if ram is not None:
+                    details.append(f"RAM {ram / 1024**3:.2f} GiB")
+                if vram is not None:
+                    details.append(f"VRAM {vram / 1024**3:.2f} GiB")
+                elif not usage["gpu"]["available"]:
+                    details.append("VRAM unavailable")
+                if usage["sampling"]["monitoring_errors"] or usage["gpu"][
+                    "sampling_errors"
+                ]:
+                    details.append("telemetry warning")
+                print(f"    {', '.join(details)}", flush=True)
+            entry["resource_trials"] = resource_trials
         entry["summary"] = {
-            framework: summarize(entry["trials"][framework])
+            framework: summarize(
+                entry["trials"][framework], resource_trials.get(framework, [])
+            )
             for framework in ("native", "ultralytics")
         }
         native = entry["summary"]["native"]["median_seconds"]

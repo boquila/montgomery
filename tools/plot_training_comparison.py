@@ -58,9 +58,9 @@ def resource_median(entry: dict, framework: str, metric: str) -> float | None:
     return float(value) if value is not None else None
 
 
-def finish(figure, output: Path) -> None:
+def finish(figure, output: Path, *, rect: tuple[float, float, float, float] | None = None) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
-    figure.tight_layout()
+    figure.tight_layout(rect=rect)
     figure.savefig(output, dpi=180, bbox_inches="tight")
     plt.close(figure)
 
@@ -285,80 +285,102 @@ def trial_ranges(entries: dict[str, dict], output: Path) -> None:
         model = scenario["id"].split("-")[0].replace("yolov", "YOLOv").replace("yolo", "YOLO")
         labels.append(f"{model} — {scenario['task'].title()} ({scenario['imgsz']} px)")
 
-    figure, axes = plt.subplots(1, 2, figsize=(15, 8), sharex=True, sharey=True)
-    for axis, framework, color, title in (
-        (axes[0], "native", NATIVE, "Montgomery / Burn-WGPU"),
-        (axes[1], "ultralytics", ULTRA, "Ultralytics / PyTorch-CUDA"),
-    ):
-        for index, entry in enumerate(selected):
-            if index % 2 == 0:
-                axis.axhspan(index - 0.5, index + 0.5, color="#eef2f7", zorder=0)
+    figure, axis = plt.subplots(figsize=(15, max(7.5, len(labels) * 0.62)))
+    offsets = {"native": -0.20, "ultralytics": 0.20}
+    styles = (
+        ("native", NATIVE, "Montgomery / Burn-WGPU"),
+        ("ultralytics", ULTRA, "Ultralytics / PyTorch-CUDA"),
+    )
+    for index, entry in enumerate(selected):
+        if index % 2 == 0:
+            axis.axhspan(index - 0.5, index + 0.5, color="#eef2f7", zorder=0)
+        medians = {framework: median(entry, framework) for framework, _, _ in styles}
+        axis.plot(
+            [medians["native"], medians["ultralytics"]],
+            [index + offsets["native"], index + offsets["ultralytics"]],
+            color="#cbd5e1",
+            linewidth=1.2,
+            zorder=1,
+        )
+        for framework, color, legend_label in styles:
+            row = index + offsets[framework]
             samples = [float(trial["wall_seconds"]) for trial in entry["trials"][framework]]
-            sample_median = median(entry, framework)
+            sample_median = medians[framework]
             axis.plot(
                 [min(samples), max(samples)],
-                [index, index],
+                [row, row],
                 color=color,
                 linewidth=4,
-                alpha=0.55,
+                alpha=0.5,
                 solid_capstyle="round",
-                zorder=1,
-            )
-            axis.scatter(
-                samples,
-                [index] * len(samples),
-                color=color,
-                edgecolor="white",
-                linewidth=0.8,
-                s=48,
-                alpha=0.8,
                 zorder=2,
             )
             axis.scatter(
-                [sample_median],
-                [index],
+                samples,
+                [row] * len(samples),
                 color=color,
-                edgecolor=TEXT,
-                linewidth=1,
-                marker="D",
-                s=76,
+                edgecolor="white",
+                linewidth=0.7,
+                s=42,
+                alpha=0.75,
                 zorder=3,
             )
+            axis.scatter(
+                [sample_median],
+                [row],
+                color=color,
+                edgecolor=TEXT,
+                linewidth=0.9,
+                marker="D",
+                s=66,
+                label=legend_label if index == 0 else None,
+                zorder=4,
+            )
             axis.annotate(
-                f"{sample_median:.2f}",
-                (sample_median, index),
-                xytext=(8, 0),
+                f"{sample_median:.2f}s",
+                (sample_median, row),
+                xytext=(-7, -6) if framework == "native" else (7, 6),
                 textcoords="offset points",
+                ha="right" if framework == "native" else "left",
                 va="center",
                 color=TEXT,
-                fontsize=9,
+                fontsize=8.5,
                 fontweight="bold",
+                bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.78, "pad": 0.8},
             )
-        axis.set_title(title, color=color, fontsize=14, fontweight="bold")
-        axis.set_xlabel("External command wall time (seconds)")
-        axis.grid(axis="x")
-        axis.grid(axis="y", visible=False)
-        axis.spines[["top", "right", "left"]].set_visible(False)
-        axis.tick_params(axis="y", length=0)
 
-    axes[0].set_yticks(range(len(labels)), labels)
-    axes[0].invert_yaxis()
-    axes[1].tick_params(labelleft=False)
+    axis.set_yticks(range(len(labels)), labels)
+    axis.set_ylim(len(labels) - 0.45, -0.55)
+    axis.set_xlabel("External command wall time (seconds; lower is better)")
+    axis.grid(axis="x")
+    axis.grid(axis="y", visible=False)
+    axis.spines[["top", "right", "left"]].set_visible(False)
+    axis.tick_params(axis="y", length=0, pad=8)
+    handles, legend_labels = axis.get_legend_handles_labels()
+    figure.legend(
+        handles,
+        legend_labels,
+        frameon=False,
+        ncol=2,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.925),
+    )
     figure.suptitle(
         "Trial repeatability",
-        x=0.06,
+        x=0.04,
+        y=0.99,
         ha="left",
         fontsize=20,
         fontweight="bold",
     )
     figure.text(
-        0.06,
-        0.94,
-        "Circles are individual alternating trials; diamonds are medians; lines span min–max.",
+        0.04,
+        0.945,
+        "Each workload is one aligned row. Circles are trials, diamonds are medians, and thick lines span min–max.",
         color="#475569",
         fontsize=10,
     )
-    finish(figure, output / "trial-repeatability.png")
+    finish(figure, output / "trial-repeatability.png", rect=(0, 0.02, 1, 0.87))
 
 
 def convergence(entries: dict[str, dict], output: Path) -> None:
@@ -388,12 +410,19 @@ def convergence(entries: dict[str, dict], output: Path) -> None:
 
 
 def first_vs_warm(entries: dict[str, dict], output: Path) -> None:
-    selected = [entry for entry in entries.values() if "native_prime" in entry]
+    selected = [
+        entry
+        for entry in entries.values()
+        if "native_prime" in entry or entry.get("prime", {}).get("native")
+    ]
     selected = selected[:15]
     if not selected:
         return
     labels = [entry["scenario"]["id"] for entry in selected]
-    first = [entry["native_prime"]["wall_seconds"] for entry in selected]
+    first = [
+        entry.get("native_prime", entry.get("prime", {}).get("native"))["wall_seconds"]
+        for entry in selected
+    ]
     warm = [median(entry, "native") for entry in selected]
     x = list(range(len(selected)))
     figure, axis = plt.subplots(figsize=(13, 6))

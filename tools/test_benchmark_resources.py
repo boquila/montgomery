@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import tempfile
@@ -7,6 +8,8 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
+from tools.bench_training_matrix import run_observed, selected_scenarios, summarize
+from tools.bench_ultralytics_train import no_validation_trainer
 from tools.benchmark_resources import (
     LinuxDrmGpuMemory,
     NvmlGpuMemory,
@@ -16,6 +19,92 @@ from tools.benchmark_resources import (
 
 
 class ResourceMonitorTests(unittest.TestCase):
+    def test_docs_matrix_selects_published_report_scope(self) -> None:
+        scenarios = selected_scenarios([], docs_matrix=True)
+
+        self.assertEqual(len(scenarios), 21)
+        self.assertEqual({scenario.group for scenario in scenarios}, {"family-task", "resolution"})
+        self.assertEqual(sum(scenario.imgsz == 224 for scenario in scenarios), 3)
+        self.assertEqual(sum(scenario.imgsz == 640 for scenario in scenarios), 9)
+        self.assertEqual(sum(scenario.imgsz == 1280 for scenario in scenarios), 9)
+
+    def test_benchmark_child_clears_native_only_profilers(self) -> None:
+        variable = "MONTGOMERY_PROFILE_TRAINING"
+        previous = os.environ.get(variable)
+        os.environ[variable] = "1"
+        try:
+            completed, _, _ = run_observed(
+                [
+                    sys.executable,
+                    "-c",
+                    f"import os; print(os.environ.get('{variable}', 'absent'))",
+                ],
+                None,
+            )
+        finally:
+            if previous is None:
+                os.environ.pop(variable, None)
+            else:
+                os.environ[variable] = previous
+
+        self.assertEqual(completed.returncode, 0)
+        self.assertEqual(completed.stdout.strip(), "absent")
+
+    def test_no_validation_trainer_skips_both_forced_validation_paths(self) -> None:
+        class BaseTrainer:
+            def validate(self):
+                raise AssertionError("final-epoch validation must be disabled")
+
+            def final_eval(self):
+                raise AssertionError("post-training validation must be disabled")
+
+        trainer = no_validation_trainer(BaseTrainer)()
+
+        self.assertEqual(trainer.validate(), ({}, 0.0))
+        self.assertIsNone(trainer.final_eval())
+
+    def test_summary_keeps_timing_and_resource_passes_separate(self) -> None:
+        timing_trials = [
+            {"wall_seconds": 10.0, "resources": None},
+            {"wall_seconds": 12.0, "resources": None},
+            {"wall_seconds": 11.0, "resources": None},
+        ]
+        resource_trials = [
+            {
+                "wall_seconds": 99.0,
+                "resources": {
+                    "process_tree": {
+                        "peak_process_count": 5,
+                        "peak_rss_bytes": 2_000,
+                        "peak_private_bytes": 1_500,
+                    },
+                    "gpu": {
+                        "peak_dedicated_bytes": 3_000,
+                        "peak_shared_bytes": 500,
+                    },
+                },
+            }
+        ]
+
+        summary = summarize(timing_trials, resource_trials)
+
+        self.assertEqual(summary["median_seconds"], 11.0)
+        self.assertEqual(summary["max_seconds"], 12.0)
+        self.assertEqual(
+            summary["resources"]["peak_rss_bytes"]["median"], 2_000
+        )
+        self.assertEqual(
+            summary["resources"]["peak_gpu_dedicated_bytes"]["median"], 3_000
+        )
+
+    def test_summary_can_explicitly_omit_resources(self) -> None:
+        summary = summarize([{"wall_seconds": 4.0, "resources": None}], [])
+
+        self.assertEqual(summary["median_seconds"], 4.0)
+        self.assertTrue(
+            all(value is None for value in summary["resources"].values())
+        )
+
     def test_windows_counter_instances_are_summed_by_pid(self) -> None:
         values = {
             "pid_42_luid_0x00000000_0x00000001_phys_0": 10,

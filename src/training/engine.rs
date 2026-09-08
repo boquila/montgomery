@@ -8,7 +8,7 @@ use std::{
 use burn::{
     module::AutodiffModule,
     optim::{GradientsAccumulator, GradientsParams, Optimizer},
-    tensor::{Tensor, backend::AutodiffBackend},
+    tensor::{Tensor, Transaction, backend::AutodiffBackend},
 };
 
 use crate::training::{
@@ -20,7 +20,13 @@ use crate::training::{
 };
 
 const DIAGNOSTIC_CHUNK_SIZE: usize = 1024;
-type DeferredDiagnostic<B> = (usize, usize, &'static str, Tensor<B, 1>);
+struct DeferredDiagnostic<B: AutodiffBackend> {
+    event_index: usize,
+    batch_index: usize,
+    component: Option<String>,
+    total: bool,
+    value: Tensor<B, 1>,
+}
 
 fn diagnostic_chunk_full(events: &[StepEvent]) -> bool {
     events.len() >= DIAGNOSTIC_CHUNK_SIZE
@@ -171,6 +177,8 @@ impl Trainer {
         let diagnostic_capacity = batch_count.min(DIAGNOSTIC_CHUNK_SIZE);
         let mut events = Vec::with_capacity(diagnostic_capacity);
         let mut deferred = Vec::<DeferredDiagnostic<B>>::with_capacity(diagnostic_capacity);
+        let mut deferred_totals =
+            Vec::<DeferredDiagnostic<B>>::with_capacity(self.config.accumulation);
         let mut optimizer_steps = 0;
         let mut group_start = 0;
         let profile = std::env::var_os("MONTGOMERY_PROFILE_TRAINING").is_some();
@@ -179,10 +187,13 @@ impl Trainer {
         let mut backward_time = Duration::ZERO;
         let mut optimizer_time = Duration::ZERO;
         let mut after_step_time = Duration::ZERO;
+        let mut group = Vec::with_capacity(self.config.accumulation);
         while group_start < batch_count {
             let group_end = (group_start + self.config.accumulation).min(batch_count);
             let group_len = group_end - group_start;
-            let mut group = Vec::with_capacity(group_len);
+            group.clear();
+            deferred_totals.clear();
+            let mut direct_gradients = None;
             let data_started = Instant::now();
             for batch_index in group_start..group_end {
                 group.push(batches.next_batch().map_err(EngineError)?.ok_or_else(|| {
@@ -197,44 +208,47 @@ impl Trainer {
             let mut group_device = None;
             for (offset, batch) in group.iter().enumerate() {
                 let forward_started = Instant::now();
-                let output = model
+                let mut output = model
                     .forward_loss(batch, LossContext::from_state(&self.state))
                     .map_err(EngineError)?;
-                let device = output.total.device();
-                if profile {
-                    B::sync(&device).map_err(|error| EngineError(error.to_string()))?;
+                let device = profile.then(|| output.total.device());
+                if let Some(device) = &device {
+                    B::sync(device).map_err(|error| EngineError(error.to_string()))?;
                     forward_time += forward_started.elapsed();
                 }
-                group_device = Some(device.clone());
+                group_device = device;
                 let total_value = output.total_value;
-                if !output.finite
-                    || (output.deferred_component.is_none() && !total_value.is_finite())
-                {
+                let has_deferred_total = output.has_deferred_total();
+                if !output.finite || (!has_deferred_total && !total_value.is_finite()) {
                     return Err(EngineError(format!(
                         "non-finite loss at epoch {} batch {}",
                         self.state.epoch,
                         group_start + offset
                     )));
                 }
-                if output.deferred_component.is_none() {
+                if !has_deferred_total {
                     loss_sum += f64::from(total_value);
                 }
-                let deferred_total = output
-                    .deferred_component
-                    .map(|_| output.total.clone().detach());
+                let output_deferred = std::mem::take(&mut output.deferred);
+                let backward_loss = if group_len == 1 {
+                    output.total
+                } else {
+                    output.total / group_len as f64
+                };
                 let backward_started = Instant::now();
-                let gradients = GradientsParams::from_grads(
-                    (output.total / group_len as f64).backward(),
-                    &model,
-                );
-                if profile {
-                    B::sync(&device).map_err(|error| EngineError(error.to_string()))?;
+                let gradients = GradientsParams::from_grads(backward_loss.backward(), &model);
+                if let Some(device) = &group_device {
+                    B::sync(device).map_err(|error| EngineError(error.to_string()))?;
                     backward_time += backward_started.elapsed();
                 }
                 if gradients.is_empty() {
                     return Err(EngineError("loss produced no model gradients".into()));
                 }
-                accumulator.accumulate(&model, gradients);
+                if group_len == 1 {
+                    direct_gradients = Some(gradients);
+                } else {
+                    accumulator.accumulate(&model, gradients);
+                }
                 self.state.micro_step += 1;
                 self.state.next_batch = group_start + offset + 1;
                 self.state.accumulation_position = offset + 1;
@@ -249,14 +263,35 @@ impl Trainer {
                     targets: output.targets,
                     foreground: output.foreground,
                 });
-                if let (Some(component), Some(total)) = (output.deferred_component, deferred_total)
-                {
-                    deferred.push((event_index, group_start + offset, component, total));
+                for value in output_deferred {
+                    let diagnostic = DeferredDiagnostic {
+                        event_index,
+                        batch_index: group_start + offset,
+                        component: value.component,
+                        total: value.total,
+                        value: value.value,
+                    };
+                    if diagnostic.total {
+                        deferred_totals.push(diagnostic);
+                    } else {
+                        deferred.push(diagnostic);
+                    }
                 }
             }
+            // A detached total is still a safety guard, not merely reporting data. Resolve every
+            // total at the optimizer boundary so a non-finite loss can never update model or EMA
+            // state. Named component diagnostics remain chunked because the finite total already
+            // covers the connected objective.
+            resolve_deferred_totals(
+                self.state.epoch,
+                &mut deferred_totals,
+                &mut events,
+                &mut loss_sum,
+            )?;
             let lr = self.scheduler.step();
             let optimizer_started = Instant::now();
-            model = optimizer.step(lr, model, accumulator.grads());
+            let gradients = direct_gradients.unwrap_or_else(|| accumulator.grads());
+            model = optimizer.step(lr, model, gradients);
             if external_weight_decay {
                 model = crate::training::optimizer::apply_selective_weight_decay(
                     model,
@@ -352,6 +387,48 @@ impl Trainer {
     }
 }
 
+fn resolve_deferred_totals<B: AutodiffBackend>(
+    epoch: usize,
+    deferred: &mut Vec<DeferredDiagnostic<B>>,
+    events: &mut [StepEvent],
+    loss_sum: &mut f64,
+) -> Result<(), EngineError> {
+    if deferred.is_empty() {
+        return Ok(());
+    }
+    debug_assert!(deferred.iter().all(|item| item.total));
+    let transaction = deferred
+        .iter()
+        .fold(Transaction::default(), |transaction, item| {
+            transaction.register(item.value.clone())
+        });
+    let values = transaction.execute();
+    assert_eq!(
+        values.len(),
+        deferred.len(),
+        "deferred total count must be preserved"
+    );
+    for (diagnostic, value) in deferred.drain(..).zip(values) {
+        let value = value
+            .as_slice::<f32>()
+            .expect("loss totals must use f32 storage")[0];
+        if !value.is_finite() {
+            return Err(EngineError(format!(
+                "non-finite loss at epoch {epoch} batch {}",
+                diagnostic.batch_index,
+            )));
+        }
+        *loss_sum += f64::from(value);
+        events[diagnostic.event_index].total_loss = value;
+        if let Some(component) = diagnostic.component {
+            events[diagnostic.event_index]
+                .components
+                .insert(component, value);
+        }
+    }
+    Ok(())
+}
+
 fn flush_events<B: AutodiffBackend>(
     run: &RunDirectory,
     epoch: usize,
@@ -361,30 +438,36 @@ fn flush_events<B: AutodiffBackend>(
     component_sums: &mut BTreeMap<String, f64>,
 ) -> Result<(), EngineError> {
     if !deferred.is_empty() {
-        let values = Tensor::cat(
-            deferred
-                .iter()
-                .map(|(_, _, _, value)| value.clone())
-                .collect(),
-            0,
-        )
-        .into_data();
-        let values = values
-            .as_slice::<f32>()
-            .expect("loss diagnostics must use f32 storage");
-        for ((event_index, batch_index, component, _), value) in
-            deferred.drain(..).zip(values.iter().copied())
-        {
+        let transaction = deferred
+            .iter()
+            .fold(Transaction::default(), |transaction, item| {
+                transaction.register(item.value.clone())
+            });
+        let values = transaction.execute();
+        assert_eq!(
+            values.len(),
+            deferred.len(),
+            "diagnostic count must be preserved"
+        );
+        for (diagnostic, value) in deferred.drain(..).zip(values) {
+            let value = value
+                .as_slice::<f32>()
+                .expect("loss diagnostics must use f32 storage")[0];
             if !value.is_finite() {
                 return Err(EngineError(format!(
-                    "non-finite loss at epoch {epoch} batch {batch_index}"
+                    "non-finite loss at epoch {epoch} batch {}",
+                    diagnostic.batch_index,
                 )));
             }
-            *loss_sum += f64::from(value);
-            events[event_index].total_loss = value;
-            events[event_index]
-                .components
-                .insert(component.into(), value);
+            if diagnostic.total {
+                *loss_sum += f64::from(value);
+                events[diagnostic.event_index].total_loss = value;
+            }
+            if let Some(component) = diagnostic.component {
+                events[diagnostic.event_index]
+                    .components
+                    .insert(component, value);
+            }
         }
     }
     for event in events.iter() {
@@ -415,11 +498,14 @@ impl Error for EngineError {}
 
 #[cfg(test)]
 mod tests {
-    use super::{DIAGNOSTIC_CHUNK_SIZE, diagnostic_chunk_full};
+    use super::{
+        DIAGNOSTIC_CHUNK_SIZE, DeferredDiagnostic, diagnostic_chunk_full, resolve_deferred_totals,
+    };
+    use burn::{backend::Autodiff, tensor::Tensor};
+    use burn_flex::Flex;
 
-    #[test]
-    fn deferred_diagnostics_have_a_bounded_chunk() {
-        let event = crate::training::report::StepEvent {
+    fn event() -> crate::training::report::StepEvent {
+        crate::training::report::StepEvent {
             epoch: 0,
             micro_step: 0,
             optimizer_step: 0,
@@ -428,10 +514,38 @@ mod tests {
             components: Default::default(),
             targets: 0,
             foreground: 0,
-        };
+        }
+    }
+
+    #[test]
+    fn deferred_diagnostics_have_a_bounded_chunk() {
+        let event = event();
         let mut events = vec![event; DIAGNOSTIC_CHUNK_SIZE - 1];
         assert!(!diagnostic_chunk_full(&events));
         events.push(events[0].clone());
         assert!(diagnostic_chunk_full(&events));
+    }
+
+    #[test]
+    fn deferred_non_finite_total_fails_at_optimizer_boundary() {
+        type B = Autodiff<Flex>;
+
+        let device = Default::default();
+        let mut deferred = vec![DeferredDiagnostic::<B> {
+            event_index: 0,
+            batch_index: 7,
+            component: None,
+            total: true,
+            value: Tensor::from_floats([f32::NAN], &device),
+        }];
+        let mut events = [event()];
+        let mut loss_sum = 0.0;
+
+        let error = resolve_deferred_totals(3, &mut deferred, &mut events, &mut loss_sum)
+            .expect_err("a non-finite total must stop the optimizer boundary");
+
+        assert!(error.to_string().contains("epoch 3 batch 7"));
+        assert_eq!(loss_sum, 0.0);
+        assert_eq!(events[0].total_loss, 0.0);
     }
 }

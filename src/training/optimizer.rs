@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use burn::{
-    grad_clipping::{GradientClipping, GradientClippingConfig},
     module::{AutodiffModule, Module, ModuleMapper, ModuleVisitor, Param},
     optim::{
         AdaptiveMomentumState, GradientsParams, MultiGradientsParams, Optimizer, SimpleOptimizer,
@@ -179,7 +178,7 @@ where
         beta_1: 0.9,
         beta_2: 0.999,
         epsilon: 1e-8,
-        clipping: GradientClippingConfig::Norm(gradient_clip).init(),
+        gradient_clip,
         state: None,
     }
 }
@@ -203,7 +202,7 @@ pub struct FlatSelectiveAdamW<B: AutodiffBackend> {
     beta_1: f32,
     beta_2: f32,
     epsilon: f32,
-    clipping: GradientClipping,
+    gradient_clip: f32,
     state: Option<FlatSelectiveAdamWState<B>>,
 }
 
@@ -215,6 +214,7 @@ struct FlatGroups<B: Backend> {
 }
 
 type FlatPair<B> = (Tensor<B, 1>, Tensor<B, 1>);
+type OptionalFlatGroups<B> = (Option<FlatPair<B>>, Option<FlatPair<B>>);
 type UpdatedFlatGroup<B> = (
     Option<Tensor<B, 1>>,
     Option<Tensor<B, 1>>,
@@ -238,7 +238,6 @@ impl<B: Backend> FlatGroups<B> {
 
 struct FlatGroupCollector<'a, B: AutodiffBackend> {
     grads: &'a GradientsParams,
-    clipping: &'a GradientClipping,
     groups: FlatGroups<B::InnerBackend>,
 }
 
@@ -248,7 +247,7 @@ impl<B: AutodiffBackend> ModuleVisitor<B> for FlatGroupCollector<'_, B> {
             return;
         };
         let elements = grad.shape().num_elements();
-        let grad = self.clipping.clip_gradient(grad).reshape([elements]);
+        let grad = grad.reshape([elements]);
         let value = param.val().inner().reshape([elements]);
         if D >= 2 {
             self.groups.decay_params.push(value);
@@ -295,6 +294,33 @@ impl<B: AutodiffBackend> ModuleMapper<B> for FlatGroupMapper<'_, B> {
 }
 
 impl<B: AutodiffBackend> FlatSelectiveAdamW<B> {
+    fn clip_flat_groups(
+        &self,
+        mut decay: Option<FlatPair<B::InnerBackend>>,
+        mut no_decay: Option<FlatPair<B::InnerBackend>>,
+    ) -> OptionalFlatGroups<B::InnerBackend> {
+        let decay_norm = decay
+            .as_ref()
+            .map(|(_, gradient)| gradient.clone().square().sum());
+        let no_decay_norm = no_decay
+            .as_ref()
+            .map(|(_, gradient)| gradient.clone().square().sum());
+        let squared_norm = match (decay_norm, no_decay_norm) {
+            (Some(decay), Some(no_decay)) => decay + no_decay,
+            (Some(norm), None) | (None, Some(norm)) => norm,
+            (None, None) => return (decay, no_decay),
+        };
+        let coefficient =
+            (self.gradient_clip / squared_norm.sqrt().add_scalar(1e-6)).clamp_max(1.0);
+        if let Some((_, gradient)) = decay.as_mut() {
+            *gradient = gradient.clone() * coefficient.clone();
+        }
+        if let Some((_, gradient)) = no_decay.as_mut() {
+            *gradient = gradient.clone() * coefficient;
+        }
+        (decay, no_decay)
+    }
+
     fn update_group(
         &self,
         learning_rate: f64,
@@ -339,7 +365,6 @@ impl<B: AutodiffBackend> FlatSelectiveAdamW<B> {
     ) -> M {
         let mut collector = FlatGroupCollector::<B> {
             grads: &grads,
-            clipping: &self.clipping,
             groups: FlatGroups::new(),
         };
         module.visit(&mut collector);
@@ -349,6 +374,7 @@ impl<B: AutodiffBackend> FlatSelectiveAdamW<B> {
             collector.groups.no_decay_params,
             collector.groups.no_decay_grads,
         );
+        let (decay, no_decay) = self.clip_flat_groups(decay, no_decay);
         let previous = self.state.take();
         let time = previous.as_ref().map_or(1, |state| state.time + 1);
         let (decay, decay_moment_1, decay_moment_2) = self.update_group(
@@ -437,7 +463,8 @@ where
 mod tests {
     use super::*;
     use burn::{
-        backend::Autodiff, module::Initializer, nn::LinearConfig, optim::adaptor::OptimizerAdaptor,
+        backend::Autodiff, grad_clipping::GradientClippingConfig, module::Initializer,
+        nn::LinearConfig, optim::adaptor::OptimizerAdaptor,
     };
     use burn_flex::Flex;
 
@@ -503,6 +530,31 @@ mod tests {
         let vector = vector.into_data().as_slice::<f32>().unwrap()[0];
         assert!((matrix - 0.85).abs() < 1e-5);
         assert!((vector - 0.9).abs() < 1e-5);
+    }
+
+    #[test]
+    fn flat_adamw_clips_one_global_gradient_norm() {
+        type B = Autodiff<Flex>;
+
+        let device = Default::default();
+        let optimizer = selective_adamw::<B, burn::nn::Linear<B>>(0.0, 5.0);
+        let decay = Some((
+            Tensor::<Flex, 1>::zeros([2], &device),
+            Tensor::<Flex, 1>::from_floats([3.0, 4.0], &device),
+        ));
+        let no_decay = Some((
+            Tensor::<Flex, 1>::zeros([1], &device),
+            Tensor::<Flex, 1>::from_floats([12.0], &device),
+        ));
+        let (decay, no_decay) = optimizer.clip_flat_groups(decay, no_decay);
+        let decay = decay.unwrap().1.into_data();
+        let no_decay = no_decay.unwrap().1.into_data();
+        let decay = decay.as_slice::<f32>().unwrap();
+        let no_decay = no_decay.as_slice::<f32>().unwrap();
+        let coefficient = 5.0 / (13.0 + 1e-6);
+        assert!((decay[0] - 3.0 * coefficient).abs() < 1e-6);
+        assert!((decay[1] - 4.0 * coefficient).abs() < 1e-6);
+        assert!((no_decay[0] - 12.0 * coefficient).abs() < 1e-6);
     }
 
     #[test]

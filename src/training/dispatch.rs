@@ -266,10 +266,11 @@ yolo11_detect_task!(
 );
 
 fn combine_dual<B: burn::tensor::backend::Backend>(
-    one_to_many: crate::training::loss::common::LossOutput<B>,
-    one_to_one: crate::training::loss::common::LossOutput<B>,
+    mut one_to_many: crate::training::loss::common::LossOutput<B>,
+    mut one_to_one: crate::training::loss::common::LossOutput<B>,
     weights: [f32; 2],
 ) -> crate::training::loss::common::LossOutput<B> {
+    let has_deferred_total = one_to_many.has_deferred_total() || one_to_one.has_deferred_total();
     let mut components = std::collections::BTreeMap::new();
     for (name, value) in one_to_many.components {
         components.insert(format!("one_to_many_{name}"), value);
@@ -279,11 +280,30 @@ fn combine_dual<B: burn::tensor::backend::Backend>(
     }
     let total_value = one_to_many.total_value * weights[0] + one_to_one.total_value * weights[1];
     let total = one_to_many.total * weights[0] as f64 + one_to_one.total * weights[1] as f64;
-    let finite = one_to_many.finite && one_to_one.finite && total_value.is_finite();
+    let mut deferred = Vec::new();
+    for mut value in one_to_many.deferred.drain(..) {
+        if !value.total {
+            value.component = value.component.map(|name| format!("one_to_many_{name}"));
+            deferred.push(value);
+        }
+    }
+    for mut value in one_to_one.deferred.drain(..) {
+        if !value.total {
+            value.component = value.component.map(|name| format!("one_to_one_{name}"));
+            deferred.push(value);
+        }
+    }
+    if has_deferred_total {
+        deferred.push(crate::training::loss::common::DeferredScalar::total(
+            total.clone(),
+        ));
+    }
+    let finite =
+        one_to_many.finite && one_to_one.finite && (has_deferred_total || total_value.is_finite());
     crate::training::loss::common::LossOutput {
         total,
         total_value,
-        deferred_component: None,
+        deferred,
         components,
         targets: one_to_many.targets.max(one_to_one.targets),
         foreground: one_to_many.foreground + one_to_one.foreground,
@@ -309,19 +329,19 @@ macro_rules! dual_detect_task {
                     FeatureLevelLayout { height: height / 32, width: width / 32, stride: 32 },
                 ];
                 let targets = detection_targets(batch)?;
-                let one_to_many = ultralytics_detect::tensor_loss(
-                    output.one_to_many.boxes,
-                    output.one_to_many.scores,
+                let (one_to_many, one_to_one) = ultralytics_detect::tensor_dual_loss(
+                    (
+                        output.one_to_many.boxes,
+                        output.one_to_many.scores,
+                        ultralytics_detect::DetectionLossConfig::$config([height, width], 10),
+                    ),
+                    (
+                        output.one_to_one.boxes,
+                        output.one_to_one.scores,
+                        ultralytics_detect::DetectionLossConfig::$config([height, width], $forward),
+                    ),
                     &levels,
                     &targets,
-                    ultralytics_detect::DetectionLossConfig::$config([height, width], 10),
-                ).map_err(str::to_string)?;
-                let one_to_one = ultralytics_detect::tensor_loss(
-                    output.one_to_one.boxes,
-                    output.one_to_one.scores,
-                    &levels,
-                    &targets,
-                    ultralytics_detect::DetectionLossConfig::$config([height, width], $forward),
                 ).map_err(str::to_string)?;
                 Ok(combine_dual(
                     one_to_many,
@@ -367,11 +387,10 @@ macro_rules! yolo11_segment_task {
                     batch.masks.clone(),
                     &matches,
                 ).map_err(str::to_string)?;
-                let mask_value = crate::training::loss::common::scalar_value(mask.clone());
-                detection.total = detection.total + mask * segmentation::SEGMENTATION_GAIN;
-                detection.total_value += mask_value * segmentation::SEGMENTATION_GAIN as f32;
-                detection.components.insert("mask_loss".into(), mask_value);
-                detection.finite &= mask_value.is_finite();
+                detection.total =
+                    detection.total + mask.clone() * segmentation::SEGMENTATION_GAIN;
+                detection.defer_component("mask_loss", mask);
+                detection.replace_deferred_total();
                 Ok(detection)
             }
         }
@@ -409,19 +428,20 @@ macro_rules! yolo26_segment_task {
                     FeatureLevelLayout { height: height / 32, width: width / 32, stride: 32 },
                 ];
                 let targets = detection_targets(&batch.detection)?;
-                let (mut many, many_matches) = ultralytics_detect::tensor_loss_with_matches(
-                    output.detection.one_to_many.boxes,
-                    output.detection.one_to_many.scores,
+                let ((mut many, many_matches), (mut one, one_matches)) =
+                    ultralytics_detect::tensor_dual_loss_with_matches(
+                    (
+                        output.detection.one_to_many.boxes,
+                        output.detection.one_to_many.scores,
+                        ultralytics_detect::DetectionLossConfig::direct([height, width], 10),
+                    ),
+                    (
+                        output.detection.one_to_one.boxes,
+                        output.detection.one_to_one.scores,
+                        ultralytics_detect::DetectionLossConfig::direct([height, width], 7),
+                    ),
                     &levels,
                     &targets,
-                    ultralytics_detect::DetectionLossConfig::direct([height, width], 10),
-                ).map_err(str::to_string)?;
-                let (mut one, one_matches) = ultralytics_detect::tensor_loss_with_matches(
-                    output.detection.one_to_one.boxes,
-                    output.detection.one_to_one.scores,
-                    &levels,
-                    &targets,
-                    ultralytics_detect::DetectionLossConfig::direct([height, width], 7),
                 ).map_err(str::to_string)?;
                 let many_mask = segmentation::instance_mask_loss(
                     output.one_to_many_coefficients,
@@ -440,27 +460,18 @@ macro_rules! yolo26_segment_task {
                     batch.semantic_class_map.clone(),
                     batch.semantic_coverage.clone(),
                 ).map_err(str::to_string)?;
-                let [many_mask_value, one_mask_value, many_semantic_value, one_semantic_value] =
-                    crate::training::loss::common::scalar_values([
-                        many_mask.clone(),
-                        one_mask.clone(),
-                        many_semantic.clone(),
-                        one_semantic.clone(),
-                    ]);
                 many.total = many.total
-                    + (many_mask + many_semantic) * segmentation::SEGMENTATION_GAIN;
-                many.total_value +=
-                    (many_mask_value + many_semantic_value) * segmentation::SEGMENTATION_GAIN as f32;
-                many.components.insert("mask_loss".into(), many_mask_value);
-                many.components.insert("semantic_loss".into(), many_semantic_value);
-                many.finite &= many_mask_value.is_finite() && many_semantic_value.is_finite();
+                    + (many_mask.clone() + many_semantic.clone())
+                        * segmentation::SEGMENTATION_GAIN;
+                many.defer_component("mask_loss", many_mask);
+                many.defer_component("semantic_loss", many_semantic);
+                many.replace_deferred_total();
                 one.total = one.total
-                    + (one_mask + one_semantic) * segmentation::SEGMENTATION_GAIN;
-                one.total_value +=
-                    (one_mask_value + one_semantic_value) * segmentation::SEGMENTATION_GAIN as f32;
-                one.components.insert("mask_loss".into(), one_mask_value);
-                one.components.insert("semantic_loss".into(), one_semantic_value);
-                one.finite &= one_mask_value.is_finite() && one_semantic_value.is_finite();
+                    + (one_mask.clone() + one_semantic.clone())
+                        * segmentation::SEGMENTATION_GAIN;
+                one.defer_component("mask_loss", one_mask);
+                one.defer_component("semantic_loss", one_semantic);
+                one.replace_deferred_total();
                 Ok(combine_dual(
                     many,
                     one,

@@ -2,7 +2,7 @@
 
 Full reproducible run:
 
-    uv run --project tools tools/benchmark_training.py --publish
+    uv run --project tools tools/benchmark_training.py --docs-matrix --publish
 
 Fast iteration on one bottleneck:
 
@@ -30,6 +30,11 @@ def main() -> None:
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--segmentation-repeats", type=int, default=2)
     parser.add_argument("--scenario", action="append", default=[])
+    parser.add_argument(
+        "--docs-matrix",
+        action="store_true",
+        help="run the 21 classification, 640 px, and 1280 px scenarios used in the report",
+    )
     parser.add_argument(
         "--native-binary",
         type=Path,
@@ -68,6 +73,8 @@ def main() -> None:
     ]
     for scenario in args.scenario:
         command.extend(("--scenario", scenario))
+    if args.docs_matrix:
+        command.append("--docs-matrix")
     if args.native_binary is not None:
         command.extend(("--native-binary", str(args.native_binary.resolve())))
     for enabled, flag in (

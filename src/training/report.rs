@@ -176,6 +176,8 @@ impl RunDirectory {
             "format": "montgomery-training-run-v1",
             "crate_version": env!("CARGO_PKG_VERSION"),
             "backend": "burn-wgpu",
+            "arithmetic": "strict-fp32",
+            "tensor_storage": "f32",
             "adapter": adapter,
             "dataset_fingerprint": dataset.fingerprint,
             "references": {

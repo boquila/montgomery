@@ -1627,7 +1627,7 @@ where
                     .map_or(1.0, |value| value.one_to_one),
             },
         )?;
-        let deferred_finite = output.deferred_component.is_none()
+        let deferred_finite = !output.has_deferred_total()
             || crate::training::loss::common::scalar_value(output.total.clone()).is_finite();
         if !output.finite || !deferred_finite {
             return Err("dry-run loss is non-finite".into());

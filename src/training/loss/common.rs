@@ -8,14 +8,63 @@ use burn::tensor::{Tensor, Transaction, activation::log_sigmoid, backend::Backen
 /// `total` tensor always remains connected to the original model output.
 pub struct LossOutput<B: Backend> {
     pub total: Tensor<B, 1>,
-    /// Host diagnostic captured by the criterion's single scalar synchronization.
+    /// Host diagnostic when the criterion already had to synchronize for its result.
     pub total_value: f32,
-    /// A component that can be read with the other deferred totals once the epoch is complete.
-    pub deferred_component: Option<&'static str>,
+    /// Detached scalar diagnostics read together by the engine instead of synchronizing each
+    /// microbatch. A scalar may update the event total, a named component, or both.
+    pub deferred: Vec<DeferredScalar<B>>,
     pub components: BTreeMap<String, f32>,
     pub targets: usize,
     pub foreground: usize,
     pub finite: bool,
+}
+
+pub struct DeferredScalar<B: Backend> {
+    pub value: Tensor<B, 1>,
+    pub component: Option<String>,
+    pub total: bool,
+}
+
+impl<B: Backend> DeferredScalar<B> {
+    pub fn total(value: Tensor<B, 1>) -> Self {
+        Self {
+            value: value.detach(),
+            component: None,
+            total: true,
+        }
+    }
+
+    pub fn component(name: impl Into<String>, value: Tensor<B, 1>) -> Self {
+        Self {
+            value: value.detach(),
+            component: Some(name.into()),
+            total: false,
+        }
+    }
+
+    pub fn total_and_component(name: impl Into<String>, value: Tensor<B, 1>) -> Self {
+        Self {
+            value: value.detach(),
+            component: Some(name.into()),
+            total: true,
+        }
+    }
+}
+
+impl<B: Backend> LossOutput<B> {
+    pub fn has_deferred_total(&self) -> bool {
+        self.deferred.iter().any(|value| value.total)
+    }
+
+    pub fn replace_deferred_total(&mut self) {
+        self.deferred.retain(|value| !value.total);
+        self.deferred
+            .push(DeferredScalar::total(self.total.clone()));
+    }
+
+    pub fn defer_component(&mut self, name: impl Into<String>, value: Tensor<B, 1>) {
+        self.deferred.push(DeferredScalar::component(name, value));
+    }
 }
 
 pub fn scalar_value<B: Backend>(value: Tensor<B, 1>) -> f32 {
