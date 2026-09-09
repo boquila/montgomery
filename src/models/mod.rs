@@ -16,17 +16,17 @@ macro_rules! classify_model {
     ) => {
         #[doc = $doc]
         #[derive(Module, Debug)]
-        pub struct $model<B: Backend> {
-            body: $body<B>,
-            head: ClassifyHead<B>,
+        pub struct $model {
+            body: $body,
+            head: ClassifyHead,
         }
 
-        impl<B: Backend> $model<B> {
-            pub fn forward(&self, input: Tensor<B, 4>) -> ClassificationOutput<B> {
+        impl $model {
+            pub fn forward(&self, input: Tensor<4>) -> ClassificationOutput {
                 self.head.forward(self.body.forward(input))
             }
 
-            pub fn forward_train(&self, input: Tensor<B, 4>) -> Tensor<B, 2> {
+            pub fn forward_train(&self, input: Tensor<4>) -> Tensor<2> {
                 self.head.forward_train(self.body.forward(input))
             }
 
@@ -45,10 +45,9 @@ macro_rules! classify_model {
             pub fn load_burnpack_weights(
                 &mut self,
                 path: impl Into<std::path::PathBuf>,
-            ) -> Result<(), burn_store::BurnpackError> {
+            ) -> Result<(), burn_pack::Error> {
                 let mut store = burn_store::BurnpackStore::from_file(path.into())
-                    .with_from_adapter(burn_store::HalfPrecisionAdapter::new())
-                    .zero_copy(true);
+                    .with_from_adapter(burn_store::HalfPrecisionAdapter::new());
                 self.load_from(&mut store).map(|_| ())
             }
 
@@ -57,7 +56,7 @@ macro_rules! classify_model {
             pub fn save_burnpack_weights(
                 &self,
                 path: impl Into<std::path::PathBuf>,
-            ) -> Result<(), burn_store::BurnpackError> {
+            ) -> Result<(), burn_pack::Error> {
                 let mut store = burn_store::BurnpackStore::from_file(path.into())
                     .metadata(
                         "montgomery.artifact-format",
@@ -77,15 +76,11 @@ macro_rules! classify_model {
         pub struct $config;
 
         impl $config {
-            pub fn init<B: Backend>(&self, device: &Device<B>) -> $model<B> {
+            pub fn init(&self, device: &Device) -> $model {
                 self.init_with_classes(crate::models::yolo26::classification::NUM_CLASSES, device)
             }
 
-            pub fn init_with_classes<B: Backend>(
-                &self,
-                num_classes: usize,
-                device: &Device<B>,
-            ) -> $model<B> {
+            pub fn init_with_classes(&self, num_classes: usize, device: &Device) -> $model {
                 $model {
                     body: $body_config.init(device),
                     head: ClassifyHeadConfig::new($head_channels)

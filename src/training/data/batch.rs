@@ -1,4 +1,4 @@
-use burn::tensor::{Bool, Int, Tensor, TensorData, backend::Backend};
+use burn::tensor::{Bool, Device, Int, Tensor, TensorData};
 
 use super::sample::ImageMeta;
 use crate::data::augmentation::AugRng;
@@ -161,8 +161,8 @@ pub fn sample_multi_scale_side(
     Ok(sampled / stride * stride)
 }
 
-pub struct DetectionBatch<B: Backend> {
-    pub images: Tensor<B, 4>,
+pub struct DetectionBatch {
+    pub images: Tensor<4>,
     /// Assignment targets retained on the host.
     ///
     /// Formatting already owns these values before the image is uploaded. Keeping them here
@@ -171,27 +171,27 @@ pub struct DetectionBatch<B: Backend> {
     pub metadata: Vec<ImageMeta>,
 }
 
-pub struct SegmentationBatch<B: Backend> {
-    pub detection: DetectionBatch<B>,
-    pub masks: Tensor<B, 4>,
-    pub semantic_class_map: Tensor<B, 3, Int>,
+pub struct SegmentationBatch {
+    pub detection: DetectionBatch,
+    pub masks: Tensor<4>,
+    pub semantic_class_map: Tensor<3, Int>,
     /// Explicit foreground gate: class zero is a valid semantic target.
-    pub semantic_coverage: Tensor<B, 3, Bool>,
+    pub semantic_coverage: Tensor<3, Bool>,
 }
 
-pub struct ClassificationBatch<B: Backend> {
-    pub images: Tensor<B, 4>,
-    pub classes: Tensor<B, 1, Int>,
+pub struct ClassificationBatch {
+    pub images: Tensor<4>,
+    pub classes: Tensor<1, Int>,
     pub metadata: Vec<ImageMeta>,
 }
 
 impl FormattedDetectionBatch {
     /// Upload images and retain assignment targets on the host.
-    pub fn into_device<B: Backend>(
+    pub fn into_device(
         self,
         metadata: Vec<ImageMeta>,
-        device: &B::Device,
-    ) -> Result<DetectionBatch<B>, String> {
+        device: &Device,
+    ) -> Result<DetectionBatch, String> {
         let [batch, channels, height, width] = self.image_shape;
         if metadata.len() != batch || channels != 3 {
             return Err("detection metadata/image batch shape mismatch".into());
@@ -243,11 +243,11 @@ impl FormattedDetectionBatch {
 }
 
 /// Collate explicit instance masks and the YOLO26 smallest-area-wins semantic map.
-pub fn segmentation_into_device<B: Backend>(
+pub fn segmentation_into_device(
     samples: &[FormattedDetectionSample],
     metadata: Vec<ImageMeta>,
-    device: &B::Device,
-) -> Result<SegmentationBatch<B>, String> {
+    device: &Device,
+) -> Result<SegmentationBatch, String> {
     use crate::data::augmentation::MaskTargets;
 
     let formatted = FormattedDetectionBatch::collate(samples)?;
@@ -363,11 +363,11 @@ pub fn segmentation_into_device<B: Backend>(
 }
 
 impl FormattedClassificationBatch {
-    pub fn into_device<B: Backend>(
+    pub fn into_device(
         self,
         metadata: Vec<ImageMeta>,
-        device: &B::Device,
-    ) -> Result<ClassificationBatch<B>, String> {
+        device: &Device,
+    ) -> Result<ClassificationBatch, String> {
         let [batch, channels, height, width] = self.image_shape;
         if metadata.len() != batch || self.classes.len() != batch {
             return Err("classification metadata/target batch mismatch".into());
@@ -412,8 +412,6 @@ mod formatted_tests {
 
     #[test]
     fn device_batch_retains_exact_host_assignment_targets() {
-        use burn_flex::Flex;
-
         let formatted = FormattedDetectionBatch {
             images_nchw_u8: vec![0; 2 * 3 * 8 * 12],
             image_shape: [2, 3, 8, 12],
@@ -432,7 +430,7 @@ mod formatted_tests {
             })
             .collect();
         let batch = formatted
-            .into_device::<Flex>(metadata, &Default::default())
+            .into_device(metadata, &Default::default())
             .unwrap();
 
         assert_eq!(batch.targets.len(), 2);

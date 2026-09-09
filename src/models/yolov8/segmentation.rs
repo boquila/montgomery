@@ -1,7 +1,7 @@
 use burn::{
     module::Module,
     nn::conv::{Conv2d, Conv2dConfig, ConvTranspose2d, ConvTranspose2dConfig},
-    tensor::{Device, Tensor, backend::Backend},
+    tensor::{Device, Tensor},
 };
 
 use super::blocks::{Conv, ConvConfig};
@@ -9,10 +9,10 @@ use super::body::Yolov8Features;
 use super::head::{Yolov8Head, Yolov8HeadConfig};
 
 /// Raw segmentation tensors used by TAL/DFL assignment and prototype-mask loss.
-pub struct SegmentTrainOutput<B: Backend> {
-    pub detection: super::head::RawPredictions<B>,
-    pub coefficients: Tensor<B, 3>,
-    pub prototypes: Tensor<B, 4>,
+pub struct SegmentTrainOutput {
+    pub detection: super::head::RawPredictions,
+    pub coefficients: Tensor<3>,
+    pub prototypes: Tensor<4>,
 }
 
 /// Number of mask prototypes and per-detection mask coefficients (`nm`).
@@ -25,15 +25,15 @@ pub const NUM_MASKS: usize = 32;
 /// input). Field names deliberately match the official `model.22.proto.*` checkpoint keys after
 /// remapping.
 #[derive(Module, Debug)]
-pub struct Proto<B: Backend> {
-    cv1: Conv<B>,
-    upsample: ConvTranspose2d<B>,
-    cv2: Conv<B>,
-    cv3: Conv<B>,
+pub struct Proto {
+    cv1: Conv,
+    upsample: ConvTranspose2d,
+    cv2: Conv,
+    cv3: Conv,
 }
 
-impl<B: Backend> Proto<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> Tensor<B, 4> {
+impl Proto {
+    pub fn forward(&self, input: Tensor<4>) -> Tensor<4> {
         let x = self.cv1.forward(input);
         let x = self.upsample.forward(x);
         self.cv3.forward(self.cv2.forward(x))
@@ -46,7 +46,7 @@ struct ProtoConfig {
 }
 
 impl ProtoConfig {
-    fn init<B: Backend>(&self, device: &Device<B>) -> Proto<B> {
+    fn init(&self, device: &Device) -> Proto {
         Proto {
             cv1: ConvConfig::new(self.input_channels, self.hidden_channels, 3, 1).init(device),
             upsample: ConvTranspose2dConfig::new(
@@ -67,14 +67,14 @@ impl ProtoConfig {
 /// flavor, exactly like the YOLO11-seg mask towers. Field names match the official `cv4`
 /// checkpoint keys after remapping.
 #[derive(Module, Debug)]
-pub struct MaskBranch<B: Backend> {
-    mask_0: Conv<B>,
-    mask_1: Conv<B>,
-    mask_out: Conv2d<B>,
+pub struct MaskBranch {
+    mask_0: Conv,
+    mask_1: Conv,
+    mask_out: Conv2d,
 }
 
-impl<B: Backend> MaskBranch<B> {
-    fn forward(&self, input: Tensor<B, 4>) -> Tensor<B, 3> {
+impl MaskBranch {
+    fn forward(&self, input: Tensor<4>) -> Tensor<3> {
         let [batch, _, height, width] = input.dims();
         let x = self.mask_1.forward(self.mask_0.forward(input));
         self.mask_out
@@ -89,7 +89,7 @@ struct MaskBranchConfig {
 }
 
 impl MaskBranchConfig {
-    fn init<B: Backend>(&self, device: &Device<B>) -> MaskBranch<B> {
+    fn init(&self, device: &Device) -> MaskBranch {
         MaskBranch {
             mask_0: ConvConfig::new(self.input_channels, self.mask_channels, 3, 1).init(device),
             mask_1: ConvConfig::new(self.mask_channels, self.mask_channels, 3, 1).init(device),
@@ -108,16 +108,16 @@ impl MaskBranchConfig {
 /// `non_max_suppression` on `[boxes, scores, mask_coefficients]` rows. The output type is shared
 /// with the YOLO11-seg runtime path.
 #[derive(Module, Debug)]
-pub struct Yolov8SegHead<B: Backend> {
-    pub(crate) detect: Yolov8Head<B>,
-    proto: Proto<B>,
-    p3_mask: MaskBranch<B>,
-    p4_mask: MaskBranch<B>,
-    p5_mask: MaskBranch<B>,
+pub struct Yolov8SegHead {
+    pub(crate) detect: Yolov8Head,
+    proto: Proto,
+    p3_mask: MaskBranch,
+    p4_mask: MaskBranch,
+    p5_mask: MaskBranch,
 }
 
-impl<B: Backend> Yolov8SegHead<B> {
-    pub fn forward_train(&self, features: Yolov8Features<B>) -> SegmentTrainOutput<B> {
+impl Yolov8SegHead {
+    pub fn forward_train(&self, features: Yolov8Features) -> SegmentTrainOutput {
         let Yolov8Features { p3, p4, p5 } = features;
         let detection = self.detect.forward_raw(Yolov8Features {
             p3: p3.clone(),
@@ -140,7 +140,7 @@ impl<B: Backend> Yolov8SegHead<B> {
         }
     }
 
-    pub fn forward(&self, features: Yolov8Features<B>) -> crate::models::yolo11::SegmentOutput<B> {
+    pub fn forward(&self, features: Yolov8Features) -> crate::models::yolo11::SegmentOutput {
         let Yolov8Features { p3, p4, p5 } = features;
         let decoded = self.detect.forward(Yolov8Features {
             p3: p3.clone(),
@@ -202,7 +202,7 @@ impl Yolov8SegHeadConfig {
         self
     }
 
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8SegHead<B> {
+    pub fn init(&self, device: &Device) -> Yolov8SegHead {
         let proto = ProtoConfig {
             input_channels: self.proto_input_channels,
             hidden_channels: self.proto_hidden_channels,
@@ -228,7 +228,6 @@ impl Yolov8SegHeadConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use burn_flex::Flex;
 
     #[test]
     fn decodes_segment_tensors_for_three_feature_levels() {
@@ -236,7 +235,7 @@ mod tests {
             .stack_size(64 * 1024 * 1024)
             .spawn(|| {
                 let device = Default::default();
-                let head = Yolov8SegHeadConfig::new(64, 128, 256, 64).init::<Flex>(&device);
+                let head = Yolov8SegHeadConfig::new(64, 128, 256, 64).init(&device);
                 let body_features = Yolov8Features {
                     p3: Tensor::zeros([1, 64, 8, 8], &device),
                     p4: Tensor::zeros([1, 128, 4, 4], &device),

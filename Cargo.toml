@@ -12,7 +12,7 @@ categories = ["computer-vision", "science"]
 
 [features]
 default = ["pretrained", "onnx"]
-pretrained = ["dep:burn-store", "dep:ciborium", "dep:sha2"]
+pretrained = ["dep:burn-store", "dep:burn-pack", "dep:ciborium", "dep:sha2"]
 # Offline ONNX production is a Rust-to-SafeTensors-to-Python bridge. The feature adds no runtime
 # dependency to ONNX consumers; it only exposes the exporter and its CLI orchestration.
 onnx = ["pretrained"]
@@ -29,19 +29,18 @@ training = [
     "dep:sha2",
     "dep:cubecl",
 ]
-# Experimental CPU configurations retained for backend measurements; neither changes the default path.
+# Optional Flex CPU tuning retained for backend measurements; it does not change the default path.
 # burn-flex's default features already include simd (macerator/gemm) and rayon; x86-v4 adds the
 # AVX-512 codegen paths of the gemm crate on top.
 cpu-simd = ["burn-flex/simd", "burn-flex/x86-v4"]
-cpu-cubecl = ["burn/cpu", "dep:burn-cpu"]
 
 [dependencies]
-burn = { version = "=0.21.0-pre.4", default-features = false }
-burn-cpu = { version = "=0.21.0-pre.4", optional = true }
-burn-flex = "=0.21.0-pre.4"
-burn-store = { version = "=0.21.0-pre.4", default-features = false, features = ["std", "pytorch", "burnpack", "memmap"], optional = true }
-burn-wgpu = { version = "=0.21.0-pre.4", optional = true }
-cubecl = { version = "=0.10.0-pre.4", default-features = false, optional = true }
+burn = { version = "=0.22.0-pre.3", default-features = false }
+burn-flex = "=0.22.0-pre.3"
+burn-store = { version = "=0.22.0-pre.3", default-features = false, features = ["std", "pytorch", "memmap"], optional = true }
+burn-pack = { version = "=0.22.0-pre.3", default-features = false, features = ["std"], optional = true }
+burn-wgpu = { version = "=0.22.0-pre.3", optional = true }
+cubecl = { version = "=0.11.0-pre.3", default-features = false, optional = true }
 ciborium = { version = "0.2", optional = true }
 clap = { version = "4", features = ["derive"] }
 fast_image_resize = { version = "=6.0.0", features = ["image"] }

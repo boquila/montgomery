@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, sync::Arc};
 
-use burn::tensor::{Int, Tensor, TensorData, Transaction, activation, backend::Backend};
+use burn::tensor::{Device, Int, Tensor, TensorData, Transaction, activation};
 
 use crate::training::{
     assign::tal::{TalGroundTruth, TalPredictions, assign},
@@ -9,8 +9,8 @@ use crate::training::{
 
 use super::common::{DeferredScalar, LossOutput, log_softmax};
 
-pub type DetectionLossWithMatches<B> = (
-    LossOutput<B>,
+pub type DetectionLossWithMatches = (
+    LossOutput,
     Vec<crate::training::loss::segmentation::MaskMatch>,
 );
 
@@ -66,21 +66,21 @@ pub fn dfl_loss(logits: &[f32], distance: f32) -> Result<f32, &'static str> {
     Ok(-log_prob[left] * left_weight - log_prob[right] * right_weight)
 }
 
-struct AnchorGeometry<B: Backend> {
+struct AnchorGeometry {
     anchors: Arc<[AnchorPoint]>,
-    anchor_tensor: Tensor<B, 3>,
-    stride_tensor: Tensor<B, 3>,
+    anchor_tensor: Tensor<3>,
+    stride_tensor: Tensor<3>,
 }
 
-struct PreparedDetectionLoss<B: Backend> {
-    raw_boxes: Tensor<B, 3>,
-    raw_scores: Tensor<B, 3>,
-    distances: Tensor<B, 3>,
-    decoded: Tensor<B, 3>,
+struct PreparedDetectionLoss {
+    raw_boxes: Tensor<3>,
+    raw_scores: Tensor<3>,
+    distances: Tensor<3>,
+    decoded: Tensor<3>,
     anchors: Arc<[AnchorPoint]>,
-    anchor_tensor: Tensor<B, 3>,
-    stride_tensor: Tensor<B, 3>,
-    device: B::Device,
+    anchor_tensor: Tensor<3>,
+    stride_tensor: Tensor<3>,
+    device: Device,
     batch: usize,
     classes: usize,
     anchor_count: usize,
@@ -88,14 +88,14 @@ struct PreparedDetectionLoss<B: Backend> {
     profile_started: Option<std::time::Instant>,
 }
 
-fn prepare_detection_loss<B: Backend>(
-    raw_boxes: Tensor<B, 3>,
-    raw_scores: Tensor<B, 3>,
+fn prepare_detection_loss(
+    raw_boxes: Tensor<3>,
+    raw_scores: Tensor<3>,
     levels: &[FeatureLevelLayout],
     target_batch: usize,
     config: DetectionLossConfig,
-    shared_geometry: Option<AnchorGeometry<B>>,
-) -> Result<PreparedDetectionLoss<B>, &'static str> {
+    shared_geometry: Option<AnchorGeometry>,
+) -> Result<PreparedDetectionLoss, &'static str> {
     let profile_started =
         std::env::var_os("MONTGOMERY_PROFILE_TAL").map(|_| std::time::Instant::now());
     let [batch, box_channels, anchor_count] = raw_boxes.dims();
@@ -127,10 +127,10 @@ fn prepare_detection_loss<B: Backend>(
             stride_values.push(anchor.stride);
         }
         let anchor_tensor =
-            Tensor::<B, 2>::from_data(TensorData::new(anchor_xy, [anchor_count, 2]), &device)
+            Tensor::<2>::from_data(TensorData::new(anchor_xy, [anchor_count, 2]), &device)
                 .unsqueeze::<3>();
         let stride_tensor =
-            Tensor::<B, 2>::from_data(TensorData::new(stride_values, [anchor_count, 1]), &device)
+            Tensor::<2>::from_data(TensorData::new(stride_values, [anchor_count, 1]), &device)
                 .unsqueeze::<3>();
         AnchorGeometry {
             anchors,
@@ -144,7 +144,7 @@ fn prepare_detection_loss<B: Backend>(
         stride_tensor,
     } = geometry;
     let distances = if config.reg_max > 1 {
-        let projection = Tensor::<B, 4>::from_data(
+        let projection = Tensor::<4>::from_data(
             TensorData::new(
                 (0..config.reg_max).map(|value| value as f32).collect(),
                 [1, 1, config.reg_max, 1],
@@ -193,34 +193,34 @@ fn prepare_detection_loss<B: Backend>(
 ///
 /// TAL uses detached host values to make discrete matches deterministic. Dense target tensors are
 /// uploaded once and all numeric losses are evaluated against the connected model outputs.
-pub fn tensor_loss<B: Backend>(
-    raw_boxes: Tensor<B, 3>,
-    raw_scores: Tensor<B, 3>,
+pub fn tensor_loss(
+    raw_boxes: Tensor<3>,
+    raw_scores: Tensor<3>,
     levels: &[FeatureLevelLayout],
     targets: &[Vec<TalGroundTruth>],
     config: DetectionLossConfig,
-) -> Result<LossOutput<B>, &'static str> {
+) -> Result<LossOutput, &'static str> {
     Ok(tensor_loss_with_matches(raw_boxes, raw_scores, levels, targets, config)?.0)
 }
 
 /// Evaluate two independent detection heads with one detached assignment readback transaction.
-pub fn tensor_dual_loss<B: Backend>(
-    many: (Tensor<B, 3>, Tensor<B, 3>, DetectionLossConfig),
-    one: (Tensor<B, 3>, Tensor<B, 3>, DetectionLossConfig),
+pub fn tensor_dual_loss(
+    many: (Tensor<3>, Tensor<3>, DetectionLossConfig),
+    one: (Tensor<3>, Tensor<3>, DetectionLossConfig),
     levels: &[FeatureLevelLayout],
     targets: &[Vec<TalGroundTruth>],
-) -> Result<(LossOutput<B>, LossOutput<B>), &'static str> {
+) -> Result<(LossOutput, LossOutput), &'static str> {
     let (many, one) = tensor_dual_loss_with_matches(many, one, levels, targets)?;
     Ok((many.0, one.0))
 }
 
 /// Dual-head detection criterion retaining both positive anchor/target mappings.
-pub fn tensor_dual_loss_with_matches<B: Backend>(
-    many: (Tensor<B, 3>, Tensor<B, 3>, DetectionLossConfig),
-    one: (Tensor<B, 3>, Tensor<B, 3>, DetectionLossConfig),
+pub fn tensor_dual_loss_with_matches(
+    many: (Tensor<3>, Tensor<3>, DetectionLossConfig),
+    one: (Tensor<3>, Tensor<3>, DetectionLossConfig),
     levels: &[FeatureLevelLayout],
     targets: &[Vec<TalGroundTruth>],
-) -> Result<(DetectionLossWithMatches<B>, DetectionLossWithMatches<B>), &'static str> {
+) -> Result<(DetectionLossWithMatches, DetectionLossWithMatches), &'static str> {
     let (many_boxes, many_scores, many_config) = many;
     let (one_boxes, one_scores, one_config) = one;
     let many = prepare_detection_loss(
@@ -266,13 +266,13 @@ pub fn tensor_dual_loss_with_matches<B: Backend>(
 }
 
 /// Detection criterion plus the positive anchor/target mapping consumed by prototype-mask loss.
-pub fn tensor_loss_with_matches<B: Backend>(
-    raw_boxes: Tensor<B, 3>,
-    raw_scores: Tensor<B, 3>,
+pub fn tensor_loss_with_matches(
+    raw_boxes: Tensor<3>,
+    raw_scores: Tensor<3>,
     levels: &[FeatureLevelLayout],
     targets: &[Vec<TalGroundTruth>],
     config: DetectionLossConfig,
-) -> Result<DetectionLossWithMatches<B>, &'static str> {
+) -> Result<DetectionLossWithMatches, &'static str> {
     let prepared =
         prepare_detection_loss(raw_boxes, raw_scores, levels, targets.len(), config, None)?;
     let profile_started = prepared.profile_started;
@@ -294,13 +294,13 @@ pub fn tensor_loss_with_matches<B: Backend>(
     )
 }
 
-fn finish_prepared_detection_loss<B: Backend>(
-    prepared: PreparedDetectionLoss<B>,
+fn finish_prepared_detection_loss(
+    prepared: PreparedDetectionLoss,
     targets: &[Vec<TalGroundTruth>],
     decoded_data: TensorData,
     score_data: TensorData,
     readback_elapsed: Option<std::time::Duration>,
-) -> Result<DetectionLossWithMatches<B>, &'static str> {
+) -> Result<DetectionLossWithMatches, &'static str> {
     let PreparedDetectionLoss {
         raw_boxes,
         raw_scores,
@@ -430,7 +430,7 @@ fn finish_prepared_detection_loss<B: Backend>(
         let target_right_bottom =
             target_boxes.slice([0..batch, 0..anchor_count, 2..4]) / stride_tensor - anchor_tensor;
         let target_distances = Tensor::cat(vec![target_left_top, target_right_bottom], 2);
-        let normalization = Tensor::<B, 3>::from_data(
+        let normalization = Tensor::<3>::from_data(
             TensorData::new(
                 vec![
                     1.0 / width as f32,
@@ -488,13 +488,13 @@ fn finish_prepared_detection_loss<B: Backend>(
     ))
 }
 
-fn sparse_classification_loss<B: Backend>(
-    raw_scores: Tensor<B, 3>,
+fn sparse_classification_loss(
+    raw_scores: Tensor<3>,
     positive_indices: Vec<i64>,
     positive_scores: Vec<f32>,
     normalization: f64,
-    device: &B::Device,
-) -> Tensor<B, 1> {
+    device: &Device,
+) -> Tensor<1> {
     let [batch, classes, anchors] = raw_scores.dims();
     let logits = raw_scores
         .swap_dims(1, 2)
@@ -505,13 +505,12 @@ fn sparse_classification_loss<B: Backend>(
     }
     debug_assert_eq!(positive_indices.len(), positive_scores.len());
     let count = positive_indices.len();
-    let indices =
-        Tensor::<B, 1, Int>::from_data(TensorData::new(positive_indices, [count]), device);
-    let scores = Tensor::<B, 1>::from_data(TensorData::new(positive_scores, [count]), device);
+    let indices = Tensor::<1, Int>::from_data(TensorData::new(positive_indices, [count]), device);
+    let scores = Tensor::<1>::from_data(TensorData::new(positive_scores, [count]), device);
     (zero_target_loss - (logits.select(0, indices) * scores).sum()) / normalization
 }
 
-fn ciou_tensor<B: Backend>(predicted: Tensor<B, 3>, target: Tensor<B, 3>) -> Tensor<B, 3> {
+fn ciou_tensor(predicted: Tensor<3>, target: Tensor<3>) -> Tensor<3> {
     let [batch, anchors, _] = predicted.dims();
     let pred_lt = predicted.clone().slice([0..batch, 0..anchors, 0..2]);
     let pred_rb = predicted.clone().slice([0..batch, 0..anchors, 2..4]);
@@ -576,14 +575,13 @@ mod tests {
     #[test]
     fn sparse_classification_matches_dense_bce() {
         use burn::tensor::Tensor;
-        use burn_flex::Flex;
 
         let device = Default::default();
-        let raw_scores = Tensor::<Flex, 3>::from_data(
+        let raw_scores = Tensor::<3>::from_data(
             TensorData::new(vec![-2.0, 0.5, 1.2, 3.0, -0.7, 0.1], [1, 2, 3]),
             &device,
         );
-        let dense_targets = Tensor::<Flex, 3>::from_data(
+        let dense_targets = Tensor::<3>::from_data(
             TensorData::new(vec![0.0, 0.0, 0.75, 0.0, 0.4, 0.0], [1, 3, 2]),
             &device,
         );
@@ -605,15 +603,12 @@ mod tests {
 
     #[test]
     fn sparse_classification_matches_dense_bce_gradients_at_detection_shape() {
-        use burn::{backend::Autodiff, tensor::Tensor};
-        use burn_flex::Flex;
-
-        type B = Autodiff<Flex>;
+        use burn::tensor::{Device, Tensor};
         const BATCH: usize = 2;
         const CLASSES: usize = 80;
         const ANCHORS: usize = 840;
 
-        let device = Default::default();
+        let device = Device::default().autodiff();
         let count = BATCH * CLASSES * ANCHORS;
         let logits = (0..count)
             .map(|index| ((index * 37 % 101) as f32 - 50.0) / 17.0)
@@ -633,13 +628,13 @@ mod tests {
             targets[index as usize] = score;
         }
 
-        let dense_logits = Tensor::<B, 3>::from_data(
+        let dense_logits = Tensor::<3>::from_data(
             TensorData::new(logits.clone(), [BATCH, CLASSES, ANCHORS]),
             &device,
         )
         .require_grad();
         let dense_targets =
-            Tensor::<B, 3>::from_data(TensorData::new(targets, [BATCH, ANCHORS, CLASSES]), &device);
+            Tensor::<3>::from_data(TensorData::new(targets, [BATCH, ANCHORS, CLASSES]), &device);
         let dense_loss = super::super::common::bce_with_logits_tensor(
             dense_logits.clone().swap_dims(1, 2),
             dense_targets,
@@ -652,7 +647,7 @@ mod tests {
             .into_data();
 
         let sparse_logits =
-            Tensor::<B, 3>::from_data(TensorData::new(logits, [BATCH, CLASSES, ANCHORS]), &device)
+            Tensor::<3>::from_data(TensorData::new(logits, [BATCH, CLASSES, ANCHORS]), &device)
                 .require_grad();
         let sparse_loss = sparse_classification_loss(
             sparse_logits.clone(),
@@ -682,11 +677,10 @@ mod tests {
     #[test]
     fn direct_loss_treats_inverted_early_predictions_as_zero_overlap() {
         use burn::tensor::Tensor;
-        use burn_flex::Flex;
 
         let device = Default::default();
-        let raw_boxes = Tensor::<Flex, 3>::from_floats([[[-1.0], [-1.0], [-1.0], [-1.0]]], &device);
-        let raw_scores = Tensor::<Flex, 3>::zeros([1, 1, 1], &device);
+        let raw_boxes = Tensor::<3>::from_floats([[[-1.0], [-1.0], [-1.0], [-1.0]]], &device);
+        let raw_scores = Tensor::<3>::zeros([1, 1, 1], &device);
         let targets = vec![vec![TalGroundTruth {
             class_id: 0,
             bbox: crate::training::geometry::BoxXyxy::new([0.0, 0.0, 8.0, 8.0]).unwrap(),
@@ -711,7 +705,6 @@ mod tests {
     #[test]
     fn dual_loss_matches_two_independent_dfl_losses() {
         use burn::tensor::Tensor;
-        use burn_flex::Flex;
 
         let device = Default::default();
         let levels = [FeatureLevelLayout {
@@ -721,7 +714,7 @@ mod tests {
         }];
         let config_many = DetectionLossConfig::dfl([16, 16], 4);
         let config_one = DetectionLossConfig::dfl([16, 16], 1);
-        let many_boxes = Tensor::<Flex, 3>::from_data(
+        let many_boxes = Tensor::<3>::from_data(
             TensorData::new(
                 (0..256)
                     .map(|index| (index % 17) as f32 * 0.03 - 0.2)
@@ -730,7 +723,7 @@ mod tests {
             ),
             &device,
         );
-        let one_boxes = Tensor::<Flex, 3>::from_data(
+        let one_boxes = Tensor::<3>::from_data(
             TensorData::new(
                 (0..256)
                     .map(|index| (index % 13) as f32 * 0.025 - 0.1)
@@ -739,11 +732,11 @@ mod tests {
             ),
             &device,
         );
-        let many_scores = Tensor::<Flex, 3>::from_data(
+        let many_scores = Tensor::<3>::from_data(
             TensorData::new(vec![0.2, 1.1, -0.4, 0.7, -0.3, 0.6, 0.9, 0.1], [1, 2, 4]),
             &device,
         );
-        let one_scores = Tensor::<Flex, 3>::from_data(
+        let one_scores = Tensor::<3>::from_data(
             TensorData::new(vec![0.8, -0.2, 0.5, 1.2, 0.4, 0.7, -0.5, 0.3], [1, 2, 4]),
             &device,
         );

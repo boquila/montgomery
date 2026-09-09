@@ -13,7 +13,7 @@
 
 use burn::{
     module::Module,
-    tensor::{Device, Tensor, backend::Backend},
+    tensor::{Device, Tensor},
 };
 
 #[cfg(feature = "pretrained")]
@@ -38,20 +38,20 @@ fn conv_cfg(
 
 /// YOLOv8-cls backbone (layers 0-8): a pure C2f chain with PyTorch batch-norm flavor.
 #[derive(Module, Debug)]
-pub struct Yolov8ClassifyBody<B: Backend> {
-    model_0: Conv<B>,
-    model_1: Conv<B>,
-    model_2: C2f<B>,
-    model_3: Conv<B>,
-    model_4: C2f<B>,
-    model_5: Conv<B>,
-    model_6: C2f<B>,
-    model_7: Conv<B>,
-    model_8: C2f<B>,
+pub struct Yolov8ClassifyBody {
+    model_0: Conv,
+    model_1: Conv,
+    model_2: C2f,
+    model_3: Conv,
+    model_4: C2f,
+    model_5: Conv,
+    model_6: C2f,
+    model_7: Conv,
+    model_8: C2f,
 }
 
-impl<B: Backend> Yolov8ClassifyBody<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> Tensor<B, 4> {
+impl Yolov8ClassifyBody {
+    pub fn forward(&self, input: Tensor<4>) -> Tensor<4> {
         let x = self.model_0.forward(input);
         let x = self.model_1.forward(x);
         let x = self.model_2.forward(x);
@@ -72,7 +72,7 @@ pub struct Yolov8ClassifyBodyConfig {
 }
 
 impl Yolov8ClassifyBodyConfig {
-    fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8ClassifyBody<B> {
+    fn init(&self, device: &Device) -> Yolov8ClassifyBody {
         let [w0, w1, w2, w3, w4, w5, w6, w7, w8] = self.widths;
         let [r2, r4, r6, r8] = self.repeats;
         Yolov8ClassifyBody {
@@ -101,7 +101,7 @@ impl Yolov8ClassifyBodyConfig {
 pub struct Yolov8ClassifyBodyNConfig;
 
 impl Yolov8ClassifyBodyNConfig {
-    fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8ClassifyBody<B> {
+    fn init(&self, device: &Device) -> Yolov8ClassifyBody {
         Yolov8ClassifyBodyConfig {
             widths: [16, 32, 32, 64, 64, 128, 128, 256, 256],
             repeats: [1, 2, 2, 1],
@@ -114,7 +114,7 @@ impl Yolov8ClassifyBodyNConfig {
 pub struct Yolov8ClassifyBodySConfig;
 
 impl Yolov8ClassifyBodySConfig {
-    fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8ClassifyBody<B> {
+    fn init(&self, device: &Device) -> Yolov8ClassifyBody {
         Yolov8ClassifyBodyConfig {
             widths: [32, 64, 64, 128, 128, 256, 256, 512, 512],
             repeats: [1, 2, 2, 1],
@@ -127,7 +127,7 @@ impl Yolov8ClassifyBodySConfig {
 pub struct Yolov8ClassifyBodyMConfig;
 
 impl Yolov8ClassifyBodyMConfig {
-    fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8ClassifyBody<B> {
+    fn init(&self, device: &Device) -> Yolov8ClassifyBody {
         Yolov8ClassifyBodyConfig {
             widths: [48, 96, 96, 192, 192, 384, 384, 768, 768],
             repeats: [2, 4, 4, 2],
@@ -140,7 +140,7 @@ impl Yolov8ClassifyBodyMConfig {
 pub struct Yolov8ClassifyBodyLConfig;
 
 impl Yolov8ClassifyBodyLConfig {
-    fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8ClassifyBody<B> {
+    fn init(&self, device: &Device) -> Yolov8ClassifyBody {
         Yolov8ClassifyBodyConfig {
             widths: [64, 128, 128, 256, 256, 512, 512, 1024, 1024],
             repeats: [3, 6, 6, 3],
@@ -153,7 +153,7 @@ impl Yolov8ClassifyBodyLConfig {
 pub struct Yolov8ClassifyBodyXConfig;
 
 impl Yolov8ClassifyBodyXConfig {
-    fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8ClassifyBody<B> {
+    fn init(&self, device: &Device) -> Yolov8ClassifyBody {
         Yolov8ClassifyBodyConfig {
             widths: [80, 160, 160, 320, 320, 640, 640, 1280, 1280],
             repeats: [3, 6, 6, 3],
@@ -239,12 +239,9 @@ fn pytorch_store(path: impl Into<std::path::PathBuf>) -> PytorchStore {
 mod tests {
     use super::*;
     use burn::tensor::{ElementConversion, TensorData};
-    use burn_flex::Flex;
+
     use serde::Deserialize;
     use std::collections::BTreeMap;
-
-    #[cfg(feature = "gpu")]
-    use burn::backend::Wgpu;
 
     #[derive(Deserialize)]
     struct GoldenFixture {
@@ -263,7 +260,7 @@ mod tests {
         samples: Vec<(usize, f64)>,
     }
 
-    fn assert_golden<const D: usize>(name: &str, actual: Tensor<Flex, D>, expected: &GoldenTensor) {
+    fn assert_golden<const D: usize>(name: &str, actual: Tensor<D>, expected: &GoldenTensor) {
         assert_eq!(actual.dims().to_vec(), expected.shape, "{name} shape");
         let values: Vec<f64> = actual
             .into_data()
@@ -307,12 +304,12 @@ mod tests {
         }
     }
 
-    fn load_reference_image(id: &str, device: &Device<Flex>) -> Tensor<Flex, 4> {
+    fn load_reference_image(id: &str, device: &Device) -> Tensor<4> {
         let image = image::open(format!("target/{id}-preprocessed-reference.png"))
             .unwrap()
             .into_rgb8();
         let shape = [image.height() as usize, image.width() as usize, 3];
-        Tensor::<Flex, 3>::from_data(
+        Tensor::<3>::from_data(
             TensorData::new(image.into_raw(), shape).convert::<f32>(),
             device,
         )
@@ -338,7 +335,7 @@ mod tests {
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
                         let device = Default::default();
-                        let mut model = <$config>::default().init::<Flex>(&device);
+                        let mut model = <$config>::default().init(&device);
                         model.load_pytorch_weights(checkpoint).unwrap();
                         let output = model.forward(Tensor::zeros([1, 3, 64, 64], &device));
                         assert_eq!(
@@ -377,7 +374,7 @@ mod tests {
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
                         let device = Default::default();
-                        let mut model = <$config>::default().init::<Flex>(&device);
+                        let mut model = <$config>::default().init(&device);
                         model.load_burnpack_weights(checkpoint).unwrap();
                         let input = load_reference_image($id, &device);
                         let backbone = model.body.forward(input);
@@ -422,9 +419,9 @@ mod tests {
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
                         let device = Default::default();
-                        let mut model = <$config>::default().init::<Flex>(&device);
+                        let mut model = <$config>::default().init(&device);
                         model.load_burnpack_weights(checkpoint).unwrap();
-                        let input = Tensor::<Flex, 4>::zeros([1, 3, 224, 224], &device);
+                        let input = Tensor::<4>::zeros([1, 3, 224, 224], &device);
                         const WARMUP_RUNS: usize = 3;
                         const TIMED_RUNS: usize = 10;
 
@@ -490,7 +487,7 @@ mod tests {
                     "pack the {} artifact with pack-weights first",
                     $id
                 );
-                let predictor = crate::Predictor::<Flex>::from_checkpoint(
+                let predictor = crate::Predictor::from_checkpoint(
                     crate::ModelId::from_str($id).unwrap(),
                     checkpoint,
                     Default::default(),
@@ -563,9 +560,9 @@ mod tests {
                 let worker = std::thread::Builder::new()
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
-                        let mut model = <$config>::default().init::<Wgpu>(&device);
+                        let mut model = <$config>::default().init(&device);
                         model.load_burnpack_weights(checkpoint).unwrap();
-                        let input = Tensor::<Wgpu, 4>::zeros([1, 3, 224, 224], &device);
+                        let input = Tensor::<4>::zeros([1, 3, 224, 224], &device);
                         const WARMUP_RUNS: usize = 3;
                         const TIMED_RUNS: usize = 10;
 

@@ -1,6 +1,6 @@
 use burn::{
     module::Module,
-    tensor::{Device, Tensor, backend::Backend},
+    tensor::{Device, Tensor},
 };
 
 use super::blocks::{
@@ -9,13 +9,13 @@ use super::blocks::{
 };
 
 /// Feature maps for the three YOLOv10 detection scales.
-pub struct Yolov10Features<B: Backend> {
+pub struct Yolov10Features {
     /// P3/8 feature map.
-    pub p3: Tensor<B, 4>,
+    pub p3: Tensor<4>,
     /// P4/16 feature map.
-    pub p4: Tensor<B, 4>,
+    pub p4: Tensor<4>,
     /// P5/32 feature map.
-    pub p5: Tensor<B, 4>,
+    pub p5: Tensor<4>,
 }
 
 /// Complete YOLOv10 backbone and feature-pyramid body (layers 0-22).
@@ -27,28 +27,28 @@ pub struct Yolov10Features<B: Backend> {
 /// per-scale YAMLs (which are not mere scale-row swaps): YOLOv10n keeps a plain C2f at layer 8,
 /// s uses large-kernel C2fCIB towers, and m/b/l/x use the plain depth-wise C2fCIB flavor.
 #[derive(Module, Debug)]
-pub struct Yolov10BodyN<B: Backend> {
-    model_0: Conv<B>,
-    model_1: Conv<B>,
-    model_2: C2f<B>,
-    model_3: Conv<B>,
-    model_4: C2f<B>,
-    model_5: ScDown<B>,
-    model_6: C2f<B>,
-    model_7: ScDown<B>,
-    model_8: C2f<B>,
-    model_9: Sppf<B>,
-    model_10: Psa<B>,
-    model_13: C2f<B>,
-    model_16: C2f<B>,
-    model_17: Conv<B>,
-    model_19: C2f<B>,
-    model_20: ScDown<B>,
-    model_22: C2fCib<B>,
+pub struct Yolov10BodyN {
+    model_0: Conv,
+    model_1: Conv,
+    model_2: C2f,
+    model_3: Conv,
+    model_4: C2f,
+    model_5: ScDown,
+    model_6: C2f,
+    model_7: ScDown,
+    model_8: C2f,
+    model_9: Sppf,
+    model_10: Psa,
+    model_13: C2f,
+    model_16: C2f,
+    model_17: Conv,
+    model_19: C2f,
+    model_20: ScDown,
+    model_22: C2fCib,
 }
 
-impl<B: Backend> Yolov10BodyN<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> Yolov10Features<B> {
+impl Yolov10BodyN {
+    pub fn forward(&self, input: Tensor<4>) -> Yolov10Features {
         let x = self.model_0.forward(input);
         let x = self.model_1.forward(x);
         let x = self.model_2.forward(x);
@@ -88,7 +88,7 @@ impl<B: Backend> Yolov10BodyN<B> {
 pub struct Yolov10BodyNConfig;
 
 impl Yolov10BodyNConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov10BodyN<B> {
+    pub fn init(&self, device: &Device) -> Yolov10BodyN {
         Yolov10BodyN {
             model_0: ConvConfig::new(3, 16, 3, 2).init(device),
             model_1: ConvConfig::new(16, 32, 3, 2).init(device),
@@ -114,28 +114,28 @@ impl Yolov10BodyNConfig {
 /// YOLOv10s body (depth 0.33, width 0.50, max channels 1024). Layers 8 and 22 are large-kernel
 /// C2fCIB towers (`lk=True`), unlike n's plain C2f at layer 8.
 #[derive(Module, Debug)]
-pub struct Yolov10BodyS<B: Backend> {
-    model_0: Conv<B>,
-    model_1: Conv<B>,
-    model_2: C2f<B>,
-    model_3: Conv<B>,
-    model_4: C2f<B>,
-    model_5: ScDown<B>,
-    model_6: C2f<B>,
-    model_7: ScDown<B>,
-    model_8: C2fCib<B>,
-    model_9: Sppf<B>,
-    model_10: Psa<B>,
-    model_13: C2f<B>,
-    model_16: C2f<B>,
-    model_17: Conv<B>,
-    model_19: C2f<B>,
-    model_20: ScDown<B>,
-    model_22: C2fCib<B>,
+pub struct Yolov10BodyS {
+    model_0: Conv,
+    model_1: Conv,
+    model_2: C2f,
+    model_3: Conv,
+    model_4: C2f,
+    model_5: ScDown,
+    model_6: C2f,
+    model_7: ScDown,
+    model_8: C2fCib,
+    model_9: Sppf,
+    model_10: Psa,
+    model_13: C2f,
+    model_16: C2f,
+    model_17: Conv,
+    model_19: C2f,
+    model_20: ScDown,
+    model_22: C2fCib,
 }
 
-impl<B: Backend> Yolov10BodyS<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> Yolov10Features<B> {
+impl Yolov10BodyS {
+    pub fn forward(&self, input: Tensor<4>) -> Yolov10Features {
         let x = self.model_0.forward(input);
         let x = self.model_1.forward(x);
         let x = self.model_2.forward(x);
@@ -175,7 +175,7 @@ impl<B: Backend> Yolov10BodyS<B> {
 pub struct Yolov10BodySConfig;
 
 impl Yolov10BodySConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov10BodyS<B> {
+    pub fn init(&self, device: &Device) -> Yolov10BodyS {
         Yolov10BodyS {
             model_0: ConvConfig::new(3, 32, 3, 2).init(device),
             model_1: ConvConfig::new(32, 64, 3, 2).init(device),
@@ -201,28 +201,28 @@ impl Yolov10BodySConfig {
 /// YOLOv10m body (depth 0.67, width 0.75, max channels 768). Every C2fCIB stage uses the plain
 /// depth-wise flavor (`lk=False`), including neck layer 19.
 #[derive(Module, Debug)]
-pub struct Yolov10BodyM<B: Backend> {
-    model_0: Conv<B>,
-    model_1: Conv<B>,
-    model_2: C2f<B>,
-    model_3: Conv<B>,
-    model_4: C2f<B>,
-    model_5: ScDown<B>,
-    model_6: C2f<B>,
-    model_7: ScDown<B>,
-    model_8: C2fCibDw<B>,
-    model_9: Sppf<B>,
-    model_10: Psa<B>,
-    model_13: C2f<B>,
-    model_16: C2f<B>,
-    model_17: Conv<B>,
-    model_19: C2fCibDw<B>,
-    model_20: ScDown<B>,
-    model_22: C2fCibDw<B>,
+pub struct Yolov10BodyM {
+    model_0: Conv,
+    model_1: Conv,
+    model_2: C2f,
+    model_3: Conv,
+    model_4: C2f,
+    model_5: ScDown,
+    model_6: C2f,
+    model_7: ScDown,
+    model_8: C2fCibDw,
+    model_9: Sppf,
+    model_10: Psa,
+    model_13: C2f,
+    model_16: C2f,
+    model_17: Conv,
+    model_19: C2fCibDw,
+    model_20: ScDown,
+    model_22: C2fCibDw,
 }
 
-impl<B: Backend> Yolov10BodyM<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> Yolov10Features<B> {
+impl Yolov10BodyM {
+    pub fn forward(&self, input: Tensor<4>) -> Yolov10Features {
         let x = self.model_0.forward(input);
         let x = self.model_1.forward(x);
         let x = self.model_2.forward(x);
@@ -262,7 +262,7 @@ impl<B: Backend> Yolov10BodyM<B> {
 pub struct Yolov10BodyMConfig;
 
 impl Yolov10BodyMConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov10BodyM<B> {
+    pub fn init(&self, device: &Device) -> Yolov10BodyM {
         Yolov10BodyM {
             model_0: ConvConfig::new(3, 48, 3, 2).init(device),
             model_1: ConvConfig::new(48, 96, 3, 2).init(device),
@@ -288,28 +288,28 @@ impl Yolov10BodyMConfig {
 /// YOLOv10b and YOLOv10l body (width 1.00, max channels 512). The two scales share the same
 /// module types and channel table; only the depth-scaled repeats differ (b: 2/4, l: 3/6).
 #[derive(Module, Debug)]
-pub struct Yolov10BodyB<B: Backend> {
-    model_0: Conv<B>,
-    model_1: Conv<B>,
-    model_2: C2f<B>,
-    model_3: Conv<B>,
-    model_4: C2f<B>,
-    model_5: ScDown<B>,
-    model_6: C2f<B>,
-    model_7: ScDown<B>,
-    model_8: C2fCibDw<B>,
-    model_9: Sppf<B>,
-    model_10: Psa<B>,
-    model_13: C2fCibDw<B>,
-    model_16: C2f<B>,
-    model_17: Conv<B>,
-    model_19: C2fCibDw<B>,
-    model_20: ScDown<B>,
-    model_22: C2fCibDw<B>,
+pub struct Yolov10BodyB {
+    model_0: Conv,
+    model_1: Conv,
+    model_2: C2f,
+    model_3: Conv,
+    model_4: C2f,
+    model_5: ScDown,
+    model_6: C2f,
+    model_7: ScDown,
+    model_8: C2fCibDw,
+    model_9: Sppf,
+    model_10: Psa,
+    model_13: C2fCibDw,
+    model_16: C2f,
+    model_17: Conv,
+    model_19: C2fCibDw,
+    model_20: ScDown,
+    model_22: C2fCibDw,
 }
 
-impl<B: Backend> Yolov10BodyB<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> Yolov10Features<B> {
+impl Yolov10BodyB {
+    pub fn forward(&self, input: Tensor<4>) -> Yolov10Features {
         let x = self.model_0.forward(input);
         let x = self.model_1.forward(x);
         let x = self.model_2.forward(x);
@@ -349,7 +349,7 @@ impl<B: Backend> Yolov10BodyB<B> {
 pub struct Yolov10BodyBConfig;
 
 impl Yolov10BodyBConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov10BodyB<B> {
+    pub fn init(&self, device: &Device) -> Yolov10BodyB {
         Yolov10BodyB {
             model_0: ConvConfig::new(3, 64, 3, 2).init(device),
             model_1: ConvConfig::new(64, 128, 3, 2).init(device),
@@ -377,7 +377,7 @@ impl Yolov10BodyBConfig {
 pub struct Yolov10BodyLConfig;
 
 impl Yolov10BodyLConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov10BodyB<B> {
+    pub fn init(&self, device: &Device) -> Yolov10BodyB {
         Yolov10BodyB {
             model_0: ConvConfig::new(3, 64, 3, 2).init(device),
             model_1: ConvConfig::new(64, 128, 3, 2).init(device),
@@ -402,28 +402,28 @@ impl Yolov10BodyLConfig {
 
 /// YOLOv10x body (depth 1.00, width 1.25, max channels 512). Layer 6 also becomes a C2fCIB stage.
 #[derive(Module, Debug)]
-pub struct Yolov10BodyX<B: Backend> {
-    model_0: Conv<B>,
-    model_1: Conv<B>,
-    model_2: C2f<B>,
-    model_3: Conv<B>,
-    model_4: C2f<B>,
-    model_5: ScDown<B>,
-    model_6: C2fCibDw<B>,
-    model_7: ScDown<B>,
-    model_8: C2fCibDw<B>,
-    model_9: Sppf<B>,
-    model_10: Psa<B>,
-    model_13: C2fCibDw<B>,
-    model_16: C2f<B>,
-    model_17: Conv<B>,
-    model_19: C2fCibDw<B>,
-    model_20: ScDown<B>,
-    model_22: C2fCibDw<B>,
+pub struct Yolov10BodyX {
+    model_0: Conv,
+    model_1: Conv,
+    model_2: C2f,
+    model_3: Conv,
+    model_4: C2f,
+    model_5: ScDown,
+    model_6: C2fCibDw,
+    model_7: ScDown,
+    model_8: C2fCibDw,
+    model_9: Sppf,
+    model_10: Psa,
+    model_13: C2fCibDw,
+    model_16: C2f,
+    model_17: Conv,
+    model_19: C2fCibDw,
+    model_20: ScDown,
+    model_22: C2fCibDw,
 }
 
-impl<B: Backend> Yolov10BodyX<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> Yolov10Features<B> {
+impl Yolov10BodyX {
+    pub fn forward(&self, input: Tensor<4>) -> Yolov10Features {
         let x = self.model_0.forward(input);
         let x = self.model_1.forward(x);
         let x = self.model_2.forward(x);
@@ -463,7 +463,7 @@ impl<B: Backend> Yolov10BodyX<B> {
 pub struct Yolov10BodyXConfig;
 
 impl Yolov10BodyXConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov10BodyX<B> {
+    pub fn init(&self, device: &Device) -> Yolov10BodyX {
         Yolov10BodyX {
             model_0: ConvConfig::new(3, 80, 3, 2).init(device),
             model_1: ConvConfig::new(80, 160, 3, 2).init(device),

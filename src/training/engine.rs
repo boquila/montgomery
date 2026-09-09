@@ -7,8 +7,8 @@ use std::{
 
 use burn::{
     module::AutodiffModule,
-    optim::{GradientsAccumulator, GradientsParams, Optimizer},
-    tensor::{Tensor, Transaction, backend::AutodiffBackend},
+    optim::{GradientsAccumulator, GradientsParams, ModuleOptimizer},
+    tensor::{Tensor, Transaction},
 };
 
 use crate::training::{
@@ -20,12 +20,12 @@ use crate::training::{
 };
 
 const DIAGNOSTIC_CHUNK_SIZE: usize = 1024;
-struct DeferredDiagnostic<B: AutodiffBackend> {
+struct DeferredDiagnostic {
     event_index: usize,
     batch_index: usize,
     component: Option<String>,
     total: bool,
-    value: Tensor<B, 1>,
+    value: Tensor<1>,
 }
 
 fn diagnostic_chunk_full(events: &[StepEvent]) -> bool {
@@ -33,14 +33,11 @@ fn diagnostic_chunk_full(events: &[StepEvent]) -> bool {
 }
 
 /// Family-specific model adapter used by the explicit native loop.
-pub trait TrainableTask<B: AutodiffBackend>: AutodiffModule<B> {
+pub trait TrainableTask: AutodiffModule {
     type Batch;
 
-    fn forward_loss(
-        &self,
-        batch: &Self::Batch,
-        context: LossContext,
-    ) -> Result<LossOutput<B>, String>;
+    fn forward_loss(&self, batch: &Self::Batch, context: LossContext)
+    -> Result<LossOutput, String>;
 }
 
 /// Bounded, epoch-scoped batch producer. Implementations may decode and prefetch lazily, but must
@@ -152,18 +149,16 @@ impl Trainer {
         })
     }
 
-    pub fn train_epoch<B, M, O, F, S>(
+    pub fn train_epoch<M, F, S>(
         &mut self,
         mut model: M,
-        mut optimizer: O,
+        mut optimizer: ModuleOptimizer,
         batches: &mut S,
         external_weight_decay: bool,
         mut after_step: F,
-    ) -> Result<(M, O, EpochSummary), EngineError>
+    ) -> Result<(M, ModuleOptimizer, EpochSummary), EngineError>
     where
-        B: AutodiffBackend,
-        M: TrainableTask<B>,
-        O: Optimizer<M, B>,
+        M: TrainableTask,
         F: FnMut(&M, u64) -> Result<(), String>,
         S: EpochBatchSource<M::Batch>,
     {
@@ -176,9 +171,9 @@ impl Trainer {
         let mut component_sums = BTreeMap::<String, f64>::new();
         let diagnostic_capacity = batch_count.min(DIAGNOSTIC_CHUNK_SIZE);
         let mut events = Vec::with_capacity(diagnostic_capacity);
-        let mut deferred = Vec::<DeferredDiagnostic<B>>::with_capacity(diagnostic_capacity);
+        let mut deferred = Vec::<DeferredDiagnostic>::with_capacity(diagnostic_capacity);
         let mut deferred_totals =
-            Vec::<DeferredDiagnostic<B>>::with_capacity(self.config.accumulation);
+            Vec::<DeferredDiagnostic>::with_capacity(self.config.accumulation);
         let mut optimizer_steps = 0;
         let mut group_start = 0;
         let profile = std::env::var_os("MONTGOMERY_PROFILE_TRAINING").is_some();
@@ -211,12 +206,14 @@ impl Trainer {
                 let mut output = model
                     .forward_loss(batch, LossContext::from_state(&self.state))
                     .map_err(EngineError)?;
-                let device = profile.then(|| output.total.device());
-                if let Some(device) = &device {
-                    B::sync(device).map_err(|error| EngineError(error.to_string()))?;
+                let device = output.total.device();
+                if profile {
+                    device
+                        .sync()
+                        .map_err(|error| EngineError(error.to_string()))?;
                     forward_time += forward_started.elapsed();
                 }
-                group_device = device;
+                group_device = Some(device);
                 let total_value = output.total_value;
                 let has_deferred_total = output.has_deferred_total();
                 if !output.finite || (!has_deferred_total && !total_value.is_finite()) {
@@ -238,7 +235,9 @@ impl Trainer {
                 let backward_started = Instant::now();
                 let gradients = GradientsParams::from_grads(backward_loss.backward(), &model);
                 if let Some(device) = &group_device {
-                    B::sync(device).map_err(|error| EngineError(error.to_string()))?;
+                    device
+                        .sync()
+                        .map_err(|error| EngineError(error.to_string()))?;
                     backward_time += backward_started.elapsed();
                 }
                 if gradients.is_empty() {
@@ -300,25 +299,27 @@ impl Trainer {
                 );
             }
             if profile {
-                B::sync(
-                    group_device
-                        .as_ref()
-                        .expect("a training group has a device"),
-                )
-                .map_err(|error| EngineError(error.to_string()))?;
+                group_device
+                    .as_ref()
+                    .expect("a training group has a device")
+                    .sync()
+                    .map_err(|error| EngineError(error.to_string()))?;
                 optimizer_time += optimizer_started.elapsed();
             }
             self.state.optimizer_step += 1;
             self.state.accumulation_position = 0;
             let after_step_started = Instant::now();
             after_step(&model, self.state.optimizer_step).map_err(EngineError)?;
-            if profile {
-                B::sync(
-                    group_device
-                        .as_ref()
-                        .expect("a training group has a device"),
-                )
+            // Burn 0.22 can otherwise accumulate a very deep asynchronous optimizer/EMA queue
+            // for light segmentation batches. Closing each completed optimizer step bounds the
+            // queue; heavier batches naturally hide this, but 640 px segmentation regresses
+            // sharply without the boundary.
+            group_device
+                .as_ref()
+                .expect("a training group has a device")
+                .sync()
                 .map_err(|error| EngineError(error.to_string()))?;
+            if profile {
                 after_step_time += after_step_started.elapsed();
             }
             optimizer_steps += 1;
@@ -387,9 +388,9 @@ impl Trainer {
     }
 }
 
-fn resolve_deferred_totals<B: AutodiffBackend>(
+fn resolve_deferred_totals(
     epoch: usize,
-    deferred: &mut Vec<DeferredDiagnostic<B>>,
+    deferred: &mut Vec<DeferredDiagnostic>,
     events: &mut [StepEvent],
     loss_sum: &mut f64,
 ) -> Result<(), EngineError> {
@@ -429,10 +430,10 @@ fn resolve_deferred_totals<B: AutodiffBackend>(
     Ok(())
 }
 
-fn flush_events<B: AutodiffBackend>(
+fn flush_events(
     run: &RunDirectory,
     epoch: usize,
-    deferred: &mut Vec<DeferredDiagnostic<B>>,
+    deferred: &mut Vec<DeferredDiagnostic>,
     events: &mut Vec<StepEvent>,
     loss_sum: &mut f64,
     component_sums: &mut BTreeMap<String, f64>,
@@ -501,8 +502,7 @@ mod tests {
     use super::{
         DIAGNOSTIC_CHUNK_SIZE, DeferredDiagnostic, diagnostic_chunk_full, resolve_deferred_totals,
     };
-    use burn::{backend::Autodiff, tensor::Tensor};
-    use burn_flex::Flex;
+    use burn::tensor::Tensor;
 
     fn event() -> crate::training::report::StepEvent {
         crate::training::report::StepEvent {
@@ -528,10 +528,8 @@ mod tests {
 
     #[test]
     fn deferred_non_finite_total_fails_at_optimizer_boundary() {
-        type B = Autodiff<Flex>;
-
-        let device = Default::default();
-        let mut deferred = vec![DeferredDiagnostic::<B> {
+        let device = burn::tensor::Device::default().autodiff();
+        let mut deferred = vec![DeferredDiagnostic {
             event_index: 0,
             batch_index: 7,
             component: None,

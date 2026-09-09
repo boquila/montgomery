@@ -1,6 +1,6 @@
 use burn::{
     module::Module,
-    tensor::{Device, Tensor, backend::Backend},
+    tensor::{Device, Tensor},
 };
 
 use super::blocks::{
@@ -9,13 +9,13 @@ use super::blocks::{
 };
 
 /// Feature maps for the three YOLO11 detection scales.
-pub struct Yolo11Features<B: Backend> {
+pub struct Yolo11Features {
     /// P3/8 feature map.
-    pub p3: Tensor<B, 4>,
+    pub p3: Tensor<4>,
     /// P4/16 feature map.
-    pub p4: Tensor<B, 4>,
+    pub p4: Tensor<4>,
     /// P5/32 feature map.
-    pub p5: Tensor<B, 4>,
+    pub p5: Tensor<4>,
 }
 
 /// Complete YOLO11 backbone and feature-pyramid body (layers 0-22), n and s scales.
@@ -29,28 +29,28 @@ pub struct Yolo11Features<B: Backend> {
 /// size), and the P5 stage at layer 22 is a plain C3k2 with a C3k chain — YOLO11 has no attention
 /// P5 stage.
 #[derive(Module, Debug)]
-pub struct Yolo11BodySmall<B: Backend> {
-    model_0: Conv<B>,
-    model_1: Conv<B>,
-    model_2: C3k2<B>,
-    model_3: Conv<B>,
-    model_4: C3k2<B>,
-    model_5: Conv<B>,
-    model_6: C3k2C3k<B>,
-    model_7: Conv<B>,
-    model_8: C3k2C3k<B>,
-    model_9: Sppf<B>,
-    model_10: C2Psa<B>,
-    model_13: C3k2<B>,
-    model_16: C3k2<B>,
-    model_17: Conv<B>,
-    model_19: C3k2<B>,
-    model_20: Conv<B>,
-    model_22: C3k2C3k<B>,
+pub struct Yolo11BodySmall {
+    model_0: Conv,
+    model_1: Conv,
+    model_2: C3k2,
+    model_3: Conv,
+    model_4: C3k2,
+    model_5: Conv,
+    model_6: C3k2C3k,
+    model_7: Conv,
+    model_8: C3k2C3k,
+    model_9: Sppf,
+    model_10: C2Psa,
+    model_13: C3k2,
+    model_16: C3k2,
+    model_17: Conv,
+    model_19: C3k2,
+    model_20: Conv,
+    model_22: C3k2C3k,
 }
 
-impl<B: Backend> Yolo11BodySmall<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> Yolo11Features<B> {
+impl Yolo11BodySmall {
+    pub fn forward(&self, input: Tensor<4>) -> Yolo11Features {
         let x = self.model_0.forward(input);
         let x = self.model_1.forward(x);
         let x = self.model_2.forward(x);
@@ -93,7 +93,7 @@ impl<B: Backend> Yolo11BodySmall<B> {
 pub struct Yolo11BodyNConfig;
 
 impl Yolo11BodyNConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo11BodySmall<B> {
+    pub fn init(&self, device: &Device) -> Yolo11BodySmall {
         Yolo11BodySmall {
             model_0: ConvConfig::new(3, 16, 3, 2).init(device),
             model_1: ConvConfig::new(16, 32, 3, 2).init(device),
@@ -121,7 +121,7 @@ impl Yolo11BodyNConfig {
 pub struct Yolo11BodySConfig;
 
 impl Yolo11BodySConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo11BodySmall<B> {
+    pub fn init(&self, device: &Device) -> Yolo11BodySmall {
         Yolo11BodySmall {
             model_0: ConvConfig::new(3, 32, 3, 2).init(device),
             model_1: ConvConfig::new(32, 64, 3, 2).init(device),
@@ -150,28 +150,28 @@ impl Yolo11BodySConfig {
 /// stages (layers 2 and 4) build C3k chains at the YAML's 0.25 expansion and this graph differs
 /// structurally from the n/s body.
 #[derive(Module, Debug)]
-pub struct Yolo11BodyLarge<B: Backend> {
-    model_0: Conv<B>,
-    model_1: Conv<B>,
-    model_2: C3k2C3k<B>,
-    model_3: Conv<B>,
-    model_4: C3k2C3k<B>,
-    model_5: Conv<B>,
-    model_6: C3k2C3k<B>,
-    model_7: Conv<B>,
-    model_8: C3k2C3k<B>,
-    model_9: Sppf<B>,
-    model_10: C2Psa<B>,
-    model_13: C3k2C3k<B>,
-    model_16: C3k2C3k<B>,
-    model_17: Conv<B>,
-    model_19: C3k2C3k<B>,
-    model_20: Conv<B>,
-    model_22: C3k2C3k<B>,
+pub struct Yolo11BodyLarge {
+    model_0: Conv,
+    model_1: Conv,
+    model_2: C3k2C3k,
+    model_3: Conv,
+    model_4: C3k2C3k,
+    model_5: Conv,
+    model_6: C3k2C3k,
+    model_7: Conv,
+    model_8: C3k2C3k,
+    model_9: Sppf,
+    model_10: C2Psa,
+    model_13: C3k2C3k,
+    model_16: C3k2C3k,
+    model_17: Conv,
+    model_19: C3k2C3k,
+    model_20: Conv,
+    model_22: C3k2C3k,
 }
 
-impl<B: Backend> Yolo11BodyLarge<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> Yolo11Features<B> {
+impl Yolo11BodyLarge {
+    pub fn forward(&self, input: Tensor<4>) -> Yolo11Features {
         let x = self.model_0.forward(input);
         let x = self.model_1.forward(x);
         let x = self.model_2.forward(x);
@@ -211,7 +211,7 @@ impl<B: Backend> Yolo11BodyLarge<B> {
 pub struct Yolo11BodyMConfig;
 
 impl Yolo11BodyMConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo11BodyLarge<B> {
+    pub fn init(&self, device: &Device) -> Yolo11BodyLarge {
         Yolo11BodyLarge {
             model_0: ConvConfig::new(3, 64, 3, 2).init(device),
             model_1: ConvConfig::new(64, 128, 3, 2).init(device),
@@ -239,7 +239,7 @@ impl Yolo11BodyMConfig {
 pub struct Yolo11BodyLConfig;
 
 impl Yolo11BodyLConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo11BodyLarge<B> {
+    pub fn init(&self, device: &Device) -> Yolo11BodyLarge {
         Yolo11BodyLarge {
             model_0: ConvConfig::new(3, 64, 3, 2).init(device),
             model_1: ConvConfig::new(64, 128, 3, 2).init(device),
@@ -267,7 +267,7 @@ impl Yolo11BodyLConfig {
 pub struct Yolo11BodyXConfig;
 
 impl Yolo11BodyXConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo11BodyLarge<B> {
+    pub fn init(&self, device: &Device) -> Yolo11BodyLarge {
         Yolo11BodyLarge {
             model_0: ConvConfig::new(3, 96, 3, 2).init(device),
             model_1: ConvConfig::new(96, 192, 3, 2).init(device),

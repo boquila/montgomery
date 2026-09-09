@@ -1,2 +1,5 @@
 [cubecl.compilation]
-cache = "target"
+cache = true
+
+[cubecl.environment]
+path = "target"

@@ -1,6 +1,6 @@
 use burn::{
     module::Module,
-    tensor::{Device, Tensor, backend::Backend},
+    tensor::{Device, Tensor},
 };
 
 use super::{
@@ -15,9 +15,9 @@ use super::{
 #[cfg(feature = "pretrained")]
 use {
     super::weights,
+    burn_pack::Error as BurnpackError,
     burn_store::{
-        BurnpackError, BurnpackStore, HalfPrecisionAdapter, ModuleSnapshot, PytorchStore,
-        PytorchStoreError,
+        BurnpackStore, HalfPrecisionAdapter, ModuleSnapshot, PytorchStore, PytorchStoreError,
     },
     std::path::PathBuf,
 };
@@ -63,17 +63,17 @@ fn pytorch_store(path: impl Into<PathBuf>) -> PytorchStore {
 /// The body feeds the classic DFL detection head whose predictions are decoded to center-size
 /// model-input pixels; the runtime applies class-aware non-maximum suppression.
 #[derive(Module, Debug)]
-pub struct Yolov8N<B: Backend> {
-    body: Yolov8Body<B>,
-    head: Yolov8Head<B>,
+pub struct Yolov8N {
+    body: Yolov8Body,
+    head: Yolov8Head,
 }
 
-impl<B: Backend> Yolov8N<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> DecodedPredictions<B> {
+impl Yolov8N {
+    pub fn forward(&self, input: Tensor<4>) -> DecodedPredictions {
         self.head.forward(self.body.forward(input))
     }
 
-    pub fn forward_train(&self, input: Tensor<B, 4>) -> super::head::RawPredictions<B> {
+    pub fn forward_train(&self, input: Tensor<4>) -> super::head::RawPredictions {
         self.head.forward_raw(self.body.forward(input))
     }
 
@@ -90,9 +90,8 @@ impl<B: Backend> Yolov8N<B> {
     /// Load Montgomery's versioned, half-precision native Burnpack artifact.
     #[cfg(feature = "pretrained")]
     pub fn load_burnpack_weights(&mut self, path: impl Into<PathBuf>) -> Result<(), BurnpackError> {
-        let mut store = BurnpackStore::from_file(path.into())
-            .with_from_adapter(HalfPrecisionAdapter::new())
-            .zero_copy(true);
+        let mut store =
+            BurnpackStore::from_file(path.into()).with_from_adapter(HalfPrecisionAdapter::new());
         self.load_from(&mut store).map(|_| ())
     }
 
@@ -118,15 +117,11 @@ impl<B: Backend> Yolov8N<B> {
 pub struct Yolov8NConfig;
 
 impl Yolov8NConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8N<B> {
+    pub fn init(&self, device: &Device) -> Yolov8N {
         self.init_with_classes(80, device)
     }
 
-    pub fn init_with_classes<B: Backend>(
-        &self,
-        num_classes: usize,
-        device: &Device<B>,
-    ) -> Yolov8N<B> {
+    pub fn init_with_classes(&self, num_classes: usize, device: &Device) -> Yolov8N {
         Yolov8N {
             body: Yolov8BodyNConfig.init(device),
             head: Yolov8HeadConfig::new(64, 128, 256)
@@ -138,17 +133,17 @@ impl Yolov8NConfig {
 
 /// Native Burn YOLOv8s model.
 #[derive(Module, Debug)]
-pub struct Yolov8S<B: Backend> {
-    body: Yolov8Body<B>,
-    head: Yolov8Head<B>,
+pub struct Yolov8S {
+    body: Yolov8Body,
+    head: Yolov8Head,
 }
 
-impl<B: Backend> Yolov8S<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> DecodedPredictions<B> {
+impl Yolov8S {
+    pub fn forward(&self, input: Tensor<4>) -> DecodedPredictions {
         self.head.forward(self.body.forward(input))
     }
 
-    pub fn forward_train(&self, input: Tensor<B, 4>) -> super::head::RawPredictions<B> {
+    pub fn forward_train(&self, input: Tensor<4>) -> super::head::RawPredictions {
         self.head.forward_raw(self.body.forward(input))
     }
 
@@ -165,9 +160,8 @@ impl<B: Backend> Yolov8S<B> {
     /// Load Montgomery's versioned, half-precision native Burnpack artifact.
     #[cfg(feature = "pretrained")]
     pub fn load_burnpack_weights(&mut self, path: impl Into<PathBuf>) -> Result<(), BurnpackError> {
-        let mut store = BurnpackStore::from_file(path.into())
-            .with_from_adapter(HalfPrecisionAdapter::new())
-            .zero_copy(true);
+        let mut store =
+            BurnpackStore::from_file(path.into()).with_from_adapter(HalfPrecisionAdapter::new());
         self.load_from(&mut store).map(|_| ())
     }
 
@@ -193,15 +187,11 @@ impl<B: Backend> Yolov8S<B> {
 pub struct Yolov8SConfig;
 
 impl Yolov8SConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8S<B> {
+    pub fn init(&self, device: &Device) -> Yolov8S {
         self.init_with_classes(80, device)
     }
 
-    pub fn init_with_classes<B: Backend>(
-        &self,
-        num_classes: usize,
-        device: &Device<B>,
-    ) -> Yolov8S<B> {
+    pub fn init_with_classes(&self, num_classes: usize, device: &Device) -> Yolov8S {
         Yolov8S {
             body: Yolov8BodySConfig.init(device),
             head: Yolov8HeadConfig::new(128, 256, 512)
@@ -213,17 +203,17 @@ impl Yolov8SConfig {
 
 /// Native Burn YOLOv8m model.
 #[derive(Module, Debug)]
-pub struct Yolov8M<B: Backend> {
-    body: Yolov8Body<B>,
-    head: Yolov8Head<B>,
+pub struct Yolov8M {
+    body: Yolov8Body,
+    head: Yolov8Head,
 }
 
-impl<B: Backend> Yolov8M<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> DecodedPredictions<B> {
+impl Yolov8M {
+    pub fn forward(&self, input: Tensor<4>) -> DecodedPredictions {
         self.head.forward(self.body.forward(input))
     }
 
-    pub fn forward_train(&self, input: Tensor<B, 4>) -> super::head::RawPredictions<B> {
+    pub fn forward_train(&self, input: Tensor<4>) -> super::head::RawPredictions {
         self.head.forward_raw(self.body.forward(input))
     }
 
@@ -240,9 +230,8 @@ impl<B: Backend> Yolov8M<B> {
     /// Load Montgomery's versioned, half-precision native Burnpack artifact.
     #[cfg(feature = "pretrained")]
     pub fn load_burnpack_weights(&mut self, path: impl Into<PathBuf>) -> Result<(), BurnpackError> {
-        let mut store = BurnpackStore::from_file(path.into())
-            .with_from_adapter(HalfPrecisionAdapter::new())
-            .zero_copy(true);
+        let mut store =
+            BurnpackStore::from_file(path.into()).with_from_adapter(HalfPrecisionAdapter::new());
         self.load_from(&mut store).map(|_| ())
     }
 
@@ -268,15 +257,11 @@ impl<B: Backend> Yolov8M<B> {
 pub struct Yolov8MConfig;
 
 impl Yolov8MConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8M<B> {
+    pub fn init(&self, device: &Device) -> Yolov8M {
         self.init_with_classes(80, device)
     }
 
-    pub fn init_with_classes<B: Backend>(
-        &self,
-        num_classes: usize,
-        device: &Device<B>,
-    ) -> Yolov8M<B> {
+    pub fn init_with_classes(&self, num_classes: usize, device: &Device) -> Yolov8M {
         Yolov8M {
             body: Yolov8BodyMConfig.init(device),
             head: Yolov8HeadConfig::new(192, 384, 576)
@@ -288,17 +273,17 @@ impl Yolov8MConfig {
 
 /// Native Burn YOLOv8l model.
 #[derive(Module, Debug)]
-pub struct Yolov8L<B: Backend> {
-    body: Yolov8Body<B>,
-    head: Yolov8Head<B>,
+pub struct Yolov8L {
+    body: Yolov8Body,
+    head: Yolov8Head,
 }
 
-impl<B: Backend> Yolov8L<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> DecodedPredictions<B> {
+impl Yolov8L {
+    pub fn forward(&self, input: Tensor<4>) -> DecodedPredictions {
         self.head.forward(self.body.forward(input))
     }
 
-    pub fn forward_train(&self, input: Tensor<B, 4>) -> super::head::RawPredictions<B> {
+    pub fn forward_train(&self, input: Tensor<4>) -> super::head::RawPredictions {
         self.head.forward_raw(self.body.forward(input))
     }
 
@@ -315,9 +300,8 @@ impl<B: Backend> Yolov8L<B> {
     /// Load Montgomery's versioned, half-precision native Burnpack artifact.
     #[cfg(feature = "pretrained")]
     pub fn load_burnpack_weights(&mut self, path: impl Into<PathBuf>) -> Result<(), BurnpackError> {
-        let mut store = BurnpackStore::from_file(path.into())
-            .with_from_adapter(HalfPrecisionAdapter::new())
-            .zero_copy(true);
+        let mut store =
+            BurnpackStore::from_file(path.into()).with_from_adapter(HalfPrecisionAdapter::new());
         self.load_from(&mut store).map(|_| ())
     }
 
@@ -343,15 +327,11 @@ impl<B: Backend> Yolov8L<B> {
 pub struct Yolov8LConfig;
 
 impl Yolov8LConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8L<B> {
+    pub fn init(&self, device: &Device) -> Yolov8L {
         self.init_with_classes(80, device)
     }
 
-    pub fn init_with_classes<B: Backend>(
-        &self,
-        num_classes: usize,
-        device: &Device<B>,
-    ) -> Yolov8L<B> {
+    pub fn init_with_classes(&self, num_classes: usize, device: &Device) -> Yolov8L {
         Yolov8L {
             body: Yolov8BodyLConfig.init(device),
             head: Yolov8HeadConfig::new(256, 512, 512)
@@ -363,17 +343,17 @@ impl Yolov8LConfig {
 
 /// Native Burn YOLOv8x model.
 #[derive(Module, Debug)]
-pub struct Yolov8X<B: Backend> {
-    body: Yolov8Body<B>,
-    head: Yolov8Head<B>,
+pub struct Yolov8X {
+    body: Yolov8Body,
+    head: Yolov8Head,
 }
 
-impl<B: Backend> Yolov8X<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> DecodedPredictions<B> {
+impl Yolov8X {
+    pub fn forward(&self, input: Tensor<4>) -> DecodedPredictions {
         self.head.forward(self.body.forward(input))
     }
 
-    pub fn forward_train(&self, input: Tensor<B, 4>) -> super::head::RawPredictions<B> {
+    pub fn forward_train(&self, input: Tensor<4>) -> super::head::RawPredictions {
         self.head.forward_raw(self.body.forward(input))
     }
 
@@ -390,9 +370,8 @@ impl<B: Backend> Yolov8X<B> {
     /// Load Montgomery's versioned, half-precision native Burnpack artifact.
     #[cfg(feature = "pretrained")]
     pub fn load_burnpack_weights(&mut self, path: impl Into<PathBuf>) -> Result<(), BurnpackError> {
-        let mut store = BurnpackStore::from_file(path.into())
-            .with_from_adapter(HalfPrecisionAdapter::new())
-            .zero_copy(true);
+        let mut store =
+            BurnpackStore::from_file(path.into()).with_from_adapter(HalfPrecisionAdapter::new());
         self.load_from(&mut store).map(|_| ())
     }
 
@@ -418,15 +397,11 @@ impl<B: Backend> Yolov8X<B> {
 pub struct Yolov8XConfig;
 
 impl Yolov8XConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8X<B> {
+    pub fn init(&self, device: &Device) -> Yolov8X {
         self.init_with_classes(80, device)
     }
 
-    pub fn init_with_classes<B: Backend>(
-        &self,
-        num_classes: usize,
-        device: &Device<B>,
-    ) -> Yolov8X<B> {
+    pub fn init_with_classes(&self, num_classes: usize, device: &Device) -> Yolov8X {
         Yolov8X {
             body: Yolov8BodyXConfig.init(device),
             head: Yolov8HeadConfig::new(320, 640, 640)
@@ -517,17 +492,17 @@ fn pytorch_seg_store(path: impl Into<PathBuf>) -> PytorchStore {
 /// coefficients per anchor to the classic DFL decode. The runtime applies class-aware NMS with
 /// the coefficients carried along.
 #[derive(Module, Debug)]
-pub struct Yolov8SegN<B: Backend> {
-    body: Yolov8Body<B>,
-    head: Yolov8SegHead<B>,
+pub struct Yolov8SegN {
+    body: Yolov8Body,
+    head: Yolov8SegHead,
 }
 
-impl<B: Backend> Yolov8SegN<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> crate::models::yolo11::SegmentOutput<B> {
+impl Yolov8SegN {
+    pub fn forward(&self, input: Tensor<4>) -> crate::models::yolo11::SegmentOutput {
         self.head.forward(self.body.forward(input))
     }
 
-    pub fn forward_train(&self, input: Tensor<B, 4>) -> super::segmentation::SegmentTrainOutput<B> {
+    pub fn forward_train(&self, input: Tensor<4>) -> super::segmentation::SegmentTrainOutput {
         self.head.forward_train(self.body.forward(input))
     }
 
@@ -544,9 +519,8 @@ impl<B: Backend> Yolov8SegN<B> {
     /// Load Montgomery's versioned, half-precision native Burnpack artifact.
     #[cfg(feature = "pretrained")]
     pub fn load_burnpack_weights(&mut self, path: impl Into<PathBuf>) -> Result<(), BurnpackError> {
-        let mut store = BurnpackStore::from_file(path.into())
-            .with_from_adapter(HalfPrecisionAdapter::new())
-            .zero_copy(true);
+        let mut store =
+            BurnpackStore::from_file(path.into()).with_from_adapter(HalfPrecisionAdapter::new());
         self.load_from(&mut store).map(|_| ())
     }
 
@@ -572,15 +546,11 @@ impl<B: Backend> Yolov8SegN<B> {
 pub struct Yolov8SegNConfig;
 
 impl Yolov8SegNConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8SegN<B> {
+    pub fn init(&self, device: &Device) -> Yolov8SegN {
         self.init_with_classes(80, device)
     }
 
-    pub fn init_with_classes<B: Backend>(
-        &self,
-        num_classes: usize,
-        device: &Device<B>,
-    ) -> Yolov8SegN<B> {
+    pub fn init_with_classes(&self, num_classes: usize, device: &Device) -> Yolov8SegN {
         Yolov8SegN {
             body: Yolov8BodyNConfig.init(device),
             head: Yolov8SegHeadConfig::new(64, 128, 256, 64)
@@ -592,17 +562,17 @@ impl Yolov8SegNConfig {
 
 /// Native Burn YOLOv8s-seg model.
 #[derive(Module, Debug)]
-pub struct Yolov8SegS<B: Backend> {
-    body: Yolov8Body<B>,
-    head: Yolov8SegHead<B>,
+pub struct Yolov8SegS {
+    body: Yolov8Body,
+    head: Yolov8SegHead,
 }
 
-impl<B: Backend> Yolov8SegS<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> crate::models::yolo11::SegmentOutput<B> {
+impl Yolov8SegS {
+    pub fn forward(&self, input: Tensor<4>) -> crate::models::yolo11::SegmentOutput {
         self.head.forward(self.body.forward(input))
     }
 
-    pub fn forward_train(&self, input: Tensor<B, 4>) -> super::segmentation::SegmentTrainOutput<B> {
+    pub fn forward_train(&self, input: Tensor<4>) -> super::segmentation::SegmentTrainOutput {
         self.head.forward_train(self.body.forward(input))
     }
 
@@ -619,9 +589,8 @@ impl<B: Backend> Yolov8SegS<B> {
     /// Load Montgomery's versioned, half-precision native Burnpack artifact.
     #[cfg(feature = "pretrained")]
     pub fn load_burnpack_weights(&mut self, path: impl Into<PathBuf>) -> Result<(), BurnpackError> {
-        let mut store = BurnpackStore::from_file(path.into())
-            .with_from_adapter(HalfPrecisionAdapter::new())
-            .zero_copy(true);
+        let mut store =
+            BurnpackStore::from_file(path.into()).with_from_adapter(HalfPrecisionAdapter::new());
         self.load_from(&mut store).map(|_| ())
     }
 
@@ -647,15 +616,11 @@ impl<B: Backend> Yolov8SegS<B> {
 pub struct Yolov8SegSConfig;
 
 impl Yolov8SegSConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8SegS<B> {
+    pub fn init(&self, device: &Device) -> Yolov8SegS {
         self.init_with_classes(80, device)
     }
 
-    pub fn init_with_classes<B: Backend>(
-        &self,
-        num_classes: usize,
-        device: &Device<B>,
-    ) -> Yolov8SegS<B> {
+    pub fn init_with_classes(&self, num_classes: usize, device: &Device) -> Yolov8SegS {
         Yolov8SegS {
             body: Yolov8BodySConfig.init(device),
             head: Yolov8SegHeadConfig::new(128, 256, 512, 128)
@@ -667,17 +632,17 @@ impl Yolov8SegSConfig {
 
 /// Native Burn YOLOv8m-seg model.
 #[derive(Module, Debug)]
-pub struct Yolov8SegM<B: Backend> {
-    body: Yolov8Body<B>,
-    head: Yolov8SegHead<B>,
+pub struct Yolov8SegM {
+    body: Yolov8Body,
+    head: Yolov8SegHead,
 }
 
-impl<B: Backend> Yolov8SegM<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> crate::models::yolo11::SegmentOutput<B> {
+impl Yolov8SegM {
+    pub fn forward(&self, input: Tensor<4>) -> crate::models::yolo11::SegmentOutput {
         self.head.forward(self.body.forward(input))
     }
 
-    pub fn forward_train(&self, input: Tensor<B, 4>) -> super::segmentation::SegmentTrainOutput<B> {
+    pub fn forward_train(&self, input: Tensor<4>) -> super::segmentation::SegmentTrainOutput {
         self.head.forward_train(self.body.forward(input))
     }
 
@@ -694,9 +659,8 @@ impl<B: Backend> Yolov8SegM<B> {
     /// Load Montgomery's versioned, half-precision native Burnpack artifact.
     #[cfg(feature = "pretrained")]
     pub fn load_burnpack_weights(&mut self, path: impl Into<PathBuf>) -> Result<(), BurnpackError> {
-        let mut store = BurnpackStore::from_file(path.into())
-            .with_from_adapter(HalfPrecisionAdapter::new())
-            .zero_copy(true);
+        let mut store =
+            BurnpackStore::from_file(path.into()).with_from_adapter(HalfPrecisionAdapter::new());
         self.load_from(&mut store).map(|_| ())
     }
 
@@ -722,15 +686,11 @@ impl<B: Backend> Yolov8SegM<B> {
 pub struct Yolov8SegMConfig;
 
 impl Yolov8SegMConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8SegM<B> {
+    pub fn init(&self, device: &Device) -> Yolov8SegM {
         self.init_with_classes(80, device)
     }
 
-    pub fn init_with_classes<B: Backend>(
-        &self,
-        num_classes: usize,
-        device: &Device<B>,
-    ) -> Yolov8SegM<B> {
+    pub fn init_with_classes(&self, num_classes: usize, device: &Device) -> Yolov8SegM {
         Yolov8SegM {
             body: Yolov8BodyMConfig.init(device),
             head: Yolov8SegHeadConfig::new(192, 384, 576, 192)
@@ -742,17 +702,17 @@ impl Yolov8SegMConfig {
 
 /// Native Burn YOLOv8l-seg model.
 #[derive(Module, Debug)]
-pub struct Yolov8SegL<B: Backend> {
-    body: Yolov8Body<B>,
-    head: Yolov8SegHead<B>,
+pub struct Yolov8SegL {
+    body: Yolov8Body,
+    head: Yolov8SegHead,
 }
 
-impl<B: Backend> Yolov8SegL<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> crate::models::yolo11::SegmentOutput<B> {
+impl Yolov8SegL {
+    pub fn forward(&self, input: Tensor<4>) -> crate::models::yolo11::SegmentOutput {
         self.head.forward(self.body.forward(input))
     }
 
-    pub fn forward_train(&self, input: Tensor<B, 4>) -> super::segmentation::SegmentTrainOutput<B> {
+    pub fn forward_train(&self, input: Tensor<4>) -> super::segmentation::SegmentTrainOutput {
         self.head.forward_train(self.body.forward(input))
     }
 
@@ -769,9 +729,8 @@ impl<B: Backend> Yolov8SegL<B> {
     /// Load Montgomery's versioned, half-precision native Burnpack artifact.
     #[cfg(feature = "pretrained")]
     pub fn load_burnpack_weights(&mut self, path: impl Into<PathBuf>) -> Result<(), BurnpackError> {
-        let mut store = BurnpackStore::from_file(path.into())
-            .with_from_adapter(HalfPrecisionAdapter::new())
-            .zero_copy(true);
+        let mut store =
+            BurnpackStore::from_file(path.into()).with_from_adapter(HalfPrecisionAdapter::new());
         self.load_from(&mut store).map(|_| ())
     }
 
@@ -797,15 +756,11 @@ impl<B: Backend> Yolov8SegL<B> {
 pub struct Yolov8SegLConfig;
 
 impl Yolov8SegLConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8SegL<B> {
+    pub fn init(&self, device: &Device) -> Yolov8SegL {
         self.init_with_classes(80, device)
     }
 
-    pub fn init_with_classes<B: Backend>(
-        &self,
-        num_classes: usize,
-        device: &Device<B>,
-    ) -> Yolov8SegL<B> {
+    pub fn init_with_classes(&self, num_classes: usize, device: &Device) -> Yolov8SegL {
         Yolov8SegL {
             body: Yolov8BodyLConfig.init(device),
             head: Yolov8SegHeadConfig::new(256, 512, 512, 256)
@@ -817,17 +772,17 @@ impl Yolov8SegLConfig {
 
 /// Native Burn YOLOv8x-seg model.
 #[derive(Module, Debug)]
-pub struct Yolov8SegX<B: Backend> {
-    body: Yolov8Body<B>,
-    head: Yolov8SegHead<B>,
+pub struct Yolov8SegX {
+    body: Yolov8Body,
+    head: Yolov8SegHead,
 }
 
-impl<B: Backend> Yolov8SegX<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> crate::models::yolo11::SegmentOutput<B> {
+impl Yolov8SegX {
+    pub fn forward(&self, input: Tensor<4>) -> crate::models::yolo11::SegmentOutput {
         self.head.forward(self.body.forward(input))
     }
 
-    pub fn forward_train(&self, input: Tensor<B, 4>) -> super::segmentation::SegmentTrainOutput<B> {
+    pub fn forward_train(&self, input: Tensor<4>) -> super::segmentation::SegmentTrainOutput {
         self.head.forward_train(self.body.forward(input))
     }
 
@@ -844,9 +799,8 @@ impl<B: Backend> Yolov8SegX<B> {
     /// Load Montgomery's versioned, half-precision native Burnpack artifact.
     #[cfg(feature = "pretrained")]
     pub fn load_burnpack_weights(&mut self, path: impl Into<PathBuf>) -> Result<(), BurnpackError> {
-        let mut store = BurnpackStore::from_file(path.into())
-            .with_from_adapter(HalfPrecisionAdapter::new())
-            .zero_copy(true);
+        let mut store =
+            BurnpackStore::from_file(path.into()).with_from_adapter(HalfPrecisionAdapter::new());
         self.load_from(&mut store).map(|_| ())
     }
 
@@ -872,15 +826,11 @@ impl<B: Backend> Yolov8SegX<B> {
 pub struct Yolov8SegXConfig;
 
 impl Yolov8SegXConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8SegX<B> {
+    pub fn init(&self, device: &Device) -> Yolov8SegX {
         self.init_with_classes(80, device)
     }
 
-    pub fn init_with_classes<B: Backend>(
-        &self,
-        num_classes: usize,
-        device: &Device<B>,
-    ) -> Yolov8SegX<B> {
+    pub fn init_with_classes(&self, num_classes: usize, device: &Device) -> Yolov8SegX {
         Yolov8SegX {
             body: Yolov8BodyXConfig.init(device),
             head: Yolov8SegHeadConfig::new(320, 640, 640, 320)
@@ -895,12 +845,9 @@ mod tests {
     use super::*;
     use crate::models::yolov8::body::Yolov8Features;
     use burn::tensor::{ElementConversion, TensorData};
-    use burn_flex::Flex;
+
     use serde::Deserialize;
     use std::collections::BTreeMap;
-
-    #[cfg(feature = "gpu")]
-    use burn::backend::Wgpu;
 
     #[derive(Deserialize)]
     struct GoldenFixture {
@@ -919,7 +866,7 @@ mod tests {
         samples: Vec<(usize, f64)>,
     }
 
-    fn assert_golden<const D: usize>(name: &str, actual: Tensor<Flex, D>, expected: &GoldenTensor) {
+    fn assert_golden<const D: usize>(name: &str, actual: Tensor<D>, expected: &GoldenTensor) {
         assert_eq!(actual.dims().to_vec(), expected.shape, "{name} shape");
         let values: Vec<f64> = actual
             .into_data()
@@ -963,11 +910,7 @@ mod tests {
         }
     }
 
-    fn assert_parity_tensors(
-        features: Yolov8Features<Flex>,
-        head: &Yolov8Head<Flex>,
-        fixture: &GoldenFixture,
-    ) {
+    fn assert_parity_tensors(features: Yolov8Features, head: &Yolov8Head, fixture: &GoldenFixture) {
         let p3 = features.p3.clone();
         let p4 = features.p4.clone();
         let p5 = features.p5.clone();
@@ -1003,12 +946,12 @@ mod tests {
         );
     }
 
-    fn load_reference_image(id: &str, device: &Device<Flex>) -> Tensor<Flex, 4> {
+    fn load_reference_image(id: &str, device: &Device) -> Tensor<4> {
         let image = image::open(format!("target/{id}-preprocessed-reference.png"))
             .unwrap()
             .into_rgb8();
         let shape = [image.height() as usize, image.width() as usize, 3];
-        Tensor::<Flex, 3>::from_data(
+        Tensor::<3>::from_data(
             TensorData::new(image.into_raw(), shape).convert::<f32>(),
             device,
         )
@@ -1034,7 +977,7 @@ mod tests {
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
                         let device = Default::default();
-                        let mut model = <$config>::default().init::<Flex>(&device);
+                        let mut model = <$config>::default().init(&device);
                         model.load_pytorch_weights(checkpoint).unwrap();
                         let output = model.forward(Tensor::zeros([1, 3, 64, 64], &device));
                         assert_eq!(output.boxes.dims(), [1, 84, 4]);
@@ -1068,7 +1011,7 @@ mod tests {
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
                         let device = Default::default();
-                        let mut model = <$config>::default().init::<Flex>(&device);
+                        let mut model = <$config>::default().init(&device);
                         model.load_burnpack_weights(checkpoint).unwrap();
                         let input = load_reference_image($id, &device);
                         let features = model.body.forward(input);
@@ -1101,9 +1044,9 @@ mod tests {
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
                         let device = Default::default();
-                        let mut model = <$config>::default().init::<Flex>(&device);
+                        let mut model = <$config>::default().init(&device);
                         model.load_burnpack_weights(checkpoint).unwrap();
-                        let input = Tensor::<Flex, 4>::zeros([1, 3, 640, 640], &device);
+                        let input = Tensor::<4>::zeros([1, 3, 640, 640], &device);
                         const WARMUP_RUNS: usize = 3;
                         const TIMED_RUNS: usize = 10;
 
@@ -1237,9 +1180,9 @@ mod tests {
                 let worker = std::thread::Builder::new()
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
-                        let mut model = <$config>::default().init::<Wgpu>(&device);
+                        let mut model = <$config>::default().init(&device);
                         model.load_burnpack_weights(checkpoint).unwrap();
-                        let input = Tensor::<Wgpu, 4>::zeros([1, 3, 640, 640], &device);
+                        let input = Tensor::<4>::zeros([1, 3, 640, 640], &device);
                         const WARMUP_RUNS: usize = 3;
                         const TIMED_RUNS: usize = 10;
 
@@ -1306,8 +1249,8 @@ mod tests {
     /// Assert one tensor against the fixture at the shared 2e-4 tolerance (segmentation variant
     /// of `assert_parity_tensors`, adding the Proto and mask-coefficient tensors).
     fn assert_seg_parity_tensors(
-        features: Yolov8Features<Flex>,
-        head: &Yolov8SegHead<Flex>,
+        features: Yolov8Features,
+        head: &Yolov8SegHead,
         fixture: &GoldenFixture,
     ) {
         let p3 = features.p3.clone();
@@ -1372,7 +1315,7 @@ mod tests {
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
                         let device = Default::default();
-                        let mut model = <$config>::default().init::<Flex>(&device);
+                        let mut model = <$config>::default().init(&device);
                         model.load_pytorch_weights(checkpoint).unwrap();
                         let output = model.forward(Tensor::zeros([1, 3, 64, 64], &device));
                         assert_eq!(output.boxes.dims(), [1, 84, 4]);
@@ -1408,7 +1351,7 @@ mod tests {
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
                         let device = Default::default();
-                        let mut model = <$config>::default().init::<Flex>(&device);
+                        let mut model = <$config>::default().init(&device);
                         model.load_burnpack_weights(checkpoint).unwrap();
                         let input = load_reference_image($id, &device);
                         let features = model.body.forward(input);
@@ -1441,9 +1384,9 @@ mod tests {
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
                         let device = Default::default();
-                        let mut model = <$config>::default().init::<Flex>(&device);
+                        let mut model = <$config>::default().init(&device);
                         model.load_burnpack_weights(checkpoint).unwrap();
-                        let input = Tensor::<Flex, 4>::zeros([1, 3, 640, 640], &device);
+                        let input = Tensor::<4>::zeros([1, 3, 640, 640], &device);
                         const WARMUP_RUNS: usize = 3;
                         const TIMED_RUNS: usize = 10;
 
@@ -1581,9 +1524,9 @@ mod tests {
                 let worker = std::thread::Builder::new()
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
-                        let mut model = <$config>::default().init::<Wgpu>(&device);
+                        let mut model = <$config>::default().init(&device);
                         model.load_burnpack_weights(checkpoint).unwrap();
-                        let input = Tensor::<Wgpu, 4>::zeros([1, 3, 640, 640], &device);
+                        let input = Tensor::<4>::zeros([1, 3, 640, 640], &device);
                         const WARMUP_RUNS: usize = 3;
                         const TIMED_RUNS: usize = 10;
 

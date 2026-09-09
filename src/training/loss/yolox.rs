@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use burn::tensor::{Tensor, TensorData, backend::Backend};
+use burn::tensor::{Tensor, TensorData};
 
 use crate::{
     models::yolox::RawPredictions,
@@ -110,11 +110,11 @@ fn encode_l1(gt: &GroundTruth, prediction: &AnchorPrediction) -> [f32; 4] {
 /// Differentiable YOLOX criterion with deterministic detached SimOTA assignment.
 ///
 /// Assignment uses detached host values; loss terms stay on the original differentiable graph.
-pub fn tensor_loss<B: Backend>(
-    output: RawPredictions<B>,
+pub fn tensor_loss(
+    output: RawPredictions,
     targets: &[Vec<GroundTruth>],
     use_l1: bool,
-) -> Result<LossOutput<B>, &'static str> {
+) -> Result<LossOutput, &'static str> {
     let [batch, anchors, classes] = output.class_logits.dims();
     if targets.len() != batch || classes == 0 {
         return Err("YOLOX target batch or class count does not match predictions");

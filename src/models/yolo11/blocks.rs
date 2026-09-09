@@ -8,7 +8,6 @@ use burn::{
     tensor::{
         Device, Tensor,
         activation::{silu, softmax},
-        backend::Backend,
         module::interpolate,
         ops::{InterpolateMode, InterpolateOptions},
     },
@@ -19,18 +18,18 @@ use burn::{
 /// Field names deliberately match the official checkpoint (`conv`, `bn`) so imported keys map
 /// onto the native graph without renaming.
 #[derive(Module, Debug)]
-pub struct Conv<B: Backend> {
-    conv: Conv2d<B>,
-    bn: BatchNorm<B>,
+pub struct Conv {
+    conv: Conv2d,
+    bn: BatchNorm,
     act: bool,
     #[cfg(feature = "training")]
     depthwise_training_stencil: bool,
 }
 
-impl<B: Backend> Conv<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> Tensor<B, 4> {
+impl Conv {
+    pub fn forward(&self, input: Tensor<4>) -> Tensor<4> {
         #[cfg(feature = "training")]
-        let x = if self.depthwise_training_stencil && B::ad_enabled(&input.device()) {
+        let x = if self.depthwise_training_stencil && input.is_require_grad() {
             crate::models::training_ops::depthwise_3x3_stride_1(input, self.conv.weight.val())
         } else {
             self.conv.forward(input)
@@ -79,7 +78,7 @@ impl ConvConfig {
         self
     }
 
-    pub(super) fn init<B: Backend>(&self, device: &Device<B>) -> Conv<B> {
+    pub(super) fn init(&self, device: &Device) -> Conv {
         let padding = (self.kernel_size - 1) / 2;
         let conv = Conv2dConfig::new(
             [self.in_channels, self.out_channels],
@@ -117,14 +116,14 @@ impl ConvConfig {
 /// half-width hidden convolution while C3k's inner chain passes `e=1.0`, so the hidden width is
 /// declared per instance instead of derived from the channel count.
 #[derive(Module, Debug)]
-pub struct Bottleneck<B: Backend> {
-    cv1: Conv<B>,
-    cv2: Conv<B>,
+pub struct Bottleneck {
+    cv1: Conv,
+    cv2: Conv,
     add: bool,
 }
 
-impl<B: Backend> Bottleneck<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> Tensor<B, 4> {
+impl Bottleneck {
+    pub fn forward(&self, input: Tensor<4>) -> Tensor<4> {
         let x = self.cv2.forward(self.cv1.forward(input.clone()));
         if self.add { input + x } else { x }
     }
@@ -149,7 +148,7 @@ impl BottleneckConfig {
         }
     }
 
-    pub(super) fn init<B: Backend>(&self, device: &Device<B>) -> Bottleneck<B> {
+    pub(super) fn init(&self, device: &Device) -> Bottleneck {
         Bottleneck {
             cv1: ConvConfig::new(self.channels, self.hidden, 3, 1).init(device),
             cv2: ConvConfig::new(self.hidden, self.channels, 3, 1).init(device),
@@ -160,15 +159,15 @@ impl BottleneckConfig {
 
 /// Ultralytics `C3k`: a C3 block whose full-width bottleneck chain runs on half-width branches.
 #[derive(Module, Debug)]
-pub struct C3k<B: Backend> {
-    cv1: Conv<B>,
-    cv2: Conv<B>,
-    cv3: Conv<B>,
-    m: Vec<Bottleneck<B>>,
+pub struct C3k {
+    cv1: Conv,
+    cv2: Conv,
+    cv3: Conv,
+    m: Vec<Bottleneck>,
 }
 
-impl<B: Backend> C3k<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> Tensor<B, 4> {
+impl C3k {
+    pub fn forward(&self, input: Tensor<4>) -> Tensor<4> {
         let branch = self
             .m
             .iter()
@@ -197,7 +196,7 @@ impl C3kConfig {
         }
     }
 
-    pub(super) fn init<B: Backend>(&self, device: &Device<B>) -> C3k<B> {
+    pub(super) fn init(&self, device: &Device) -> C3k {
         let hidden = self.channels / 2;
         C3k {
             cv1: ConvConfig::new(self.channels, hidden, 1, 1).init(device),
@@ -212,14 +211,14 @@ impl C3kConfig {
 
 /// Ultralytics `C3k2` with the plain bottleneck chain used by the early stages of the n/s scales.
 #[derive(Module, Debug)]
-pub struct C3k2<B: Backend> {
-    cv1: Conv<B>,
-    cv2: Conv<B>,
-    m: Vec<Bottleneck<B>>,
+pub struct C3k2 {
+    cv1: Conv,
+    cv2: Conv,
+    m: Vec<Bottleneck>,
 }
 
-impl<B: Backend> C3k2<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> Tensor<B, 4> {
+impl C3k2 {
+    pub fn forward(&self, input: Tensor<4>) -> Tensor<4> {
         let y = self.cv1.forward(input);
         let [batch, channels, height, width] = y.dims();
         let half = channels / 2;
@@ -261,7 +260,7 @@ impl C3k2Shell {
         }
     }
 
-    fn init_conv<B: Backend>(&self, device: &Device<B>) -> (Conv<B>, Conv<B>) {
+    fn init_conv(&self, device: &Device) -> (Conv, Conv) {
         (
             ConvConfig::new(self.in_channels, 2 * self.hidden, 1, 1).init(device),
             ConvConfig::new((2 + self.repeats) * self.hidden, self.out_channels, 1, 1).init(device),
@@ -288,7 +287,7 @@ impl C3k2Config {
         }
     }
 
-    pub(super) fn init<B: Backend>(&self, device: &Device<B>) -> C3k2<B> {
+    pub(super) fn init(&self, device: &Device) -> C3k2 {
         let (cv1, cv2) = self.shell.init_conv(device);
         // Ultralytics' plain C3k2 bottleneck keeps the default half-width expansion.
         let hidden = self.shell.hidden;
@@ -301,14 +300,14 @@ impl C3k2Config {
 
 /// Ultralytics `C3k2` with a C3k chain, used by every c3k stage of the declared scale.
 #[derive(Module, Debug)]
-pub struct C3k2C3k<B: Backend> {
-    cv1: Conv<B>,
-    cv2: Conv<B>,
-    m: Vec<C3k<B>>,
+pub struct C3k2C3k {
+    cv1: Conv,
+    cv2: Conv,
+    m: Vec<C3k>,
 }
 
-impl<B: Backend> C3k2C3k<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> Tensor<B, 4> {
+impl C3k2C3k {
+    pub fn forward(&self, input: Tensor<4>) -> Tensor<4> {
         let y = self.cv1.forward(input);
         let [batch, channels, height, width] = y.dims();
         let half = channels / 2;
@@ -345,7 +344,7 @@ impl C3k2C3kConfig {
         }
     }
 
-    pub(super) fn init<B: Backend>(&self, device: &Device<B>) -> C3k2C3k<B> {
+    pub(super) fn init(&self, device: &Device) -> C3k2C3k {
         let (cv1, cv2) = self.shell.init_conv(device);
         // Ultralytics builds `C3k(self.c, self.c, 2, shortcut)` for every C3k chain block.
         let m = (0..self.shell.repeats)
@@ -357,18 +356,18 @@ impl C3k2C3kConfig {
 
 /// Ultralytics `Attention`: multi-head self-attention with a depth-wise positional encoding.
 #[derive(Module, Debug)]
-pub struct Attention<B: Backend> {
-    qkv: Conv<B>,
-    proj: Conv<B>,
-    pe: Conv<B>,
+pub struct Attention {
+    qkv: Conv,
+    proj: Conv,
+    pe: Conv,
     num_heads: usize,
     head_dim: usize,
     key_dim: usize,
     scale: f32,
 }
 
-impl<B: Backend> Attention<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> Tensor<B, 4> {
+impl Attention {
+    pub fn forward(&self, input: Tensor<4>) -> Tensor<4> {
         let [batch, channels, height, width] = input.dims();
         let tokens = height * width;
         let kd = self.key_dim;
@@ -411,7 +410,7 @@ impl AttentionConfig {
         }
     }
 
-    pub(super) fn init<B: Backend>(&self, device: &Device<B>) -> Attention<B> {
+    pub(super) fn init(&self, device: &Device) -> Attention {
         let head_dim = self.dim / self.num_heads;
         let key_dim = (head_dim as f32 * self.attn_ratio) as usize;
         let qkv_channels = self.dim + key_dim * self.num_heads * 2;
@@ -439,13 +438,13 @@ impl AttentionConfig {
 /// Every YOLO11 use site keeps Ultralytics' default `shortcut=True`, so the residual adds are
 /// unconditional.
 #[derive(Module, Debug)]
-pub struct PsaBlock<B: Backend> {
-    attn: Attention<B>,
-    ffn: (Conv<B>, Conv<B>),
+pub struct PsaBlock {
+    attn: Attention,
+    ffn: (Conv, Conv),
 }
 
-impl<B: Backend> PsaBlock<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> Tensor<B, 4> {
+impl PsaBlock {
+    pub fn forward(&self, input: Tensor<4>) -> Tensor<4> {
         let x = input.clone() + self.attn.forward(input);
         x.clone() + self.ffn.1.forward(self.ffn.0.forward(x))
     }
@@ -460,7 +459,7 @@ impl PsaBlockConfig {
         Self { dim }
     }
 
-    pub(super) fn init<B: Backend>(&self, device: &Device<B>) -> PsaBlock<B> {
+    pub(super) fn init(&self, device: &Device) -> PsaBlock {
         PsaBlock {
             attn: AttentionConfig::new(self.dim, (self.dim / 64).max(1)).init(device),
             ffn: (
@@ -475,14 +474,14 @@ impl PsaBlockConfig {
 
 /// Ultralytics `C2PSA`: split the projected input and refine one half with PSABlocks.
 #[derive(Module, Debug)]
-pub struct C2Psa<B: Backend> {
-    cv1: Conv<B>,
-    cv2: Conv<B>,
-    m: Vec<PsaBlock<B>>,
+pub struct C2Psa {
+    cv1: Conv,
+    cv2: Conv,
+    m: Vec<PsaBlock>,
 }
 
-impl<B: Backend> C2Psa<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> Tensor<B, 4> {
+impl C2Psa {
+    pub fn forward(&self, input: Tensor<4>) -> Tensor<4> {
         let y = self.cv1.forward(input);
         let [batch, channels, height, width] = y.dims();
         let half = channels / 2;
@@ -505,7 +504,7 @@ impl C2PsaConfig {
         Self { channels, repeats }
     }
 
-    pub(super) fn init<B: Backend>(&self, device: &Device<B>) -> C2Psa<B> {
+    pub(super) fn init(&self, device: &Device) -> C2Psa {
         let hidden = self.channels / 2;
         C2Psa {
             cv1: ConvConfig::new(self.channels, hidden * 2, 1, 1).init(device),
@@ -524,15 +523,15 @@ impl C2PsaConfig {
 /// before the SPPF `act=False` refactor, and the pickled modules still apply SiLU after `cv1` —
 /// the checkpoint's inference graph wins over the current source.
 #[derive(Module, Debug)]
-pub struct Sppf<B: Backend> {
-    cv1: Conv<B>,
-    cv2: Conv<B>,
+pub struct Sppf {
+    cv1: Conv,
+    cv2: Conv,
     pool: MaxPool2d,
     pools: usize,
 }
 
-impl<B: Backend> Sppf<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> Tensor<B, 4> {
+impl Sppf {
+    pub fn forward(&self, input: Tensor<4>) -> Tensor<4> {
         let x = self.cv1.forward(input);
         let mut pooled = vec![x.clone()];
         for _ in 0..self.pools {
@@ -553,7 +552,7 @@ impl SppfConfig {
         Self { channels, pools }
     }
 
-    pub(super) fn init<B: Backend>(&self, device: &Device<B>) -> Sppf<B> {
+    pub(super) fn init(&self, device: &Device) -> Sppf {
         let hidden = self.channels / 2;
         Sppf {
             cv1: ConvConfig::new(self.channels, hidden, 1, 1).init(device),
@@ -568,7 +567,7 @@ impl SppfConfig {
 }
 
 /// Nearest-neighbor 2x upsample used by the neck.
-pub(super) fn upsample_nearest_2x<B: Backend>(input: Tensor<B, 4>) -> Tensor<B, 4> {
+pub(super) fn upsample_nearest_2x(input: Tensor<4>) -> Tensor<4> {
     let [_, _, height, width] = input.dims();
     interpolate(
         input,
@@ -580,7 +579,6 @@ pub(super) fn upsample_nearest_2x<B: Backend>(input: Tensor<B, 4>) -> Tensor<B, 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use burn_flex::Flex;
 
     #[test]
     fn produces_declared_shapes_for_yolo11n_blocks() {
@@ -588,20 +586,19 @@ mod tests {
             .stack_size(32 * 1024 * 1024)
             .spawn(|| {
                 let device = Default::default();
-                let c3k2: C3k2<Flex> = C3k2Config::new(32, 64, 1, 0.25, true).init(&device);
+                let c3k2: C3k2 = C3k2Config::new(32, 64, 1, 0.25, true).init(&device);
                 let out = c3k2.forward(Tensor::zeros([1, 32, 40, 40], &device));
                 assert_eq!(out.dims(), [1, 64, 40, 40]);
 
-                let c3k2_c3k: C3k2C3k<Flex> =
-                    C3k2C3kConfig::new(128, 128, 1, true, 0.5).init(&device);
+                let c3k2_c3k: C3k2C3k = C3k2C3kConfig::new(128, 128, 1, true, 0.5).init(&device);
                 let out = c3k2_c3k.forward(Tensor::zeros([1, 128, 20, 20], &device));
                 assert_eq!(out.dims(), [1, 128, 20, 20]);
 
-                let sppf: Sppf<Flex> = SppfConfig::new(256, 3).init(&device);
+                let sppf: Sppf = SppfConfig::new(256, 3).init(&device);
                 let out = sppf.forward(Tensor::zeros([1, 256, 10, 10], &device));
                 assert_eq!(out.dims(), [1, 256, 10, 10]);
 
-                let c2_psa: C2Psa<Flex> = C2PsaConfig::new(256, 1).init(&device);
+                let c2_psa: C2Psa = C2PsaConfig::new(256, 1).init(&device);
                 let out = c2_psa.forward(Tensor::zeros([1, 256, 10, 10], &device));
                 assert_eq!(out.dims(), [1, 256, 10, 10]);
             })

@@ -1,7 +1,3 @@
-use serde::{Deserialize, Serialize};
-
-use burn::tensor::backend::AutodiffBackend;
-
 use crate::{
     ModelId,
     models::{
@@ -30,6 +26,7 @@ use crate::{
         loss::{classification, segmentation, ultralytics_detect, yolox},
     },
 };
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -110,9 +107,7 @@ pub const fn recipe_for(model: ModelId) -> TrainingRecipe {
     }
 }
 
-fn detection_targets<B: burn::tensor::backend::Backend>(
-    batch: &DetectionBatch<B>,
-) -> Result<&[Vec<TalGroundTruth>], String> {
+fn detection_targets(batch: &DetectionBatch) -> Result<&[Vec<TalGroundTruth>], String> {
     let images = batch.images.dims()[0];
     if batch.targets.len() != images {
         return Err("host target batch size differs from image batch".into());
@@ -120,14 +115,14 @@ fn detection_targets<B: burn::tensor::backend::Backend>(
     Ok(&batch.targets)
 }
 
-impl<B: AutodiffBackend> TrainableTask<B> for Yolox<B> {
-    type Batch = DetectionBatch<B>;
+impl TrainableTask for Yolox {
+    type Batch = DetectionBatch;
 
     fn forward_loss(
         &self,
         batch: &Self::Batch,
         context: LossContext,
-    ) -> Result<crate::training::loss::common::LossOutput<B>, String> {
+    ) -> Result<crate::training::loss::common::LossOutput, String> {
         let tal = detection_targets(batch)?;
         let targets = tal
             .iter()
@@ -152,13 +147,13 @@ impl<B: AutodiffBackend> TrainableTask<B> for Yolox<B> {
 
 macro_rules! classification_task {
     ($($model:ty),+ $(,)?) => {$ (
-        impl<B: AutodiffBackend> TrainableTask<B> for $model {
-            type Batch = ClassificationBatch<B>;
+        impl TrainableTask for $model {
+            type Batch = ClassificationBatch;
             fn forward_loss(
                 &self,
                 batch: &Self::Batch,
                 _context: LossContext,
-            ) -> Result<crate::training::loss::common::LossOutput<B>, String> {
+            ) -> Result<crate::training::loss::common::LossOutput, String> {
                 classification::tensor_loss(
                     self.forward_train(batch.images.clone()),
                     batch.classes.clone(),
@@ -170,31 +165,18 @@ macro_rules! classification_task {
 }
 
 classification_task!(
-    Yolo11ClsN<B>,
-    Yolo11ClsS<B>,
-    Yolo11ClsM<B>,
-    Yolo11ClsL<B>,
-    Yolo11ClsX<B>,
-    Yolo26ClsN<B>,
-    Yolo26ClsS<B>,
-    Yolo26ClsM<B>,
-    Yolo26ClsL<B>,
-    Yolo26ClsX<B>,
-    Yolov8ClsN<B>,
-    Yolov8ClsS<B>,
-    Yolov8ClsM<B>,
-    Yolov8ClsL<B>,
-    Yolov8ClsX<B>,
+    Yolo11ClsN, Yolo11ClsS, Yolo11ClsM, Yolo11ClsL, Yolo11ClsX, Yolo26ClsN, Yolo26ClsS, Yolo26ClsM,
+    Yolo26ClsL, Yolo26ClsX, Yolov8ClsN, Yolov8ClsS, Yolov8ClsM, Yolov8ClsL, Yolov8ClsX,
 );
 
-impl<B: AutodiffBackend> TrainableTask<B> for Yolov3Tiny<B> {
-    type Batch = DetectionBatch<B>;
+impl TrainableTask for Yolov3Tiny {
+    type Batch = DetectionBatch;
 
     fn forward_loss(
         &self,
         batch: &Self::Batch,
         _context: LossContext,
-    ) -> Result<crate::training::loss::common::LossOutput<B>, String> {
+    ) -> Result<crate::training::loss::common::LossOutput, String> {
         let [_, _, height, width] = batch.images.dims();
         let output = self.forward_train(batch.images.clone());
         ultralytics_detect::tensor_loss(
@@ -221,13 +203,13 @@ impl<B: AutodiffBackend> TrainableTask<B> for Yolov3Tiny<B> {
 
 macro_rules! yolo11_detect_task {
     ($($model:ty),+ $(,)?) => {$ (
-        impl<B: AutodiffBackend> TrainableTask<B> for $model {
-            type Batch = DetectionBatch<B>;
+        impl TrainableTask for $model {
+            type Batch = DetectionBatch;
             fn forward_loss(
                 &self,
                 batch: &Self::Batch,
                 _context: LossContext,
-            ) -> Result<crate::training::loss::common::LossOutput<B>, String> {
+            ) -> Result<crate::training::loss::common::LossOutput, String> {
                 let [_, _, height, width] = batch.images.dims();
                 let output = self.forward_train(batch.images.clone());
                 ultralytics_detect::tensor_loss(
@@ -248,28 +230,15 @@ macro_rules! yolo11_detect_task {
 }
 
 yolo11_detect_task!(
-    Yolo11N<B>,
-    Yolo11S<B>,
-    Yolo11M<B>,
-    Yolo11L<B>,
-    Yolo11X<B>,
-    Yolov8N<B>,
-    Yolov8S<B>,
-    Yolov8M<B>,
-    Yolov8L<B>,
-    Yolov8X<B>,
-    Yolo12N<B>,
-    Yolo12S<B>,
-    Yolo12M<B>,
-    Yolo12L<B>,
-    Yolo12X<B>,
+    Yolo11N, Yolo11S, Yolo11M, Yolo11L, Yolo11X, Yolov8N, Yolov8S, Yolov8M, Yolov8L, Yolov8X,
+    Yolo12N, Yolo12S, Yolo12M, Yolo12L, Yolo12X,
 );
 
-fn combine_dual<B: burn::tensor::backend::Backend>(
-    mut one_to_many: crate::training::loss::common::LossOutput<B>,
-    mut one_to_one: crate::training::loss::common::LossOutput<B>,
+fn combine_dual(
+    mut one_to_many: crate::training::loss::common::LossOutput,
+    mut one_to_one: crate::training::loss::common::LossOutput,
     weights: [f32; 2],
-) -> crate::training::loss::common::LossOutput<B> {
+) -> crate::training::loss::common::LossOutput {
     let has_deferred_total = one_to_many.has_deferred_total() || one_to_one.has_deferred_total();
     let mut components = std::collections::BTreeMap::new();
     for (name, value) in one_to_many.components {
@@ -313,14 +282,14 @@ fn combine_dual<B: burn::tensor::backend::Backend>(
 
 macro_rules! dual_detect_task {
     ($config:ident, $forward:literal; $($model:ty),+ $(,)?) => {$ (
-        impl<B: AutodiffBackend> TrainableTask<B> for $model {
-            type Batch = DetectionBatch<B>;
+        impl TrainableTask for $model {
+            type Batch = DetectionBatch;
 
             fn forward_loss(
                 &self,
                 batch: &Self::Batch,
                 context: LossContext,
-            ) -> Result<crate::training::loss::common::LossOutput<B>, String> {
+            ) -> Result<crate::training::loss::common::LossOutput, String> {
                 let [_, _, height, width] = batch.images.dims();
                 let output = self.forward_train_dual(batch.images.clone());
                 let levels = [
@@ -354,20 +323,20 @@ macro_rules! dual_detect_task {
 }
 
 // YOLOv10 uses equal-weight dual DFL loss with one-to-one top-k 1.
-dual_detect_task!(dfl, 1; Yolov10N<B>, Yolov10S<B>, Yolov10M<B>, Yolov10B<B>, Yolov10L<B>, Yolov10X<B>);
+dual_detect_task!(dfl, 1; Yolov10N, Yolov10S, Yolov10M, Yolov10B, Yolov10L, Yolov10X);
 // YOLO26 is DFL-free and follows the persisted epoch-decaying E2E weighting schedule.
-dual_detect_task!(direct, 7; Yolo26N<B>, Yolo26S<B>, Yolo26M<B>, Yolo26L<B>, Yolo26X<B>);
+dual_detect_task!(direct, 7; Yolo26N, Yolo26S, Yolo26M, Yolo26L, Yolo26X);
 
 macro_rules! yolo11_segment_task {
     ($($model:ty),+ $(,)?) => {$ (
-        impl<B: AutodiffBackend> TrainableTask<B> for $model {
-            type Batch = SegmentationBatch<B>;
+        impl TrainableTask for $model {
+            type Batch = SegmentationBatch;
 
             fn forward_loss(
                 &self,
                 batch: &Self::Batch,
                 _context: LossContext,
-            ) -> Result<crate::training::loss::common::LossOutput<B>, String> {
+            ) -> Result<crate::training::loss::common::LossOutput, String> {
                 let [_, _, height, width] = batch.detection.images.dims();
                 let output = self.forward_train(batch.detection.images.clone());
                 let (mut detection, matches) = ultralytics_detect::tensor_loss_with_matches(
@@ -398,28 +367,20 @@ macro_rules! yolo11_segment_task {
 }
 
 yolo11_segment_task!(
-    Yolo11SegN<B>,
-    Yolo11SegS<B>,
-    Yolo11SegM<B>,
-    Yolo11SegL<B>,
-    Yolo11SegX<B>,
-    Yolov8SegN<B>,
-    Yolov8SegS<B>,
-    Yolov8SegM<B>,
-    Yolov8SegL<B>,
-    Yolov8SegX<B>,
+    Yolo11SegN, Yolo11SegS, Yolo11SegM, Yolo11SegL, Yolo11SegX, Yolov8SegN, Yolov8SegS, Yolov8SegM,
+    Yolov8SegL, Yolov8SegX,
 );
 
 macro_rules! yolo26_segment_task {
     ($($model:ty),+ $(,)?) => {$ (
-        impl<B: AutodiffBackend> TrainableTask<B> for $model {
-            type Batch = SegmentationBatch<B>;
+        impl TrainableTask for $model {
+            type Batch = SegmentationBatch;
 
             fn forward_loss(
                 &self,
                 batch: &Self::Batch,
                 context: LossContext,
-            ) -> Result<crate::training::loss::common::LossOutput<B>, String> {
+            ) -> Result<crate::training::loss::common::LossOutput, String> {
                 let [_, _, height, width] = batch.detection.images.dims();
                 let output = self.forward_train(batch.detection.images.clone());
                 let levels = [
@@ -482,13 +443,7 @@ macro_rules! yolo26_segment_task {
     )+ };
 }
 
-yolo26_segment_task!(
-    Yolo26SegN<B>,
-    Yolo26SegS<B>,
-    Yolo26SegM<B>,
-    Yolo26SegL<B>,
-    Yolo26SegX<B>,
-);
+yolo26_segment_task!(Yolo26SegN, Yolo26SegS, Yolo26SegM, Yolo26SegL, Yolo26SegX,);
 
 #[cfg(test)]
 mod tests {
@@ -506,10 +461,9 @@ mod tests {
     fn detached_targets_use_the_host_batch() {
         use crate::training::geometry::BoxXyxy;
         use burn::tensor::Tensor;
-        use burn_flex::Flex;
 
         let device = Default::default();
-        let batch = DetectionBatch::<Flex> {
+        let batch = DetectionBatch {
             images: Tensor::zeros([1, 3, 8, 8], &device),
             targets: vec![vec![TalGroundTruth {
                 class_id: 7,
@@ -527,25 +481,23 @@ mod tests {
     #[test]
     fn yolo26_one_to_one_features_are_detached_from_body() {
         use burn::{
-            backend::Autodiff,
             module::{Module, ModuleVisitor, Param, ParamId},
             optim::GradientsParams,
             tensor::Tensor,
         };
-        use burn_flex::Flex;
 
         struct Paths {
             body: Vec<ParamId>,
             stack: Vec<String>,
         }
-        impl<B: burn::tensor::backend::Backend> ModuleVisitor<B> for Paths {
+        impl ModuleVisitor for Paths {
             fn enter_module(&mut self, name: &str, _container_type: &str) {
                 self.stack.push(name.to_owned());
             }
             fn exit_module(&mut self, _name: &str, _container_type: &str) {
                 self.stack.pop();
             }
-            fn visit_float<const D: usize>(&mut self, param: &Param<Tensor<B, D>>) {
+            fn visit_float<const D: usize>(&mut self, param: &Param<Tensor<D>>) {
                 if self.stack.iter().any(|part| part == "body") {
                     self.body.push(param.id);
                 }
@@ -555,9 +507,8 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(64 * 1024 * 1024)
             .spawn(|| {
-                type B = Autodiff<Flex>;
-                let device = Default::default();
-                let model = crate::models::yolo26::Yolo26NConfig.init::<B>(&device);
+                let device = burn::tensor::Device::default().autodiff();
+                let model = crate::models::yolo26::Yolo26NConfig.init(&device);
                 let mut paths = Paths {
                     body: Vec::new(),
                     stack: Vec::new(),

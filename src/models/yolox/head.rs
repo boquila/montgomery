@@ -5,7 +5,7 @@ use burn::{
         Initializer, PaddingConfig2d,
         conv::{Conv2d, Conv2dConfig},
     },
-    tensor::{Device, Int, Shape, Tensor, activation::sigmoid, backend::Backend},
+    tensor::{Device, Int, Shape, Tensor, activation::sigmoid},
 };
 use itertools::{izip, multiunzip};
 
@@ -21,7 +21,7 @@ const PRIOR_PROB: f64 = 1e-2;
 /// Create a 2D coordinate grid for the specified dimensions.
 /// Similar to [`numpy.indices`](https://numpy.org/doc/stable/reference/generated/numpy.indices.html)
 /// but specific to two dimensions.
-fn create_2d_grid<B: Backend>(x: usize, y: usize, device: &Device<B>) -> Tensor<B, 3, Int> {
+fn create_2d_grid(x: usize, y: usize, device: &Device) -> Tensor<3, Int> {
     let y_idx = Tensor::arange(0..y as i64, device)
         .reshape::<2, _>(Shape::new([y, 1]))
         .repeat_dim(1, x)
@@ -36,13 +36,13 @@ fn create_2d_grid<B: Backend>(x: usize, y: usize, device: &Device<B>) -> Tensor<
 
 /// YOLOX head.
 #[derive(Module, Debug)]
-pub struct Head<B: Backend> {
-    stems: Vec<BaseConv<B>>,
-    cls_convs: Vec<ConvBlock<B>>,
-    reg_convs: Vec<ConvBlock<B>>,
-    cls_preds: Vec<Conv2d<B>>,
-    reg_preds: Vec<Conv2d<B>>,
-    obj_preds: Vec<Conv2d<B>>,
+pub struct Head {
+    stems: Vec<BaseConv>,
+    cls_convs: Vec<ConvBlock>,
+    reg_convs: Vec<ConvBlock>,
+    cls_preds: Vec<Conv2d>,
+    reg_preds: Vec<Conv2d>,
+    obj_preds: Vec<Conv2d>,
     num_classes: usize,
 }
 
@@ -55,20 +55,20 @@ pub struct FeatureLevelShape {
 }
 
 /// Raw YOLOX predictions consumed by SimOTA and the native loss.
-pub struct RawPredictions<B: Backend> {
+pub struct RawPredictions {
     /// Raw center offsets and log-width/log-height, `[batch, anchors, 4]`.
-    pub regression: Tensor<B, 3>,
+    pub regression: Tensor<3>,
     /// Raw objectness logits, `[batch, anchors, 1]`.
-    pub objectness_logits: Tensor<B, 3>,
+    pub objectness_logits: Tensor<3>,
     /// Raw class logits, `[batch, anchors, classes]`.
-    pub class_logits: Tensor<B, 3>,
+    pub class_logits: Tensor<3>,
     /// Differentiably decoded center-size boxes in canvas pixels, `[batch, anchors, 4]`.
-    pub decoded_boxes: Tensor<B, 3>,
+    pub decoded_boxes: Tensor<3>,
     pub levels: [FeatureLevelShape; 3],
 }
 
-impl<B: Backend> Head<B> {
-    pub fn forward(&self, x: FpnFeatures<B>) -> Tensor<B, 3> {
+impl Head {
+    pub fn forward(&self, x: FpnFeatures) -> Tensor<3> {
         let raw = self.forward_train(x);
         Tensor::cat(
             vec![
@@ -81,11 +81,11 @@ impl<B: Backend> Head<B> {
     }
 
     /// Run the shared towers without sigmoid or post-processing.
-    pub fn forward_train(&self, x: FpnFeatures<B>) -> RawPredictions<B> {
-        let features: [Tensor<B, 4>; 3] = [x.0, x.1, x.2];
+    pub fn forward_train(&self, x: FpnFeatures) -> RawPredictions {
+        let features: [Tensor<4>; 3] = [x.0, x.1, x.2];
 
         // Outputs for each feature map
-        let (outputs, shapes): (Vec<Tensor<B, 3>>, Vec<(usize, usize)>) = izip!(
+        let (outputs, shapes): (Vec<Tensor<3>>, Vec<(usize, usize)>) = izip!(
             features,
             &self.stems,
             &self.cls_convs,
@@ -135,7 +135,7 @@ impl<B: Backend> Head<B> {
     }
 
     /// Decode bounding box absolute values from regression output offsets.
-    fn decode_boxes(&self, outputs: Tensor<B, 3>, shapes: &[(usize, usize)]) -> Tensor<B, 3> {
+    fn decode_boxes(&self, outputs: Tensor<3>, shapes: &[(usize, usize)]) -> Tensor<3> {
         let device = outputs.device();
         let [b, num_anchors, _] = outputs.dims();
 
@@ -145,9 +145,8 @@ impl<B: Backend> Head<B> {
             .map(|((h, w), stride)| {
                 // Grid (x, y) coordinates
                 let num_anchors = w * h;
-                let grid =
-                    create_2d_grid::<B>(*w, *h, &device).reshape(Shape::new([1, num_anchors, 2]));
-                let strides: Tensor<B, 3, Int> =
+                let grid = create_2d_grid(*w, *h, &device).reshape(Shape::new([1, num_anchors, 2]));
+                let strides: Tensor<3, Int> =
                     Tensor::full(Shape::new([1, num_anchors, 1]), stride as i64, &device);
 
                 (grid, strides)
@@ -227,7 +226,7 @@ impl HeadConfig {
     }
 
     /// Initialize a new [YOLOX head](Head) module.
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Head<B> {
+    pub fn init(&self, device: &Device) -> Head {
         Head {
             stems: self.stems.iter().map(|m| m.init(device)).collect(),
             cls_convs: self.cls_convs.iter().map(|m| m.init(device)).collect(),

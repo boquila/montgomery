@@ -7,14 +7,12 @@ use std::{
 };
 
 use burn::{
-    backend::{Autodiff, Wgpu},
     module::Module,
-    optim::{Optimizer, SgdConfig, momentum::MomentumConfig},
+    optim::{SgdConfig, momentum::MomentumConfig},
+    tensor::Device,
     tensor::Tensor,
-    tensor::backend::Backend,
 };
 use burn_store::{ModuleSnapshot, PathFilter};
-use cubecl::Runtime as _;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -67,8 +65,6 @@ use crate::{
     },
 };
 
-type TrainBackend = Autodiff<Wgpu>;
-
 impl<T> EpochBatchSource<T> for VecDeque<T> {
     fn batch_count(&self) -> usize {
         self.len()
@@ -96,11 +92,11 @@ fn prefetch_sample_capacity(batch_size: usize, prefetch: usize) -> usize {
     batch_size.saturating_mul(prefetch).max(1)
 }
 
-struct ClassificationBatchSource<'a, B: Backend> {
+struct ClassificationBatchSource<'a> {
     config: &'a TrainingConfig,
     dataset: &'a crate::training::data::ResolvedDataset,
     images: &'a [PathBuf],
-    device: &'a B::Device,
+    device: &'a Device,
     pipeline: ClassificationPipeline,
     order: Vec<usize>,
     epoch: u64,
@@ -108,12 +104,12 @@ struct ClassificationBatchSource<'a, B: Backend> {
     pending: VecDeque<(FormattedClassificationBatch, Vec<ImageMeta>)>,
 }
 
-impl<'a, B: Backend> ClassificationBatchSource<'a, B> {
+impl<'a> ClassificationBatchSource<'a> {
     fn new(
         config: &'a TrainingConfig,
         dataset: &'a crate::training::data::ResolvedDataset,
         images: &'a [PathBuf],
-        device: &'a B::Device,
+        device: &'a Device,
         epoch: u64,
         training: bool,
     ) -> Result<Self, Box<dyn Error + Send + Sync>> {
@@ -207,12 +203,12 @@ impl<'a, B: Backend> ClassificationBatchSource<'a, B> {
     }
 }
 
-impl<B: Backend> EpochBatchSource<ClassificationBatch<B>> for ClassificationBatchSource<'_, B> {
+impl EpochBatchSource<ClassificationBatch> for ClassificationBatchSource<'_> {
     fn batch_count(&self) -> usize {
         self.images.len().div_ceil(self.config.batch_size)
     }
 
-    fn next_batch(&mut self) -> Result<Option<ClassificationBatch<B>>, String> {
+    fn next_batch(&mut self) -> Result<Option<ClassificationBatch>, String> {
         if self.pending.is_empty() {
             self.refill().map_err(|error| error.to_string())?;
         }
@@ -664,16 +660,16 @@ fn prepare_vision_sample(
     Ok((logical_position, sample, metadata))
 }
 
-struct DetectionBatchSource<'a, B: Backend> {
+struct DetectionBatchSource<'a> {
     formatter: VisionEpochFormatter<'a>,
-    device: &'a B::Device,
+    device: &'a Device,
 }
 
-impl<'a, B: Backend> DetectionBatchSource<'a, B> {
+impl<'a> DetectionBatchSource<'a> {
     fn new(
         config: &'a TrainingConfig,
         images: &'a [PathBuf],
-        device: &'a B::Device,
+        device: &'a Device,
         epoch: u64,
         loader: VisionSampleLoader<'a>,
         training: bool,
@@ -693,12 +689,12 @@ impl<'a, B: Backend> DetectionBatchSource<'a, B> {
     }
 }
 
-impl<B: Backend> EpochBatchSource<DetectionBatch<B>> for DetectionBatchSource<'_, B> {
+impl EpochBatchSource<DetectionBatch> for DetectionBatchSource<'_> {
     fn batch_count(&self) -> usize {
         self.formatter.batch_count()
     }
 
-    fn next_batch(&mut self) -> Result<Option<DetectionBatch<B>>, String> {
+    fn next_batch(&mut self) -> Result<Option<DetectionBatch>, String> {
         self.formatter
             .next_formatted()?
             .map(|(samples, metadata)| {
@@ -708,16 +704,16 @@ impl<B: Backend> EpochBatchSource<DetectionBatch<B>> for DetectionBatchSource<'_
     }
 }
 
-struct SegmentationBatchSource<'a, B: Backend> {
+struct SegmentationBatchSource<'a> {
     formatter: VisionEpochFormatter<'a>,
-    device: &'a B::Device,
+    device: &'a Device,
 }
 
-impl<'a, B: Backend> SegmentationBatchSource<'a, B> {
+impl<'a> SegmentationBatchSource<'a> {
     fn new(
         config: &'a TrainingConfig,
         images: &'a [PathBuf],
-        device: &'a B::Device,
+        device: &'a Device,
         epoch: u64,
         loader: VisionSampleLoader<'a>,
         training: bool,
@@ -738,12 +734,12 @@ impl<'a, B: Backend> SegmentationBatchSource<'a, B> {
     }
 }
 
-impl<B: Backend> EpochBatchSource<SegmentationBatch<B>> for SegmentationBatchSource<'_, B> {
+impl EpochBatchSource<SegmentationBatch> for SegmentationBatchSource<'_> {
     fn batch_count(&self) -> usize {
         self.formatter.batch_count()
     }
 
-    fn next_batch(&mut self) -> Result<Option<SegmentationBatch<B>>, String> {
+    fn next_batch(&mut self) -> Result<Option<SegmentationBatch>, String> {
         self.formatter
             .next_formatted()?
             .map(|(samples, metadata)| segmentation_into_device(&samples, metadata, self.device))
@@ -803,14 +799,13 @@ fn keep_without_yolo26_segment_classes(path: &str, container: &str) -> bool {
     keep_without_detector_classes(path, container) && !path.starts_with("head.proto.sem_out.")
 }
 
-fn transfer_pretrained<B, M>(
+fn transfer_pretrained<M>(
     mut target: M,
     official: &M,
     projection: ReplacedProjection,
 ) -> Result<M, Box<dyn Error + Send + Sync>>
 where
-    B: Backend,
-    M: Module<B>,
+    M: Module,
 {
     let snapshots = official.collect(None, None, false);
     let result = target.apply(
@@ -1002,7 +997,8 @@ fn train_inner(
         );
     }
     let (device, adapter) = crate::default_wgpu_device();
-    TrainBackend::seed(&device, config.seed);
+    let device = device.autodiff();
+    device.seed(config.seed);
     eprintln!("Training adapter: {adapter}");
     let epoch = resume_manifest
         .as_ref()
@@ -1590,7 +1586,7 @@ struct RunTaskOptions<'a> {
     dry_run: bool,
     probe_only: bool,
     resume: Option<&'a PathBuf>,
-    device: &'a burn::tensor::Device<TrainBackend>,
+    device: &'a burn::tensor::Device,
 }
 
 fn run_task<M, F, S, V>(
@@ -1602,10 +1598,10 @@ fn run_task<M, F, S, V>(
     options: RunTaskOptions<'_>,
 ) -> Result<PathBuf, Box<dyn Error + Send + Sync>>
 where
-    M: TrainableTask<TrainBackend> + Clone,
+    M: TrainableTask + Clone,
     F: FnMut(u64) -> Result<S, Box<dyn Error + Send + Sync>>,
     S: EpochBatchSource<M::Batch>,
-    V: FnMut(M::InnerModule) -> Result<ValidationSummary, Box<dyn Error + Send + Sync>>,
+    V: FnMut(M) -> Result<ValidationSummary, Box<dyn Error + Send + Sync>>,
 {
     if options.dry_run {
         let batch = batches
@@ -1644,10 +1640,7 @@ where
     match trainer.config.optimizer {
         OptimizerKind::AdamW => {
             let optimizer = (
-                crate::training::optimizer::selective_adamw::<TrainBackend, M>(
-                    weight_decay,
-                    gradient_clip,
-                ),
+                crate::training::optimizer::selective_adamw(weight_decay, gradient_clip),
                 false,
             );
             if options.probe_only {
@@ -1736,17 +1729,16 @@ where
     }
 }
 
-fn probe_task_with_optimizer<M, O, F, S>(
+fn probe_task_with_optimizer<M, F, S>(
     mut model: M,
     mut trainer: Trainer,
     batches: S,
     mut rebuild_batches: F,
     options: RunTaskOptions<'_>,
-    optimizer: (O, bool),
+    optimizer: (burn::optim::ModuleOptimizer, bool),
 ) -> Result<PathBuf, Box<dyn Error + Send + Sync>>
 where
-    M: TrainableTask<TrainBackend> + Clone,
-    O: Optimizer<M, TrainBackend>,
+    M: TrainableTask + Clone,
     F: FnMut(u64) -> Result<S, Box<dyn Error + Send + Sync>>,
     S: EpochBatchSource<M::Batch>,
 {
@@ -1755,15 +1747,15 @@ where
     let mut ema_state = crate::training::ema::EmaState::new(0.9999)?;
     ema_state.updates = trainer.state.ema_updates;
     if let Some(path) = options.resume {
-        model = model.load_record(decode_record::<TrainBackend, _>(
+        model = model.load_record(decode_record(
             std::fs::read(path.join("model.bin"))?,
             options.device,
         )?);
-        optimizer = optimizer.load_record(decode_record::<TrainBackend, _>(
+        optimizer = optimizer.load_record(decode_record(
             std::fs::read(path.join("optimizer.bin"))?,
             options.device,
         )?);
-        ema_model = ema_model.load_record(decode_record::<TrainBackend, _>(
+        ema_model = ema_model.load_record(decode_record(
             std::fs::read(path.join("ema.bin"))?,
             options.device,
         )?);
@@ -1775,7 +1767,7 @@ where
         limit,
         yielded: 0,
     };
-    let (model, optimizer, _) = trainer.train_epoch::<TrainBackend, _, _, _, _>(
+    let (model, optimizer, _) = trainer.train_epoch(
         model,
         optimizer,
         &mut batches,
@@ -1795,7 +1787,7 @@ where
         limit,
         yielded: 0,
     };
-    let (model, optimizer, _) = trainer.train_epoch::<TrainBackend, _, _, _, _>(
+    let (model, optimizer, _) = trainer.train_epoch(
         model,
         optimizer,
         &mut next,
@@ -1806,34 +1798,25 @@ where
             Ok(())
         },
     )?;
-    TrainBackend::sync(options.device).map_err(|error| error.to_string())?;
-    let client = burn::backend::wgpu::WgpuRuntime::client(options.device);
-    if let Ok(usage) = client.memory_usage() {
-        eprintln!(
-            "AutoBatch probe allocator reservation after two steps: {:.2} GiB ({:.2} GiB active)",
-            usage.bytes_reserved as f64 / 1024.0_f64.powi(3),
-            usage.bytes_in_use as f64 / 1024.0_f64.powi(3),
-        );
-    }
+    options.device.sync().map_err(|error| error.to_string())?;
     std::hint::black_box((&model, &optimizer, &ema_model));
     Ok(trainer.run.root)
 }
 
-fn run_task_with_optimizer<M, O, F, S, V>(
+fn run_task_with_optimizer<M, F, S, V>(
     mut model: M,
     mut trainer: Trainer,
     mut batches: S,
     mut rebuild_batches: F,
     options: RunTaskOptions<'_>,
     mut validator: V,
-    optimizer: (O, bool),
+    optimizer: (burn::optim::ModuleOptimizer, bool),
 ) -> Result<PathBuf, Box<dyn Error + Send + Sync>>
 where
-    M: TrainableTask<TrainBackend> + Clone,
-    O: Optimizer<M, TrainBackend>,
+    M: TrainableTask + Clone,
     F: FnMut(u64) -> Result<S, Box<dyn Error + Send + Sync>>,
     S: EpochBatchSource<M::Batch>,
-    V: FnMut(M::InnerModule) -> Result<ValidationSummary, Box<dyn Error + Send + Sync>>,
+    V: FnMut(M) -> Result<ValidationSummary, Box<dyn Error + Send + Sync>>,
 {
     let (mut optimizer, external_weight_decay) = optimizer;
     let profile_training = std::env::var_os("MONTGOMERY_PROFILE_TRAINING").is_some();
@@ -1843,21 +1826,14 @@ where
     if let Some(path) = options.resume {
         let model_bytes = std::fs::read(path.join("model.bin"))?;
         let optimizer_bytes = std::fs::read(path.join("optimizer.bin"))?;
-        model = model.load_record(decode_record::<TrainBackend, _>(
-            model_bytes,
-            options.device,
-        )?);
-        optimizer = optimizer.load_record(decode_record::<TrainBackend, _>(
-            optimizer_bytes,
-            options.device,
-        )?);
+        model = model.load_record(decode_record(model_bytes, options.device)?);
+        optimizer = optimizer.load_record(decode_record(optimizer_bytes, options.device)?);
         let ema_bytes = std::fs::read(path.join("ema.bin"))?;
-        ema_model =
-            ema_model.load_record(decode_record::<TrainBackend, _>(ema_bytes, options.device)?);
+        ema_model = ema_model.load_record(decode_record(ema_bytes, options.device)?);
     }
     let mut pending_checkpoint: Option<PendingCheckpoint> = None;
     while trainer.state.epoch < trainer.config.epochs {
-        let result = trainer.train_epoch::<TrainBackend, _, _, _, _>(
+        let result = trainer.train_epoch(
             model,
             optimizer,
             &mut batches,
@@ -1945,10 +1921,9 @@ where
             // in parallel avoids three fully serialized GPU-to-host readback passes.
             let (model_bytes, ema_bytes, optimizer_bytes) =
                 std::thread::scope(|scope| -> Result<_, Box<dyn Error + Send + Sync>> {
-                    let model = scope.spawn(move || encode_record::<TrainBackend, _>(model_record));
-                    let ema = scope.spawn(move || encode_record::<TrainBackend, _>(ema_record));
-                    let optimizer =
-                        scope.spawn(move || encode_record::<TrainBackend, _>(optimizer_record));
+                    let model = scope.spawn(move || encode_record(model_record));
+                    let ema = scope.spawn(move || encode_record(ema_record));
+                    let optimizer = scope.spawn(move || encode_record(optimizer_record));
                     let model_bytes = model
                         .join()
                         .map_err(|_| "model checkpoint encoder panicked")??;
@@ -2095,12 +2070,12 @@ fn prepare_classification_sample(
     Ok((logical_position, sample, metadata))
 }
 
-fn build_yolox_validation_batches<B: Backend>(
+fn build_yolox_validation_batches(
     config: &TrainingConfig,
     dataset: &crate::training::data::ResolvedDataset,
     images: &[PathBuf],
-    device: &burn::tensor::Device<B>,
-) -> Result<Vec<DetectionBatch<B>>, Box<dyn Error + Send + Sync>> {
+    device: &burn::tensor::Device,
+) -> Result<Vec<DetectionBatch>, Box<dyn Error + Send + Sync>> {
     let [height, width] = config.model.input_size;
     if height != width {
         return Err("YOLOX validation currently requires a square input".into());
@@ -2286,20 +2261,19 @@ enum ValidationWeights {
 fn load_validation_model<M>(
     mut model: M,
     weights: ValidationWeights,
-    device: &burn::tensor::Device<Wgpu>,
+    device: &burn::tensor::Device,
 ) -> Result<M, Box<dyn Error + Send + Sync>>
 where
-    M: Module<Wgpu>,
+    M: Module,
 {
     match weights {
         ValidationWeights::Checkpoint(bytes) => {
-            model = model.load_record(decode_record::<Wgpu, _>(bytes, device)?);
+            model = model.load_record(decode_record(bytes, device)?);
         }
         ValidationWeights::Burnpack(path) => {
             let mut store = burn_store::BurnpackStore::from_file(path)
                 .with_from_adapter(burn_store::HalfPrecisionAdapter::new())
-                .allow_partial(true)
-                .zero_copy(true);
+                .allow_partial(true);
             let result = model.load_from(&mut store)?;
             if result
                 .missing
@@ -2367,7 +2341,7 @@ fn validate_resolved(
     eprintln!("Validation adapter: {adapter}");
     let classes = config.model.num_classes;
     if config.model.task == crate::training::TaskKind::Detect {
-        let batches: Box<dyn EpochBatchSource<DetectionBatch<Wgpu>> + '_> = if matches!(
+        let batches: Box<dyn EpochBatchSource<DetectionBatch> + '_> = if matches!(
             config.model.architecture,
             ModelId::YoloxNano
                 | ModelId::YoloxTiny
@@ -2589,8 +2563,8 @@ fn validate_classification_loaded<M, S>(
     model_id: ModelId,
 ) -> Result<ValidationSummary, Box<dyn Error + Send + Sync>>
 where
-    M: burn::module::Module<Wgpu> + ClassificationForward,
-    S: EpochBatchSource<ClassificationBatch<Wgpu>>,
+    M: burn::module::Module + ClassificationForward,
+    S: EpochBatchSource<ClassificationBatch>,
 {
     let mut loss = 0.0_f64;
     let mut top1 = 0;
@@ -2636,13 +2610,13 @@ where
 }
 
 trait ClassificationForward {
-    fn classification_logits(&self, images: Tensor<Wgpu, 4>) -> Tensor<Wgpu, 2>;
+    fn classification_logits(&self, images: Tensor<4>) -> Tensor<2>;
 }
 
 macro_rules! classification_forward {
     ($($model:ty),+ $(,)?) => {$ (
         impl ClassificationForward for $model {
-            fn classification_logits(&self, images: Tensor<Wgpu, 4>) -> Tensor<Wgpu, 2> {
+            fn classification_logits(&self, images: Tensor<4>) -> Tensor<2> {
                 self.forward_train(images)
             }
         }
@@ -2650,35 +2624,35 @@ macro_rules! classification_forward {
 }
 
 classification_forward!(
-    crate::models::yolo11::Yolo11ClsN<Wgpu>,
-    crate::models::yolo11::Yolo11ClsS<Wgpu>,
-    crate::models::yolo11::Yolo11ClsM<Wgpu>,
-    crate::models::yolo11::Yolo11ClsL<Wgpu>,
-    crate::models::yolo11::Yolo11ClsX<Wgpu>,
-    crate::models::yolo26::Yolo26ClsN<Wgpu>,
-    crate::models::yolo26::Yolo26ClsS<Wgpu>,
-    crate::models::yolo26::Yolo26ClsM<Wgpu>,
-    crate::models::yolo26::Yolo26ClsL<Wgpu>,
-    crate::models::yolo26::Yolo26ClsX<Wgpu>,
-    crate::models::yolov8::Yolov8ClsN<Wgpu>,
-    crate::models::yolov8::Yolov8ClsS<Wgpu>,
-    crate::models::yolov8::Yolov8ClsM<Wgpu>,
-    crate::models::yolov8::Yolov8ClsL<Wgpu>,
-    crate::models::yolov8::Yolov8ClsX<Wgpu>,
+    crate::models::yolo11::Yolo11ClsN,
+    crate::models::yolo11::Yolo11ClsS,
+    crate::models::yolo11::Yolo11ClsM,
+    crate::models::yolo11::Yolo11ClsL,
+    crate::models::yolo11::Yolo11ClsX,
+    crate::models::yolo26::Yolo26ClsN,
+    crate::models::yolo26::Yolo26ClsS,
+    crate::models::yolo26::Yolo26ClsM,
+    crate::models::yolo26::Yolo26ClsL,
+    crate::models::yolo26::Yolo26ClsX,
+    crate::models::yolov8::Yolov8ClsN,
+    crate::models::yolov8::Yolov8ClsS,
+    crate::models::yolov8::Yolov8ClsM,
+    crate::models::yolov8::Yolov8ClsL,
+    crate::models::yolov8::Yolov8ClsX,
 );
 
 trait DetectionForward {
     fn validation_detections(
         &self,
-        images: Tensor<Wgpu, 4>,
+        images: Tensor<4>,
         validation: &crate::training::config::ValidationConfig,
     ) -> Vec<Vec<Vec<crate::postprocess::BoundingBox>>>;
 }
 
-impl DetectionForward for Yolox<Wgpu> {
+impl DetectionForward for Yolox {
     fn validation_detections(
         &self,
-        images: Tensor<Wgpu, 4>,
+        images: Tensor<4>,
         validation: &crate::training::config::ValidationConfig,
     ) -> Vec<Vec<Vec<crate::postprocess::BoundingBox>>> {
         let output = self.forward(images * 255.0);
@@ -2690,10 +2664,10 @@ impl DetectionForward for Yolox<Wgpu> {
     }
 }
 
-impl DetectionForward for crate::models::yolov3_tiny::Yolov3Tiny<Wgpu> {
+impl DetectionForward for crate::models::yolov3_tiny::Yolov3Tiny {
     fn validation_detections(
         &self,
-        images: Tensor<Wgpu, 4>,
+        images: Tensor<4>,
         validation: &crate::training::config::ValidationConfig,
     ) -> Vec<Vec<Vec<crate::postprocess::BoundingBox>>> {
         let output = self.forward(images);
@@ -2716,7 +2690,7 @@ macro_rules! classic_detection_forward {
         impl DetectionForward for $model {
             fn validation_detections(
                 &self,
-                images: Tensor<Wgpu, 4>,
+                images: Tensor<4>,
                 validation: &crate::training::config::ValidationConfig,
             ) -> Vec<Vec<Vec<crate::postprocess::BoundingBox>>> {
                 let output = self.forward(images);
@@ -2732,21 +2706,21 @@ macro_rules! classic_detection_forward {
 }
 
 classic_detection_forward!(
-    crate::models::yolo11::Yolo11N<Wgpu>,
-    crate::models::yolo11::Yolo11S<Wgpu>,
-    crate::models::yolo11::Yolo11M<Wgpu>,
-    crate::models::yolo11::Yolo11L<Wgpu>,
-    crate::models::yolo11::Yolo11X<Wgpu>,
-    crate::models::yolov8::Yolov8N<Wgpu>,
-    crate::models::yolov8::Yolov8S<Wgpu>,
-    crate::models::yolov8::Yolov8M<Wgpu>,
-    crate::models::yolov8::Yolov8L<Wgpu>,
-    crate::models::yolov8::Yolov8X<Wgpu>,
-    crate::models::yolo12::Yolo12N<Wgpu>,
-    crate::models::yolo12::Yolo12S<Wgpu>,
-    crate::models::yolo12::Yolo12M<Wgpu>,
-    crate::models::yolo12::Yolo12L<Wgpu>,
-    crate::models::yolo12::Yolo12X<Wgpu>,
+    crate::models::yolo11::Yolo11N,
+    crate::models::yolo11::Yolo11S,
+    crate::models::yolo11::Yolo11M,
+    crate::models::yolo11::Yolo11L,
+    crate::models::yolo11::Yolo11X,
+    crate::models::yolov8::Yolov8N,
+    crate::models::yolov8::Yolov8S,
+    crate::models::yolov8::Yolov8M,
+    crate::models::yolov8::Yolov8L,
+    crate::models::yolov8::Yolov8X,
+    crate::models::yolo12::Yolo12N,
+    crate::models::yolo12::Yolo12S,
+    crate::models::yolo12::Yolo12M,
+    crate::models::yolo12::Yolo12L,
+    crate::models::yolo12::Yolo12X,
 );
 
 macro_rules! end_to_end_detection_forward {
@@ -2754,7 +2728,7 @@ macro_rules! end_to_end_detection_forward {
         impl DetectionForward for $model {
             fn validation_detections(
                 &self,
-                images: Tensor<Wgpu, 4>,
+                images: Tensor<4>,
                 validation: &crate::training::config::ValidationConfig,
             ) -> Vec<Vec<Vec<crate::postprocess::BoundingBox>>> {
                 let output = self.forward(images);
@@ -2770,17 +2744,17 @@ macro_rules! end_to_end_detection_forward {
 }
 
 end_to_end_detection_forward!(
-    crate::models::yolov10::Yolov10N<Wgpu>,
-    crate::models::yolov10::Yolov10S<Wgpu>,
-    crate::models::yolov10::Yolov10M<Wgpu>,
-    crate::models::yolov10::Yolov10B<Wgpu>,
-    crate::models::yolov10::Yolov10L<Wgpu>,
-    crate::models::yolov10::Yolov10X<Wgpu>,
-    crate::models::yolo26::Yolo26N<Wgpu>,
-    crate::models::yolo26::Yolo26S<Wgpu>,
-    crate::models::yolo26::Yolo26M<Wgpu>,
-    crate::models::yolo26::Yolo26L<Wgpu>,
-    crate::models::yolo26::Yolo26X<Wgpu>,
+    crate::models::yolov10::Yolov10N,
+    crate::models::yolov10::Yolov10S,
+    crate::models::yolov10::Yolov10M,
+    crate::models::yolov10::Yolov10B,
+    crate::models::yolov10::Yolov10L,
+    crate::models::yolov10::Yolov10X,
+    crate::models::yolo26::Yolo26N,
+    crate::models::yolo26::Yolo26S,
+    crate::models::yolo26::Yolo26M,
+    crate::models::yolo26::Yolo26L,
+    crate::models::yolo26::Yolo26X,
 );
 
 fn validate_detection_loaded<M, S>(
@@ -2790,8 +2764,8 @@ fn validate_detection_loaded<M, S>(
     validation: &crate::training::config::ValidationConfig,
 ) -> Result<ValidationSummary, Box<dyn Error + Send + Sync>>
 where
-    M: burn::module::Module<Wgpu> + DetectionForward,
-    S: EpochBatchSource<DetectionBatch<Wgpu>>,
+    M: burn::module::Module + DetectionForward,
+    S: EpochBatchSource<DetectionBatch>,
 {
     let mut predictions = Vec::new();
     let mut targets = Vec::new();
@@ -2866,7 +2840,7 @@ where
 trait SegmentationForward {
     fn validation_segmentations(
         &self,
-        image: Tensor<Wgpu, 4>,
+        image: Tensor<4>,
         validation: &crate::training::config::ValidationConfig,
     ) -> crate::SegmentationOutputCpu;
 }
@@ -2876,7 +2850,7 @@ macro_rules! classic_segmentation_forward {
         impl SegmentationForward for $model {
             fn validation_segmentations(
                 &self,
-                image: Tensor<Wgpu, 4>,
+                image: Tensor<4>,
                 validation: &crate::training::config::ValidationConfig,
             ) -> crate::SegmentationOutputCpu {
                 crate::run_classic_segmentations(
@@ -2891,16 +2865,16 @@ macro_rules! classic_segmentation_forward {
 }
 
 classic_segmentation_forward!(
-    crate::models::yolo11::Yolo11SegN<Wgpu>,
-    crate::models::yolo11::Yolo11SegS<Wgpu>,
-    crate::models::yolo11::Yolo11SegM<Wgpu>,
-    crate::models::yolo11::Yolo11SegL<Wgpu>,
-    crate::models::yolo11::Yolo11SegX<Wgpu>,
-    crate::models::yolov8::Yolov8SegN<Wgpu>,
-    crate::models::yolov8::Yolov8SegS<Wgpu>,
-    crate::models::yolov8::Yolov8SegM<Wgpu>,
-    crate::models::yolov8::Yolov8SegL<Wgpu>,
-    crate::models::yolov8::Yolov8SegX<Wgpu>,
+    crate::models::yolo11::Yolo11SegN,
+    crate::models::yolo11::Yolo11SegS,
+    crate::models::yolo11::Yolo11SegM,
+    crate::models::yolo11::Yolo11SegL,
+    crate::models::yolo11::Yolo11SegX,
+    crate::models::yolov8::Yolov8SegN,
+    crate::models::yolov8::Yolov8SegS,
+    crate::models::yolov8::Yolov8SegM,
+    crate::models::yolov8::Yolov8SegL,
+    crate::models::yolov8::Yolov8SegX,
 );
 
 macro_rules! end_to_end_segmentation_forward {
@@ -2908,7 +2882,7 @@ macro_rules! end_to_end_segmentation_forward {
         impl SegmentationForward for $model {
             fn validation_segmentations(
                 &self,
-                image: Tensor<Wgpu, 4>,
+                image: Tensor<4>,
                 validation: &crate::training::config::ValidationConfig,
             ) -> crate::SegmentationOutputCpu {
                 crate::run_end_to_end_segmentations(
@@ -2923,11 +2897,11 @@ macro_rules! end_to_end_segmentation_forward {
 }
 
 end_to_end_segmentation_forward!(
-    crate::models::yolo26::Yolo26SegN<Wgpu>,
-    crate::models::yolo26::Yolo26SegS<Wgpu>,
-    crate::models::yolo26::Yolo26SegM<Wgpu>,
-    crate::models::yolo26::Yolo26SegL<Wgpu>,
-    crate::models::yolo26::Yolo26SegX<Wgpu>,
+    crate::models::yolo26::Yolo26SegN,
+    crate::models::yolo26::Yolo26SegS,
+    crate::models::yolo26::Yolo26SegM,
+    crate::models::yolo26::Yolo26SegL,
+    crate::models::yolo26::Yolo26SegX,
 );
 
 fn validate_segmentation_loaded<M, S>(
@@ -2937,8 +2911,8 @@ fn validate_segmentation_loaded<M, S>(
     validation: &crate::training::config::ValidationConfig,
 ) -> Result<ValidationSummary, Box<dyn Error + Send + Sync>>
 where
-    M: Module<Wgpu> + SegmentationForward,
-    S: EpochBatchSource<SegmentationBatch<Wgpu>>,
+    M: Module + SegmentationForward,
+    S: EpochBatchSource<SegmentationBatch>,
 {
     let mut box_predictions = Vec::new();
     let mut box_targets = Vec::new();
@@ -3134,15 +3108,15 @@ fn export_inner(
     let classes = manifest.config.model.num_classes;
     macro_rules! save {
         ($config:expr) => {{
-            let model = $config.init_with_classes::<Wgpu>(classes, &device);
-            let model = model.load_record(decode_record::<Wgpu, _>(bytes, &device)?);
+            let model = $config.init_with_classes(classes, &device);
+            let model = model.load_record(decode_record(bytes, &device)?);
             save_training_artifact(&model, &manifest.config.model, &output)?;
             Ok(output)
         }};
     }
     macro_rules! save_yolox {
         ($model:expr) => {{
-            let model = $model.load_record(decode_record::<Wgpu, _>(bytes, &device)?);
+            let model = $model.load_record(decode_record(bytes, &device)?);
             save_training_artifact(&model, &manifest.config.model, &output)?;
             Ok(output)
         }};
@@ -3214,7 +3188,7 @@ fn export_inner(
             ModelId::Yolo26XSeg => save!(crate::models::yolo26::Yolo26SegXConfig),
         };
     let exported = exported?;
-    let predictor = crate::Predictor::<Wgpu>::from_trained_artifact_on_device(
+    let predictor = crate::Predictor::from_trained_artifact_on_device(
         manifest.config.model.architecture,
         &exported,
         device,
@@ -3241,7 +3215,7 @@ fn save_training_artifact<M>(
     output: &std::path::Path,
 ) -> Result<(), Box<dyn Error + Send + Sync>>
 where
-    M: Module<Wgpu>,
+    M: Module,
 {
     let task = match spec.task {
         crate::training::TaskKind::Detect => "detect",
@@ -3303,17 +3277,17 @@ mod tests {
     }
 
     #[derive(Module, Debug)]
-    struct TransferHead<B: Backend> {
-        linear: burn::nn::Linear<B>,
+    struct TransferHead {
+        linear: burn::nn::Linear,
     }
 
     #[derive(Module, Debug)]
-    struct TransferModel<B: Backend> {
-        body: burn::nn::Linear<B>,
-        head: TransferHead<B>,
+    struct TransferModel {
+        body: burn::nn::Linear,
+        head: TransferHead,
     }
 
-    fn transfer_model<B: Backend>(classes: usize, device: &B::Device) -> TransferModel<B> {
+    fn transfer_model(classes: usize, device: &Device) -> TransferModel {
         TransferModel {
             body: burn::nn::LinearConfig::new(2, 3).init(device),
             head: TransferHead {
@@ -3325,8 +3299,8 @@ mod tests {
     #[test]
     fn changed_class_transfer_preserves_only_fresh_classifier_projection() {
         let device = Default::default();
-        let official = transfer_model::<burn_flex::Flex>(5, &device);
-        let target = transfer_model::<burn_flex::Flex>(2, &device);
+        let official = transfer_model(5, &device);
+        let target = transfer_model(2, &device);
         let classifier_before = target.head.linear.weight.val().into_data();
         let transferred =
             transfer_pretrained(target, &official, ReplacedProjection::Classifier).unwrap();

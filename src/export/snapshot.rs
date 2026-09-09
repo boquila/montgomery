@@ -2,9 +2,8 @@ use std::path::Path;
 
 use burn::{
     module::{Module, Param},
-    tensor::{Tensor, TensorData, backend::Backend},
+    tensor::{Tensor, TensorData},
 };
-use burn_flex::Flex;
 use burn_store::{BurnToPyTorchAdapter, ModuleSnapshot, ModuleStore, SafetensorsStore};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -14,23 +13,23 @@ use crate::{Predictor, Result, RuntimeModel};
 use super::{keymap::reverse_rules, spec::ExportSpec};
 
 #[derive(Module, Debug)]
-struct DetectReference<B: Backend> {
-    boxes: Param<Tensor<B, 3>>,
-    scores: Param<Tensor<B, 3>>,
+struct DetectReference {
+    boxes: Param<Tensor<3>>,
+    scores: Param<Tensor<3>>,
 }
 
 #[derive(Module, Debug)]
-struct SegmentReference<B: Backend> {
-    boxes: Param<Tensor<B, 3>>,
-    scores: Param<Tensor<B, 3>>,
-    coefficients: Param<Tensor<B, 3>>,
-    prototypes: Param<Tensor<B, 4>>,
+struct SegmentReference {
+    boxes: Param<Tensor<3>>,
+    scores: Param<Tensor<3>>,
+    coefficients: Param<Tensor<3>>,
+    prototypes: Param<Tensor<4>>,
 }
 
 #[derive(Module, Debug)]
-struct ClassifyReference<B: Backend> {
-    logits: Param<Tensor<B, 2>>,
-    probabilities: Param<Tensor<B, 2>>,
+struct ClassifyReference {
+    logits: Param<Tensor<2>>,
+    probabilities: Param<Tensor<2>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -51,7 +50,7 @@ pub struct TensorAuditEntry {
 }
 
 pub(crate) fn write_snapshot(
-    predictor: &Predictor<Flex>,
+    predictor: &Predictor,
     path: &Path,
     spec: ExportSpec,
 ) -> Result<TensorAudit> {
@@ -135,7 +134,7 @@ pub(crate) fn write_snapshot(
 
     let mut read_store = SafetensorsStore::from_file(path);
     let tensors = read_store
-        .get_all_snapshots()
+        .get_all_tensors()
         .map_err(|error| format!("snapshot audit failed: {error}"))?;
     let mut content_digest = Sha256::new();
     for (name, tensor) in tensors.iter() {
@@ -148,8 +147,7 @@ pub(crate) fn write_snapshot(
         for dimension in tensor.shape.iter() {
             content_digest.update((*dimension as u64).to_le_bytes());
         }
-        let data = tensor
-            .to_data()
+        let data = burn_store::bridge::to_data(tensor)
             .map_err(|error| format!("snapshot content audit failed for {name}: {error}"))?;
         content_digest.update((data.as_bytes().len() as u64).to_le_bytes());
         content_digest.update(data.as_bytes());
@@ -178,7 +176,7 @@ pub(crate) fn write_snapshot(
 /// Outputs use the portable contract and are stored as SafeTensors so parity compares full tensors,
 /// not summaries or a second checkpoint loader.
 pub(crate) fn write_references(
-    predictor: &Predictor<Flex>,
+    predictor: &Predictor,
     directory: &Path,
     input_shape: [usize; 4],
 ) -> Result<Vec<(String, String)>> {
@@ -424,10 +422,10 @@ pub(crate) fn write_references(
 }
 
 fn save_segment(
-    boxes: Tensor<Flex, 3>,
-    scores: Tensor<Flex, 3>,
-    coefficients: Tensor<Flex, 3>,
-    prototypes: Tensor<Flex, 4>,
+    boxes: Tensor<3>,
+    scores: Tensor<3>,
+    coefficients: Tensor<3>,
+    prototypes: Tensor<4>,
     path: &Path,
 ) -> Result<()> {
     let module = SegmentReference {
@@ -439,7 +437,7 @@ fn save_segment(
     save_reference(&module, path)
 }
 
-fn save_reference<M: Module<Flex> + ModuleSnapshot<Flex>>(module: &M, path: &Path) -> Result<()> {
+fn save_reference<M: Module + ModuleSnapshot>(module: &M, path: &Path) -> Result<()> {
     let mut store =
         SafetensorsStore::from_file(path).metadata("montgomery.schema", "onnx-burn-reference-v1");
     module
@@ -447,11 +445,7 @@ fn save_reference<M: Module<Flex> + ModuleSnapshot<Flex>>(module: &M, path: &Pat
         .map_err(|error| format!("Burn reference serialization failed: {error}").into())
 }
 
-fn reference_input(
-    case: &str,
-    shape: [usize; 4],
-    device: &burn::tensor::Device<Flex>,
-) -> Tensor<Flex, 4> {
+fn reference_input(case: &str, shape: [usize; 4], device: &burn::tensor::Device) -> Tensor<4> {
     let [batch, channels, height, width] = shape;
     let count = batch * channels * height * width;
     let mut values = Vec::with_capacity(count);

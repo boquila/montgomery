@@ -7,8 +7,9 @@ use std::{
 };
 
 use burn::{
-    record::{BinBytesRecorder, FullPrecisionSettings, Record, Recorder},
-    tensor::backend::Backend,
+    optim::OptimizerRecord,
+    store::ModuleRecord,
+    tensor::{Bytes, Device},
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -294,26 +295,54 @@ pub fn load(path: impl AsRef<Path>) -> Result<CheckpointManifest, CheckpointErro
     Ok(manifest)
 }
 
-/// Serialize a Burn model or optimizer record in full precision for a resumable checkpoint.
-pub fn encode_record<B: Backend, R: Record<B>>(record: R) -> Result<Vec<u8>, CheckpointError> {
-    Recorder::<B>::record(
-        &BinBytesRecorder::<FullPrecisionSettings>::default(),
-        record,
-        (),
-    )
-    .map_err(|error| CheckpointError::new(error.to_string()))
+pub trait CheckpointRecord: Sized {
+    fn into_checkpoint_bytes(self) -> Result<Bytes, burn::store::RecordError>;
+    fn from_checkpoint_bytes(
+        bytes: Bytes,
+        device: &Device,
+    ) -> Result<Self, burn::store::RecordError>;
 }
 
-pub fn decode_record<B: Backend, R: Record<B>>(
+impl CheckpointRecord for ModuleRecord {
+    fn into_checkpoint_bytes(self) -> Result<Bytes, burn::store::RecordError> {
+        self.into_bytes()
+    }
+
+    fn from_checkpoint_bytes(
+        bytes: Bytes,
+        _device: &Device,
+    ) -> Result<Self, burn::store::RecordError> {
+        Self::from_bytes(bytes)
+    }
+}
+
+impl CheckpointRecord for OptimizerRecord {
+    fn into_checkpoint_bytes(self) -> Result<Bytes, burn::store::RecordError> {
+        self.into_bytes()
+    }
+
+    fn from_checkpoint_bytes(
+        bytes: Bytes,
+        _device: &Device,
+    ) -> Result<Self, burn::store::RecordError> {
+        Self::from_bytes(bytes)
+    }
+}
+
+/// Serialize a Burn model or optimizer record in full precision for a resumable checkpoint.
+pub fn encode_record<R: CheckpointRecord>(record: R) -> Result<Vec<u8>, CheckpointError> {
+    record
+        .into_checkpoint_bytes()
+        .map(|bytes| bytes.to_vec())
+        .map_err(|error| CheckpointError::new(error.to_string()))
+}
+
+pub fn decode_record<R: CheckpointRecord>(
     bytes: Vec<u8>,
-    device: &B::Device,
+    device: &Device,
 ) -> Result<R, CheckpointError> {
-    Recorder::<B>::load(
-        &BinBytesRecorder::<FullPrecisionSettings>::default(),
-        bytes,
-        device,
-    )
-    .map_err(|error| CheckpointError::new(error.to_string()))
+    R::from_checkpoint_bytes(Bytes::from_bytes_vec(bytes), device)
+        .map_err(|error| CheckpointError::new(error.to_string()))
 }
 
 fn validate_payload_name(name: &str) -> Result<(), CheckpointError> {

@@ -8,7 +8,6 @@ use burn::{
     tensor::{
         Device, Tensor,
         activation::{silu, softmax},
-        backend::Backend,
         module::interpolate,
         ops::{InterpolateMode, InterpolateOptions},
     },
@@ -19,18 +18,18 @@ use burn::{
 /// Field names deliberately match the official checkpoint (`conv`, `bn`) so imported keys map
 /// onto the native graph without renaming.
 #[derive(Module, Debug)]
-pub struct Conv<B: Backend> {
-    conv: Conv2d<B>,
-    bn: BatchNorm<B>,
+pub struct Conv {
+    conv: Conv2d,
+    bn: BatchNorm,
     act: bool,
     #[cfg(feature = "training")]
     depthwise_training_stencil: bool,
 }
 
-impl<B: Backend> Conv<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> Tensor<B, 4> {
+impl Conv {
+    pub fn forward(&self, input: Tensor<4>) -> Tensor<4> {
         #[cfg(feature = "training")]
-        let x = if self.depthwise_training_stencil && B::ad_enabled(&input.device()) {
+        let x = if self.depthwise_training_stencil && input.is_require_grad() {
             crate::models::training_ops::depthwise_3x3_stride_1(input, self.conv.weight.val())
         } else {
             self.conv.forward(input)
@@ -79,7 +78,7 @@ impl ConvConfig {
         self
     }
 
-    pub(super) fn init<B: Backend>(&self, device: &Device<B>) -> Conv<B> {
+    pub(super) fn init(&self, device: &Device) -> Conv {
         let padding = (self.kernel_size - 1) / 2;
         let conv = Conv2dConfig::new(
             [self.in_channels, self.out_channels],
@@ -114,13 +113,13 @@ impl ConvConfig {
 /// Ultralytics `RepVGGDW`: parallel depth-wise 7x7 and 3x3 convolutions summed and passed through
 /// SiLU. Field names match the official checkpoint.
 #[derive(Module, Debug)]
-pub struct RepVggDw<B: Backend> {
-    conv: Conv<B>,
-    conv1: Conv<B>,
+pub struct RepVggDw {
+    conv: Conv,
+    conv1: Conv,
 }
 
-impl<B: Backend> RepVggDw<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> Tensor<B, 4> {
+impl RepVggDw {
+    pub fn forward(&self, input: Tensor<4>) -> Tensor<4> {
         silu(self.conv.forward(input.clone()) + self.conv1.forward(input))
     }
 }
@@ -134,7 +133,7 @@ impl RepVggDwConfig {
         Self { channels }
     }
 
-    pub(super) fn init<B: Backend>(&self, device: &Device<B>) -> RepVggDw<B> {
+    pub(super) fn init(&self, device: &Device) -> RepVggDw {
         RepVggDw {
             conv: ConvConfig::new(self.channels, self.channels, 7, 1)
                 .depthwise()
@@ -150,14 +149,14 @@ impl RepVggDwConfig {
 
 /// Ultralytics `Bottleneck` with equal input/output channels and two 3x3 convolutions.
 #[derive(Module, Debug)]
-pub struct Bottleneck<B: Backend> {
-    cv1: Conv<B>,
-    cv2: Conv<B>,
+pub struct Bottleneck {
+    cv1: Conv,
+    cv2: Conv,
     add: bool,
 }
 
-impl<B: Backend> Bottleneck<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> Tensor<B, 4> {
+impl Bottleneck {
+    pub fn forward(&self, input: Tensor<4>) -> Tensor<4> {
         let x = self.cv2.forward(self.cv1.forward(input.clone()));
         if self.add { input + x } else { x }
     }
@@ -173,7 +172,7 @@ impl BottleneckConfig {
         Self { channels, shortcut }
     }
 
-    pub(super) fn init<B: Backend>(&self, device: &Device<B>) -> Bottleneck<B> {
+    pub(super) fn init(&self, device: &Device) -> Bottleneck {
         Bottleneck {
             cv1: ConvConfig::new(self.channels, self.channels, 3, 1).init(device),
             cv2: ConvConfig::new(self.channels, self.channels, 3, 1).init(device),
@@ -184,17 +183,17 @@ impl BottleneckConfig {
 
 /// The CIB convolution tower; the tuple preserves the indexed weight paths (`cv1.0.*`,
 /// `cv1.1.*`, ...) that the official checkpoint uses for its `nn.Sequential`.
-type CibTower<B> = (Conv<B>, Conv<B>, RepVggDw<B>, Conv<B>, Conv<B>);
+type CibTower = (Conv, Conv, RepVggDw, Conv, Conv);
 
 /// Ultralytics `CIB` (Compact Inverted Block) with the large-kernel depth-wise center (`lk=True`).
 #[derive(Module, Debug)]
-pub struct Cib<B: Backend> {
-    cv1: CibTower<B>,
+pub struct Cib {
+    cv1: CibTower,
     add: bool,
 }
 
-impl<B: Backend> Cib<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> Tensor<B, 4> {
+impl Cib {
+    pub fn forward(&self, input: Tensor<4>) -> Tensor<4> {
         let (dw_0, pw_0, dw_large, pw_1, dw_1) = &self.cv1;
         let x = dw_0.forward(input.clone());
         let x = pw_0.forward(x);
@@ -215,7 +214,7 @@ impl CibConfig {
         Self { channels, shortcut }
     }
 
-    pub(super) fn init<B: Backend>(&self, device: &Device<B>) -> Cib<B> {
+    pub(super) fn init(&self, device: &Device) -> Cib {
         let c = self.channels;
         Cib {
             cv1: (
@@ -232,19 +231,19 @@ impl CibConfig {
 
 /// The `lk=False` CIB tower: the center is a plain depth-wise convolution instead of the fused
 /// `RepVGGDW`, which also changes the checkpoint key paths (`cv1.2.conv.*` with no `conv1`).
-type CibDwTower<B> = (Conv<B>, Conv<B>, Conv<B>, Conv<B>, Conv<B>);
+type CibDwTower = (Conv, Conv, Conv, Conv, Conv);
 
 /// Ultralytics `CIB` (Compact Inverted Block) with the plain depth-wise center (`lk=False`).
 ///
 /// This is the variant the s/m/b/l/x checkpoints build; only YOLOv10n/s pass `lk=True`.
 #[derive(Module, Debug)]
-pub struct CibDw<B: Backend> {
-    cv1: CibDwTower<B>,
+pub struct CibDw {
+    cv1: CibDwTower,
     add: bool,
 }
 
-impl<B: Backend> CibDw<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> Tensor<B, 4> {
+impl CibDw {
+    pub fn forward(&self, input: Tensor<4>) -> Tensor<4> {
         let (dw_0, pw_0, dw_center, pw_1, dw_1) = &self.cv1;
         let x = dw_0.forward(input.clone());
         let x = pw_0.forward(x);
@@ -265,7 +264,7 @@ impl CibDwConfig {
         Self { channels, shortcut }
     }
 
-    pub(super) fn init<B: Backend>(&self, device: &Device<B>) -> CibDw<B> {
+    pub(super) fn init(&self, device: &Device) -> CibDw {
         let c = self.channels;
         CibDw {
             cv1: (
@@ -282,14 +281,14 @@ impl CibDwConfig {
 
 /// Ultralytics `C2f`: CSP bottleneck with a fed-forward bottleneck chain.
 #[derive(Module, Debug)]
-pub struct C2f<B: Backend> {
-    cv1: Conv<B>,
-    cv2: Conv<B>,
-    m: Vec<Bottleneck<B>>,
+pub struct C2f {
+    cv1: Conv,
+    cv2: Conv,
+    m: Vec<Bottleneck>,
 }
 
-impl<B: Backend> C2f<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> Tensor<B, 4> {
+impl C2f {
+    pub fn forward(&self, input: Tensor<4>) -> Tensor<4> {
         let y = self.cv1.forward(input);
         let [batch, channels, height, width] = y.dims();
         let half = channels / 2;
@@ -307,14 +306,14 @@ impl<B: Backend> C2f<B> {
 
 /// Ultralytics `C2fCIB`: C2f whose bottleneck chain uses CIB blocks.
 #[derive(Module, Debug)]
-pub struct C2fCib<B: Backend> {
-    cv1: Conv<B>,
-    cv2: Conv<B>,
-    m: Vec<Cib<B>>,
+pub struct C2fCib {
+    cv1: Conv,
+    cv2: Conv,
+    m: Vec<Cib>,
 }
 
-impl<B: Backend> C2fCib<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> Tensor<B, 4> {
+impl C2fCib {
+    pub fn forward(&self, input: Tensor<4>) -> Tensor<4> {
         let y = self.cv1.forward(input);
         let [batch, channels, height, width] = y.dims();
         let half = channels / 2;
@@ -350,7 +349,7 @@ impl C2fCommon {
         }
     }
 
-    fn init_conv<B: Backend>(&self, device: &Device<B>) -> (Conv<B>, Conv<B>) {
+    fn init_conv(&self, device: &Device) -> (Conv, Conv) {
         (
             ConvConfig::new(self.in_channels, 2 * self.hidden, 1, 1).init(device),
             ConvConfig::new((2 + self.repeats) * self.hidden, self.out_channels, 1, 1).init(device),
@@ -374,7 +373,7 @@ impl C2fConfig {
         }
     }
 
-    pub(super) fn init<B: Backend>(&self, device: &Device<B>) -> C2f<B> {
+    pub(super) fn init(&self, device: &Device) -> C2f {
         let (cv1, cv2) = self.common.init_conv(device);
         let m = (0..self.common.repeats)
             .map(|_| BottleneckConfig::new(self.common.hidden, self.common.shortcut).init(device))
@@ -399,7 +398,7 @@ impl C2fCibConfig {
         }
     }
 
-    pub(super) fn init<B: Backend>(&self, device: &Device<B>) -> C2fCib<B> {
+    pub(super) fn init(&self, device: &Device) -> C2fCib {
         let (cv1, cv2) = self.common.init_conv(device);
         let m = (0..self.common.repeats)
             .map(|_| CibConfig::new(self.common.hidden, self.common.shortcut).init(device))
@@ -411,14 +410,14 @@ impl C2fCibConfig {
 /// Ultralytics `C2fCIB` with the plain depth-wise CIB chain (`lk=False`), used by the
 /// s/m/b/l/x-scale bodies.
 #[derive(Module, Debug)]
-pub struct C2fCibDw<B: Backend> {
-    cv1: Conv<B>,
-    cv2: Conv<B>,
-    m: Vec<CibDw<B>>,
+pub struct C2fCibDw {
+    cv1: Conv,
+    cv2: Conv,
+    m: Vec<CibDw>,
 }
 
-impl<B: Backend> C2fCibDw<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> Tensor<B, 4> {
+impl C2fCibDw {
+    pub fn forward(&self, input: Tensor<4>) -> Tensor<4> {
         let y = self.cv1.forward(input);
         let [batch, channels, height, width] = y.dims();
         let half = channels / 2;
@@ -450,7 +449,7 @@ impl C2fCibDwConfig {
         }
     }
 
-    pub(super) fn init<B: Backend>(&self, device: &Device<B>) -> C2fCibDw<B> {
+    pub(super) fn init(&self, device: &Device) -> C2fCibDw {
         let (cv1, cv2) = self.common.init_conv(device);
         let m = (0..self.common.repeats)
             .map(|_| CibDwConfig::new(self.common.hidden, self.common.shortcut).init(device))
@@ -461,13 +460,13 @@ impl C2fCibDwConfig {
 
 /// Ultralytics `SCDown`: pointwise channel reduction followed by strided depth-wise convolution.
 #[derive(Module, Debug)]
-pub struct ScDown<B: Backend> {
-    cv1: Conv<B>,
-    cv2: Conv<B>,
+pub struct ScDown {
+    cv1: Conv,
+    cv2: Conv,
 }
 
-impl<B: Backend> ScDown<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> Tensor<B, 4> {
+impl ScDown {
+    pub fn forward(&self, input: Tensor<4>) -> Tensor<4> {
         self.cv2.forward(self.cv1.forward(input))
     }
 }
@@ -494,7 +493,7 @@ impl ScDownConfig {
         }
     }
 
-    pub(super) fn init<B: Backend>(&self, device: &Device<B>) -> ScDown<B> {
+    pub(super) fn init(&self, device: &Device) -> ScDown {
         ScDown {
             cv1: ConvConfig::new(self.in_channels, self.out_channels, 1, 1).init(device),
             cv2: ConvConfig::new(
@@ -512,14 +511,14 @@ impl ScDownConfig {
 
 /// Ultralytics `SPPF`: three chained 5x5 max pools concatenated with the projected input.
 #[derive(Module, Debug)]
-pub struct Sppf<B: Backend> {
-    cv1: Conv<B>,
-    cv2: Conv<B>,
+pub struct Sppf {
+    cv1: Conv,
+    cv2: Conv,
     pool: MaxPool2d,
 }
 
-impl<B: Backend> Sppf<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> Tensor<B, 4> {
+impl Sppf {
+    pub fn forward(&self, input: Tensor<4>) -> Tensor<4> {
         let x = self.cv1.forward(input);
         let first = self.pool.forward(x.clone());
         let second = self.pool.forward(first.clone());
@@ -538,7 +537,7 @@ impl SppfConfig {
         Self { channels }
     }
 
-    pub(super) fn init<B: Backend>(&self, device: &Device<B>) -> Sppf<B> {
+    pub(super) fn init(&self, device: &Device) -> Sppf {
         let hidden = self.channels / 2;
         Sppf {
             // Official YOLOv10 checkpoints keep the SiLU activation on cv1 even though the
@@ -555,18 +554,18 @@ impl SppfConfig {
 
 /// Ultralytics `Attention`: multi-head self-attention with a depth-wise positional encoding.
 #[derive(Module, Debug)]
-pub struct Attention<B: Backend> {
-    qkv: Conv<B>,
-    proj: Conv<B>,
-    pe: Conv<B>,
+pub struct Attention {
+    qkv: Conv,
+    proj: Conv,
+    pe: Conv,
     num_heads: usize,
     head_dim: usize,
     key_dim: usize,
     scale: f32,
 }
 
-impl<B: Backend> Attention<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> Tensor<B, 4> {
+impl Attention {
+    pub fn forward(&self, input: Tensor<4>) -> Tensor<4> {
         let [batch, channels, height, width] = input.dims();
         let tokens = height * width;
         let kd = self.key_dim;
@@ -609,7 +608,7 @@ impl AttentionConfig {
         }
     }
 
-    pub(super) fn init<B: Backend>(&self, device: &Device<B>) -> Attention<B> {
+    pub(super) fn init(&self, device: &Device) -> Attention {
         let head_dim = self.dim / self.num_heads;
         let key_dim = (head_dim as f32 * self.attn_ratio) as usize;
         let qkv_channels = self.dim + key_dim * self.num_heads * 2;
@@ -635,16 +634,16 @@ impl AttentionConfig {
 /// Ultralytics `PSA`: position-sensitive attention with a parallel skip branch and feed-forward
 /// refinement on half the channels.
 #[derive(Module, Debug)]
-pub struct Psa<B: Backend> {
-    cv1: Conv<B>,
-    cv2: Conv<B>,
-    attn: Attention<B>,
-    ffn: (Conv<B>, Conv<B>),
+pub struct Psa {
+    cv1: Conv,
+    cv2: Conv,
+    attn: Attention,
+    ffn: (Conv, Conv),
     hidden: usize,
 }
 
-impl<B: Backend> Psa<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> Tensor<B, 4> {
+impl Psa {
+    pub fn forward(&self, input: Tensor<4>) -> Tensor<4> {
         let x = self.cv1.forward(input);
         let [batch, channels, height, width] = x.dims();
         let a = x
@@ -667,7 +666,7 @@ impl PsaConfig {
         Self { channels }
     }
 
-    pub(super) fn init<B: Backend>(&self, device: &Device<B>) -> Psa<B> {
+    pub(super) fn init(&self, device: &Device) -> Psa {
         let hidden = self.channels / 2;
         Psa {
             cv1: ConvConfig::new(self.channels, 2 * hidden, 1, 1).init(device),
@@ -685,7 +684,7 @@ impl PsaConfig {
 }
 
 /// Nearest-neighbor 2x upsample used by the neck.
-pub(super) fn upsample_nearest_2x<B: Backend>(input: Tensor<B, 4>) -> Tensor<B, 4> {
+pub(super) fn upsample_nearest_2x(input: Tensor<4>) -> Tensor<4> {
     let [_, _, height, width] = input.dims();
     interpolate(
         input,
@@ -697,7 +696,6 @@ pub(super) fn upsample_nearest_2x<B: Backend>(input: Tensor<B, 4>) -> Tensor<B, 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use burn_flex::Flex;
 
     #[test]
     fn produces_declared_shapes_for_yolov10n_blocks() {
@@ -705,28 +703,27 @@ mod tests {
             .stack_size(32 * 1024 * 1024)
             .spawn(|| {
                 let device = Default::default();
-                let c2f: C2f<Flex> = C2fConfig::new(64, 64, 2, true).init(&device);
+                let c2f: C2f = C2fConfig::new(64, 64, 2, true).init(&device);
                 let out = c2f.forward(Tensor::zeros([1, 64, 40, 40], &device));
                 assert_eq!(out.dims(), [1, 64, 40, 40]);
 
-                let cib_block: C2fCib<Flex> = C2fCibConfig::new(384, 256, 1, true).init(&device);
+                let cib_block: C2fCib = C2fCibConfig::new(384, 256, 1, true).init(&device);
                 let out = cib_block.forward(Tensor::zeros([1, 384, 20, 20], &device));
                 assert_eq!(out.dims(), [1, 256, 20, 20]);
 
-                let cib_dw_block: C2fCibDw<Flex> =
-                    C2fCibDwConfig::new(384, 256, 1, true).init(&device);
+                let cib_dw_block: C2fCibDw = C2fCibDwConfig::new(384, 256, 1, true).init(&device);
                 let out = cib_dw_block.forward(Tensor::zeros([1, 384, 20, 20], &device));
                 assert_eq!(out.dims(), [1, 256, 20, 20]);
 
-                let sc_down: ScDown<Flex> = ScDownConfig::new(128, 128, 3, 2).init(&device);
+                let sc_down: ScDown = ScDownConfig::new(128, 128, 3, 2).init(&device);
                 let out = sc_down.forward(Tensor::zeros([1, 128, 40, 40], &device));
                 assert_eq!(out.dims(), [1, 128, 20, 20]);
 
-                let sppf: Sppf<Flex> = SppfConfig::new(256).init(&device);
+                let sppf: Sppf = SppfConfig::new(256).init(&device);
                 let out = sppf.forward(Tensor::zeros([1, 256, 20, 20], &device));
                 assert_eq!(out.dims(), [1, 256, 20, 20]);
 
-                let psa: Psa<Flex> = PsaConfig::new(256).init(&device);
+                let psa: Psa = PsaConfig::new(256).init(&device);
                 let out = psa.forward(Tensor::zeros([1, 256, 20, 20], &device));
                 assert_eq!(out.dims(), [1, 256, 20, 20]);
             })

@@ -1,6 +1,6 @@
 use burn::{
     module::Module,
-    tensor::{Device, Tensor, backend::Backend},
+    tensor::{Device, Tensor},
 };
 
 use super::{
@@ -11,28 +11,28 @@ use super::{
 #[cfg(feature = "pretrained")]
 use {
     super::weights,
+    burn_pack::Error as BurnpackError,
     burn_store::{
-        BurnpackError, BurnpackStore, HalfPrecisionAdapter, ModuleSnapshot, PytorchStore,
-        PytorchStoreError,
+        BurnpackStore, HalfPrecisionAdapter, ModuleSnapshot, PytorchStore, PytorchStoreError,
     },
     std::path::PathBuf,
 };
 
 /// [YOLOX](https://paperswithcode.com/method/yolox) object detection architecture.
 #[derive(Module, Debug)]
-pub struct Yolox<B: Backend> {
-    backbone: Pafpn<B>,
-    head: Head<B>,
+pub struct Yolox {
+    backbone: Pafpn,
+    head: Head,
 }
 
-impl<B: Backend> Yolox<B> {
-    pub fn forward(&self, x: Tensor<B, 4>) -> Tensor<B, 3> {
+impl Yolox {
+    pub fn forward(&self, x: Tensor<4>) -> Tensor<3> {
         let features = self.backbone.forward(x);
         self.head.forward(features)
     }
 
     /// Raw logits and differentiably decoded boxes for native training.
-    pub fn forward_train(&self, x: Tensor<B, 4>) -> RawPredictions<B> {
+    pub fn forward_train(&self, x: Tensor<4>) -> RawPredictions {
         let features = self.backbone.forward(x);
         self.head.forward_train(features)
     }
@@ -47,7 +47,7 @@ impl<B: Backend> Yolox<B> {
     /// # Returns
     ///
     /// A YOLOX-Nano module.
-    pub fn yolox_nano(num_classes: usize, device: &Device<B>) -> Self {
+    pub fn yolox_nano(num_classes: usize, device: &Device) -> Self {
         YoloxConfig::new(0.33, 0.25, num_classes, true).init(device)
     }
 
@@ -61,7 +61,7 @@ impl<B: Backend> Yolox<B> {
     /// # Returns
     ///
     /// A YOLOX-Tiny module.
-    pub fn yolox_tiny(num_classes: usize, device: &Device<B>) -> Self {
+    pub fn yolox_tiny(num_classes: usize, device: &Device) -> Self {
         YoloxConfig::new(0.33, 0.375, num_classes, false).init(device)
     }
 
@@ -75,7 +75,7 @@ impl<B: Backend> Yolox<B> {
     /// # Returns
     ///
     /// A YOLOX-S module.
-    pub fn yolox_s(num_classes: usize, device: &Device<B>) -> Self {
+    pub fn yolox_s(num_classes: usize, device: &Device) -> Self {
         YoloxConfig::new(0.33, 0.50, num_classes, false).init(device)
     }
 
@@ -89,7 +89,7 @@ impl<B: Backend> Yolox<B> {
     /// # Returns
     ///
     /// A YOLOX-M module.
-    pub fn yolox_m(num_classes: usize, device: &Device<B>) -> Self {
+    pub fn yolox_m(num_classes: usize, device: &Device) -> Self {
         YoloxConfig::new(0.67, 0.75, num_classes, false).init(device)
     }
 
@@ -103,7 +103,7 @@ impl<B: Backend> Yolox<B> {
     /// # Returns
     ///
     /// A YOLOX-L module.
-    pub fn yolox_l(num_classes: usize, device: &Device<B>) -> Self {
+    pub fn yolox_l(num_classes: usize, device: &Device) -> Self {
         YoloxConfig::new(1., 1., num_classes, false).init(device)
     }
 
@@ -117,7 +117,7 @@ impl<B: Backend> Yolox<B> {
     /// # Returns
     ///
     /// A YOLOX-X module.
-    pub fn yolox_x(num_classes: usize, device: &Device<B>) -> Self {
+    pub fn yolox_x(num_classes: usize, device: &Device) -> Self {
         YoloxConfig::new(1.33, 1.25, num_classes, false).init(device)
     }
 
@@ -157,9 +157,8 @@ impl<B: Backend> Yolox<B> {
     /// Load a montgomery-native, half-precision YOLOX Burnpack artifact.
     #[cfg(feature = "pretrained")]
     pub fn load_burnpack_weights(&mut self, path: impl Into<PathBuf>) -> Result<(), BurnpackError> {
-        let mut store = BurnpackStore::from_file(path.into())
-            .with_from_adapter(HalfPrecisionAdapter::new())
-            .zero_copy(true);
+        let mut store =
+            BurnpackStore::from_file(path.into()).with_from_adapter(HalfPrecisionAdapter::new());
         self.load_from(&mut store).map(|_| ())
     }
 
@@ -195,7 +194,7 @@ pub struct YoloxConfig {
 mod tests {
     use super::*;
     use burn::tensor::{ElementConversion, TensorData};
-    use burn_flex::Flex;
+
     use serde::Deserialize;
     use std::collections::BTreeMap;
 
@@ -216,7 +215,7 @@ mod tests {
         samples: Vec<(usize, f64)>,
     }
 
-    fn assert_golden<const D: usize>(name: &str, actual: Tensor<Flex, D>, expected: &GoldenTensor) {
+    fn assert_golden<const D: usize>(name: &str, actual: Tensor<D>, expected: &GoldenTensor) {
         assert_eq!(actual.dims().to_vec(), expected.shape, "{name} shape");
         let values: Vec<f64> = actual
             .into_data()
@@ -261,12 +260,12 @@ mod tests {
     }
 
     /// Load the raw RGB letterboxed fixture used by the released YOLOX checkpoints.
-    fn load_reference_input(id: &str, device: &Device<Flex>) -> Tensor<Flex, 4> {
+    fn load_reference_input(id: &str, device: &Device) -> Tensor<4> {
         let image = image::open(format!("target/{id}-preprocessed-reference.png"))
             .unwrap()
             .into_rgb8();
         let shape = [image.height() as usize, image.width() as usize, 3];
-        Tensor::<Flex, 3>::from_data(
+        Tensor::<3>::from_data(
             TensorData::new(image.into_raw(), shape).convert::<f32>(),
             device,
         )
@@ -297,8 +296,8 @@ mod tests {
                 let worker = std::thread::Builder::new()
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
-                        let device = <Device<Flex>>::default();
-                        let mut model: Yolox<Flex> = Yolox::$constructor(80, &device);
+                        let device = <Device>::default();
+                        let mut model: Yolox = Yolox::$constructor(80, &device);
                         model.load_pytorch_weights(checkpoint).unwrap();
                         let output = model.forward(Tensor::zeros([1, 3, 64, 64], &device));
                         assert_eq!(output.dims(), [1, 84, 85]);
@@ -334,8 +333,8 @@ mod tests {
                 let worker = std::thread::Builder::new()
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
-                        let device = <Device<Flex>>::default();
-                        let mut model: Yolox<Flex> = Yolox::$constructor(80, &device);
+                        let device = <Device>::default();
+                        let mut model: Yolox = Yolox::$constructor(80, &device);
                         model.load_pytorch_weights(checkpoint).unwrap();
                         let input = load_reference_input($id, &device);
 
@@ -416,7 +415,7 @@ impl YoloxConfig {
     }
 
     /// Initialize a new [YOLOX detector](Yolox) module.
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolox<B> {
+    pub fn init(&self, device: &Device) -> Yolox {
         Yolox {
             backbone: self.backbone.init(device),
             head: self.head.init(device),

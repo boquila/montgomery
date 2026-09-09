@@ -7,8 +7,8 @@
 use std::collections::HashSet;
 use std::process::{Command, Output};
 
-use burn::tensor::Tensor;
-use burn_flex::Flex;
+use burn::tensor::{Device, Tensor};
+use burn_flex::FlexDevice;
 use image::{DynamicImage, Rgb};
 use montgomery::models::{
     yolo11::{Yolo11ClsNConfig, Yolo11NConfig, Yolo11SegNConfig},
@@ -49,35 +49,33 @@ fn with_model_stack(body: impl FnOnce() + Send + 'static) {
 #[test]
 fn detection_families_run_complete_public_graphs() {
     with_model_stack(|| {
-        let device = Default::default();
-        let input = Tensor::<Flex, 4>::zeros([1, 3, 64, 64], &device);
+        let device = Device::new(FlexDevice);
+        let input = Tensor::<4>::zeros([1, 3, 64, 64], &device);
 
-        let yolox = Yolox::<Flex>::yolox_nano(COCO_CLASSES.len(), &device).forward(input.clone());
+        let yolox = Yolox::yolox_nano(COCO_CLASSES.len(), &device).forward(input.clone());
         assert_eq!(yolox.dims(), [1, 84, 85]);
 
-        let yolov3 = Yolov3TinyConfig
-            .init::<Flex>(&device)
-            .forward(input.clone());
+        let yolov3 = Yolov3TinyConfig.init(&device).forward(input.clone());
         assert_eq!(yolov3.boxes.dims(), [1, 20, 4]);
         assert_eq!(yolov3.scores.dims(), [1, 20, 80]);
 
-        let yolov8 = Yolov8NConfig.init::<Flex>(&device).forward(input.clone());
+        let yolov8 = Yolov8NConfig.init(&device).forward(input.clone());
         assert_eq!(yolov8.boxes.dims(), [1, 84, 4]);
         assert_eq!(yolov8.scores.dims(), [1, 84, 80]);
 
-        let yolov10 = Yolov10NConfig.init::<Flex>(&device).forward(input.clone());
+        let yolov10 = Yolov10NConfig.init(&device).forward(input.clone());
         assert_eq!(yolov10.boxes.dims(), [1, 84, 4]);
         assert_eq!(yolov10.scores.dims(), [1, 84, 80]);
 
-        let yolo11 = Yolo11NConfig.init::<Flex>(&device).forward(input.clone());
+        let yolo11 = Yolo11NConfig.init(&device).forward(input.clone());
         assert_eq!(yolo11.boxes.dims(), [1, 84, 4]);
         assert_eq!(yolo11.scores.dims(), [1, 84, 80]);
 
-        let yolo12 = Yolo12NConfig.init::<Flex>(&device).forward(input.clone());
+        let yolo12 = Yolo12NConfig.init(&device).forward(input.clone());
         assert_eq!(yolo12.boxes.dims(), [1, 84, 4]);
         assert_eq!(yolo12.scores.dims(), [1, 84, 80]);
 
-        let yolo26 = Yolo26NConfig.init::<Flex>(&device).forward(input);
+        let yolo26 = Yolo26NConfig.init(&device).forward(input);
         assert_eq!(yolo26.boxes.dims(), [1, 84, 4]);
         assert_eq!(yolo26.scores.dims(), [1, 84, 80]);
     });
@@ -86,26 +84,22 @@ fn detection_families_run_complete_public_graphs() {
 #[test]
 fn segmentation_families_run_complete_public_graphs() {
     with_model_stack(|| {
-        let device = Default::default();
-        let input = Tensor::<Flex, 4>::zeros([1, 3, 64, 64], &device);
+        let device = Device::new(FlexDevice);
+        let input = Tensor::<4>::zeros([1, 3, 64, 64], &device);
 
-        let yolov8 = Yolov8SegNConfig
-            .init::<Flex>(&device)
-            .forward(input.clone());
+        let yolov8 = Yolov8SegNConfig.init(&device).forward(input.clone());
         assert_eq!(yolov8.boxes.dims(), [1, 84, 4]);
         assert_eq!(yolov8.scores.dims(), [1, 84, 80]);
         assert_eq!(yolov8.coefficients.dims(), [1, 32, 84]);
         assert_eq!(yolov8.prototypes.dims(), [1, 32, 16, 16]);
 
-        let yolo11 = Yolo11SegNConfig
-            .init::<Flex>(&device)
-            .forward(input.clone());
+        let yolo11 = Yolo11SegNConfig.init(&device).forward(input.clone());
         assert_eq!(yolo11.boxes.dims(), [1, 84, 4]);
         assert_eq!(yolo11.scores.dims(), [1, 84, 80]);
         assert_eq!(yolo11.coefficients.dims(), [1, 32, 84]);
         assert_eq!(yolo11.prototypes.dims(), [1, 32, 16, 16]);
 
-        let yolo26 = Yolo26SegNConfig.init::<Flex>(&device).forward(input);
+        let yolo26 = Yolo26SegNConfig.init(&device).forward(input);
         assert_eq!(yolo26.decoded.boxes.dims(), [1, 84, 4]);
         assert_eq!(yolo26.decoded.scores.dims(), [1, 84, 80]);
         assert_eq!(yolo26.coefficients.dims(), [1, 32, 84]);
@@ -116,22 +110,18 @@ fn segmentation_families_run_complete_public_graphs() {
 #[test]
 fn classification_families_run_complete_public_graphs() {
     with_model_stack(|| {
-        let device = Default::default();
-        let input = Tensor::<Flex, 4>::zeros([1, 3, 64, 64], &device);
+        let device = Device::new(FlexDevice);
+        let input = Tensor::<4>::zeros([1, 3, 64, 64], &device);
 
-        let yolov8 = Yolov8ClsNConfig
-            .init::<Flex>(&device)
-            .forward(input.clone());
+        let yolov8 = Yolov8ClsNConfig.init(&device).forward(input.clone());
         assert_eq!(yolov8.logits.dims(), [1, 1000]);
         assert_eq!(yolov8.probs.dims(), [1, 1000]);
 
-        let yolo11 = Yolo11ClsNConfig
-            .init::<Flex>(&device)
-            .forward(input.clone());
+        let yolo11 = Yolo11ClsNConfig.init(&device).forward(input.clone());
         assert_eq!(yolo11.logits.dims(), [1, 1000]);
         assert_eq!(yolo11.probs.dims(), [1, 1000]);
 
-        let yolo26 = Yolo26ClsNConfig.init::<Flex>(&device).forward(input);
+        let yolo26 = Yolo26ClsNConfig.init(&device).forward(input);
         assert_eq!(yolo26.logits.dims(), [1, 1000]);
         assert_eq!(yolo26.probs.dims(), [1, 1000]);
     });
@@ -280,7 +270,7 @@ fn native_artifact_boundaries_reject_upstream_formats_before_io() {
         assert!(error.contains(".bpk extension"), "{model}: {error}");
     }
 
-    let error = Predictor::<Flex>::from_checkpoint(
+    let error = Predictor::from_checkpoint(
         ModelId::YoloxNano,
         "does-not-exist.pth",
         PredictOptions::default(),
