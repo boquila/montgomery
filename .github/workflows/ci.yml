@@ -53,6 +53,10 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
 
+      - name: Install software Vulkan driver
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers
+
       - name: Test training feature
         if: runner.os == 'Linux'
         run: cargo test --features training
