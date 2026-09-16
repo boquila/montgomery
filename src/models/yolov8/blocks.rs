@@ -8,7 +8,6 @@ use burn::{
     tensor::{
         Device, Tensor,
         activation::silu,
-        backend::Backend,
         module::interpolate,
         ops::{InterpolateMode, InterpolateOptions},
     },
@@ -19,14 +18,14 @@ use burn::{
 /// Field names deliberately match the official checkpoint (`conv`, `bn`) so imported keys map
 /// onto the native graph without renaming.
 #[derive(Module, Debug)]
-pub struct Conv<B: Backend> {
-    conv: Conv2d<B>,
-    bn: BatchNorm<B>,
+pub struct Conv {
+    conv: Conv2d,
+    bn: BatchNorm,
     act: bool,
 }
 
-impl<B: Backend> Conv<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> Tensor<B, 4> {
+impl Conv {
+    pub fn forward(&self, input: Tensor<4>) -> Tensor<4> {
         let x = self.bn.forward(self.conv.forward(input));
         if self.act { silu(x) } else { x }
     }
@@ -102,7 +101,7 @@ impl ConvConfig {
         self
     }
 
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Conv<B> {
+    pub fn init(&self, device: &Device) -> Conv {
         let padding = (self.kernel_size - 1) / 2;
         let conv = Conv2dConfig::new(
             [self.in_channels, self.out_channels],
@@ -132,14 +131,14 @@ impl ConvConfig {
 /// The C2f chain builds its bottlenecks at full width (`e=1.0`), so the hidden width is declared
 /// per instance instead of derived from the channel count.
 #[derive(Module, Debug)]
-pub struct Bottleneck<B: Backend> {
-    cv1: Conv<B>,
-    cv2: Conv<B>,
+pub struct Bottleneck {
+    cv1: Conv,
+    cv2: Conv,
     add: bool,
 }
 
-impl<B: Backend> Bottleneck<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> Tensor<B, 4> {
+impl Bottleneck {
+    pub fn forward(&self, input: Tensor<4>) -> Tensor<4> {
         let x = self.cv2.forward(self.cv1.forward(input.clone()));
         if self.add { input + x } else { x }
     }
@@ -171,7 +170,7 @@ impl BottleneckConfig {
         self
     }
 
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Bottleneck<B> {
+    pub fn init(&self, device: &Device) -> Bottleneck {
         Bottleneck {
             cv1: ConvConfig::new(self.channels, self.hidden, 3, 1)
                 .with_bn_flavor(self.bn)
@@ -190,14 +189,14 @@ impl BottleneckConfig {
 /// bottleneck output are concatenated, and `cv2` projects back. The YAML passes `shortcut=True`
 /// for the backbone stages and keeps the default `False` for the neck stages.
 #[derive(Module, Debug)]
-pub struct C2f<B: Backend> {
-    cv1: Conv<B>,
-    cv2: Conv<B>,
-    m: Vec<Bottleneck<B>>,
+pub struct C2f {
+    cv1: Conv,
+    cv2: Conv,
+    m: Vec<Bottleneck>,
 }
 
-impl<B: Backend> C2f<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> Tensor<B, 4> {
+impl C2f {
+    pub fn forward(&self, input: Tensor<4>) -> Tensor<4> {
         let y = self.cv1.forward(input);
         let [batch, channels, height, width] = y.dims();
         let half = channels / 2;
@@ -240,7 +239,7 @@ impl C2fConfig {
         self
     }
 
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> C2f<B> {
+    pub fn init(&self, device: &Device) -> C2f {
         let hidden = self.out_channels / 2;
         C2f {
             cv1: ConvConfig::new(self.in_channels, 2 * hidden, 1, 1)
@@ -267,14 +266,14 @@ impl C2fConfig {
 /// repeat count nor the `add` shortcut attribute, exactly like YOLO11's; the pickled module —
 /// not the current source — defines the inference graph.
 #[derive(Module, Debug)]
-pub struct Sppf<B: Backend> {
-    cv1: Conv<B>,
-    cv2: Conv<B>,
+pub struct Sppf {
+    cv1: Conv,
+    cv2: Conv,
     pool: MaxPool2d,
 }
 
-impl<B: Backend> Sppf<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> Tensor<B, 4> {
+impl Sppf {
+    pub fn forward(&self, input: Tensor<4>) -> Tensor<4> {
         let x = self.cv1.forward(input);
         let y0 = x.clone();
         let y1 = self.pool.forward(y0.clone());
@@ -302,7 +301,7 @@ impl SppfConfig {
         self
     }
 
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Sppf<B> {
+    pub fn init(&self, device: &Device) -> Sppf {
         let hidden = self.channels / 2;
         Sppf {
             cv1: ConvConfig::new(self.channels, hidden, 1, 1)
@@ -320,7 +319,7 @@ impl SppfConfig {
 }
 
 /// Nearest-neighbor 2x upsample used by the neck.
-pub fn upsample_nearest_2x<B: Backend>(input: Tensor<B, 4>) -> Tensor<B, 4> {
+pub fn upsample_nearest_2x(input: Tensor<4>) -> Tensor<4> {
     let [_, _, height, width] = input.dims();
     interpolate(
         input,
@@ -332,7 +331,6 @@ pub fn upsample_nearest_2x<B: Backend>(input: Tensor<B, 4>) -> Tensor<B, 4> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use burn_flex::Flex;
 
     #[test]
     fn produces_declared_shapes_for_yolov8n_blocks() {
@@ -340,15 +338,15 @@ mod tests {
             .stack_size(32 * 1024 * 1024)
             .spawn(|| {
                 let device = Default::default();
-                let c2f: C2f<Flex> = C2fConfig::new(32, 64, 1, true).init(&device);
+                let c2f: C2f = C2fConfig::new(32, 64, 1, true).init(&device);
                 let out = c2f.forward(Tensor::zeros([1, 32, 40, 40], &device));
                 assert_eq!(out.dims(), [1, 64, 40, 40]);
 
-                let c2f_neck: C2f<Flex> = C2fConfig::new(96, 64, 1, false).init(&device);
+                let c2f_neck: C2f = C2fConfig::new(96, 64, 1, false).init(&device);
                 let out = c2f_neck.forward(Tensor::zeros([1, 96, 20, 20], &device));
                 assert_eq!(out.dims(), [1, 64, 20, 20]);
 
-                let sppf: Sppf<Flex> = SppfConfig::new(256).init(&device);
+                let sppf: Sppf = SppfConfig::new(256).init(&device);
                 let out = sppf.forward(Tensor::zeros([1, 256, 10, 10], &device));
                 assert_eq!(out.dims(), [1, 256, 10, 10]);
             })

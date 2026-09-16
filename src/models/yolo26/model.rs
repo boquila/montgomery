@@ -1,6 +1,6 @@
 use burn::{
     module::Module,
-    tensor::{Device, Tensor, backend::Backend},
+    tensor::{Device, Tensor},
 };
 
 use super::{
@@ -14,9 +14,9 @@ use super::{
 #[cfg(feature = "pretrained")]
 use {
     super::weights,
+    burn_pack::Error as BurnpackError,
     burn_store::{
-        BurnpackError, BurnpackStore, HalfPrecisionAdapter, ModuleSnapshot, PytorchStore,
-        PytorchStoreError,
+        BurnpackStore, HalfPrecisionAdapter, ModuleSnapshot, PytorchStore, PytorchStoreError,
     },
     std::path::PathBuf,
 };
@@ -162,22 +162,22 @@ fn pytorch_store(path: impl Into<PathBuf>) -> PytorchStore {
 /// The inference path decodes the end-to-end one-to-one head to source-space candidates. Training
 /// builds expose both official raw branches with detached body inputs for one-to-one.
 #[derive(Module, Debug)]
-pub struct Yolo26N<B: Backend> {
-    body: Yolo26BodySmall<B>,
-    head: Yolo26Head<B>,
+pub struct Yolo26N {
+    body: Yolo26BodySmall,
+    head: Yolo26Head,
 }
 
-impl<B: Backend> Yolo26N<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> DecodedPredictions<B> {
+impl Yolo26N {
+    pub fn forward(&self, input: Tensor<4>) -> DecodedPredictions {
         self.head.forward(self.body.forward(input))
     }
 
-    pub fn forward_train(&self, input: Tensor<B, 4>) -> RawPredictions<B> {
+    pub fn forward_train(&self, input: Tensor<4>) -> RawPredictions {
         self.head.forward_raw(self.body.forward(input))
     }
 
     #[cfg(feature = "training")]
-    pub fn forward_train_dual(&self, input: Tensor<B, 4>) -> super::head::DualRawPredictions<B> {
+    pub fn forward_train_dual(&self, input: Tensor<4>) -> super::head::DualRawPredictions {
         self.head.forward_dual(self.body.forward(input))
     }
 
@@ -194,9 +194,8 @@ impl<B: Backend> Yolo26N<B> {
     /// Load Montgomery's versioned, half-precision native Burnpack artifact.
     #[cfg(feature = "pretrained")]
     pub fn load_burnpack_weights(&mut self, path: impl Into<PathBuf>) -> Result<(), BurnpackError> {
-        let mut store = BurnpackStore::from_file(path.into())
-            .with_from_adapter(HalfPrecisionAdapter::new())
-            .zero_copy(true);
+        let mut store =
+            BurnpackStore::from_file(path.into()).with_from_adapter(HalfPrecisionAdapter::new());
         self.load_from(&mut store).map(|_| ())
     }
 
@@ -222,15 +221,11 @@ impl<B: Backend> Yolo26N<B> {
 pub struct Yolo26NConfig;
 
 impl Yolo26NConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo26N<B> {
+    pub fn init(&self, device: &Device) -> Yolo26N {
         self.init_with_classes(80, device)
     }
 
-    pub fn init_with_classes<B: Backend>(
-        &self,
-        num_classes: usize,
-        device: &Device<B>,
-    ) -> Yolo26N<B> {
+    pub fn init_with_classes(&self, num_classes: usize, device: &Device) -> Yolo26N {
         Yolo26N {
             body: Yolo26BodyNConfig.init(device),
             head: Yolo26HeadConfig::new(64, 128, 256)
@@ -242,22 +237,22 @@ impl Yolo26NConfig {
 
 /// Native Burn YOLO26s model.
 #[derive(Module, Debug)]
-pub struct Yolo26S<B: Backend> {
-    body: Yolo26BodySmall<B>,
-    head: Yolo26Head<B>,
+pub struct Yolo26S {
+    body: Yolo26BodySmall,
+    head: Yolo26Head,
 }
 
-impl<B: Backend> Yolo26S<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> DecodedPredictions<B> {
+impl Yolo26S {
+    pub fn forward(&self, input: Tensor<4>) -> DecodedPredictions {
         self.head.forward(self.body.forward(input))
     }
 
-    pub fn forward_train(&self, input: Tensor<B, 4>) -> RawPredictions<B> {
+    pub fn forward_train(&self, input: Tensor<4>) -> RawPredictions {
         self.head.forward_raw(self.body.forward(input))
     }
 
     #[cfg(feature = "training")]
-    pub fn forward_train_dual(&self, input: Tensor<B, 4>) -> super::head::DualRawPredictions<B> {
+    pub fn forward_train_dual(&self, input: Tensor<4>) -> super::head::DualRawPredictions {
         self.head.forward_dual(self.body.forward(input))
     }
 
@@ -274,9 +269,8 @@ impl<B: Backend> Yolo26S<B> {
     /// Load Montgomery's versioned, half-precision native Burnpack artifact.
     #[cfg(feature = "pretrained")]
     pub fn load_burnpack_weights(&mut self, path: impl Into<PathBuf>) -> Result<(), BurnpackError> {
-        let mut store = BurnpackStore::from_file(path.into())
-            .with_from_adapter(HalfPrecisionAdapter::new())
-            .zero_copy(true);
+        let mut store =
+            BurnpackStore::from_file(path.into()).with_from_adapter(HalfPrecisionAdapter::new());
         self.load_from(&mut store).map(|_| ())
     }
 
@@ -302,15 +296,11 @@ impl<B: Backend> Yolo26S<B> {
 pub struct Yolo26SConfig;
 
 impl Yolo26SConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo26S<B> {
+    pub fn init(&self, device: &Device) -> Yolo26S {
         self.init_with_classes(80, device)
     }
 
-    pub fn init_with_classes<B: Backend>(
-        &self,
-        num_classes: usize,
-        device: &Device<B>,
-    ) -> Yolo26S<B> {
+    pub fn init_with_classes(&self, num_classes: usize, device: &Device) -> Yolo26S {
         Yolo26S {
             body: Yolo26BodySConfig.init(device),
             head: Yolo26HeadConfig::new(128, 256, 512)
@@ -323,22 +313,22 @@ impl Yolo26SConfig {
 /// Native Burn YOLO26m model. The m-scale body forces the C3k chain onto the early backbone
 /// stages (`parse_model`'s m/l/x rule), so it shares [`Yolo26BodyLarge`] with l/x.
 #[derive(Module, Debug)]
-pub struct Yolo26M<B: Backend> {
-    body: Yolo26BodyLarge<B>,
-    head: Yolo26Head<B>,
+pub struct Yolo26M {
+    body: Yolo26BodyLarge,
+    head: Yolo26Head,
 }
 
-impl<B: Backend> Yolo26M<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> DecodedPredictions<B> {
+impl Yolo26M {
+    pub fn forward(&self, input: Tensor<4>) -> DecodedPredictions {
         self.head.forward(self.body.forward(input))
     }
 
-    pub fn forward_train(&self, input: Tensor<B, 4>) -> RawPredictions<B> {
+    pub fn forward_train(&self, input: Tensor<4>) -> RawPredictions {
         self.head.forward_raw(self.body.forward(input))
     }
 
     #[cfg(feature = "training")]
-    pub fn forward_train_dual(&self, input: Tensor<B, 4>) -> super::head::DualRawPredictions<B> {
+    pub fn forward_train_dual(&self, input: Tensor<4>) -> super::head::DualRawPredictions {
         self.head.forward_dual(self.body.forward(input))
     }
 
@@ -355,9 +345,8 @@ impl<B: Backend> Yolo26M<B> {
     /// Load Montgomery's versioned, half-precision native Burnpack artifact.
     #[cfg(feature = "pretrained")]
     pub fn load_burnpack_weights(&mut self, path: impl Into<PathBuf>) -> Result<(), BurnpackError> {
-        let mut store = BurnpackStore::from_file(path.into())
-            .with_from_adapter(HalfPrecisionAdapter::new())
-            .zero_copy(true);
+        let mut store =
+            BurnpackStore::from_file(path.into()).with_from_adapter(HalfPrecisionAdapter::new());
         self.load_from(&mut store).map(|_| ())
     }
 
@@ -383,15 +372,11 @@ impl<B: Backend> Yolo26M<B> {
 pub struct Yolo26MConfig;
 
 impl Yolo26MConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo26M<B> {
+    pub fn init(&self, device: &Device) -> Yolo26M {
         self.init_with_classes(80, device)
     }
 
-    pub fn init_with_classes<B: Backend>(
-        &self,
-        num_classes: usize,
-        device: &Device<B>,
-    ) -> Yolo26M<B> {
+    pub fn init_with_classes(&self, num_classes: usize, device: &Device) -> Yolo26M {
         Yolo26M {
             body: Yolo26BodyMConfig.init(device),
             head: Yolo26HeadConfig::new(256, 512, 512)
@@ -403,22 +388,22 @@ impl Yolo26MConfig {
 
 /// Native Burn YOLO26l model. Shares YOLO26m's body graph with depth-scaled repeats.
 #[derive(Module, Debug)]
-pub struct Yolo26L<B: Backend> {
-    body: Yolo26BodyLarge<B>,
-    head: Yolo26Head<B>,
+pub struct Yolo26L {
+    body: Yolo26BodyLarge,
+    head: Yolo26Head,
 }
 
-impl<B: Backend> Yolo26L<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> DecodedPredictions<B> {
+impl Yolo26L {
+    pub fn forward(&self, input: Tensor<4>) -> DecodedPredictions {
         self.head.forward(self.body.forward(input))
     }
 
-    pub fn forward_train(&self, input: Tensor<B, 4>) -> RawPredictions<B> {
+    pub fn forward_train(&self, input: Tensor<4>) -> RawPredictions {
         self.head.forward_raw(self.body.forward(input))
     }
 
     #[cfg(feature = "training")]
-    pub fn forward_train_dual(&self, input: Tensor<B, 4>) -> super::head::DualRawPredictions<B> {
+    pub fn forward_train_dual(&self, input: Tensor<4>) -> super::head::DualRawPredictions {
         self.head.forward_dual(self.body.forward(input))
     }
 
@@ -435,9 +420,8 @@ impl<B: Backend> Yolo26L<B> {
     /// Load Montgomery's versioned, half-precision native Burnpack artifact.
     #[cfg(feature = "pretrained")]
     pub fn load_burnpack_weights(&mut self, path: impl Into<PathBuf>) -> Result<(), BurnpackError> {
-        let mut store = BurnpackStore::from_file(path.into())
-            .with_from_adapter(HalfPrecisionAdapter::new())
-            .zero_copy(true);
+        let mut store =
+            BurnpackStore::from_file(path.into()).with_from_adapter(HalfPrecisionAdapter::new());
         self.load_from(&mut store).map(|_| ())
     }
 
@@ -463,15 +447,11 @@ impl<B: Backend> Yolo26L<B> {
 pub struct Yolo26LConfig;
 
 impl Yolo26LConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo26L<B> {
+    pub fn init(&self, device: &Device) -> Yolo26L {
         self.init_with_classes(80, device)
     }
 
-    pub fn init_with_classes<B: Backend>(
-        &self,
-        num_classes: usize,
-        device: &Device<B>,
-    ) -> Yolo26L<B> {
+    pub fn init_with_classes(&self, num_classes: usize, device: &Device) -> Yolo26L {
         Yolo26L {
             body: Yolo26BodyLConfig.init(device),
             head: Yolo26HeadConfig::new(256, 512, 512)
@@ -483,22 +463,22 @@ impl Yolo26LConfig {
 
 /// Native Burn YOLO26x model.
 #[derive(Module, Debug)]
-pub struct Yolo26X<B: Backend> {
-    body: Yolo26BodyLarge<B>,
-    head: Yolo26Head<B>,
+pub struct Yolo26X {
+    body: Yolo26BodyLarge,
+    head: Yolo26Head,
 }
 
-impl<B: Backend> Yolo26X<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> DecodedPredictions<B> {
+impl Yolo26X {
+    pub fn forward(&self, input: Tensor<4>) -> DecodedPredictions {
         self.head.forward(self.body.forward(input))
     }
 
-    pub fn forward_train(&self, input: Tensor<B, 4>) -> RawPredictions<B> {
+    pub fn forward_train(&self, input: Tensor<4>) -> RawPredictions {
         self.head.forward_raw(self.body.forward(input))
     }
 
     #[cfg(feature = "training")]
-    pub fn forward_train_dual(&self, input: Tensor<B, 4>) -> super::head::DualRawPredictions<B> {
+    pub fn forward_train_dual(&self, input: Tensor<4>) -> super::head::DualRawPredictions {
         self.head.forward_dual(self.body.forward(input))
     }
 
@@ -515,9 +495,8 @@ impl<B: Backend> Yolo26X<B> {
     /// Load Montgomery's versioned, half-precision native Burnpack artifact.
     #[cfg(feature = "pretrained")]
     pub fn load_burnpack_weights(&mut self, path: impl Into<PathBuf>) -> Result<(), BurnpackError> {
-        let mut store = BurnpackStore::from_file(path.into())
-            .with_from_adapter(HalfPrecisionAdapter::new())
-            .zero_copy(true);
+        let mut store =
+            BurnpackStore::from_file(path.into()).with_from_adapter(HalfPrecisionAdapter::new());
         self.load_from(&mut store).map(|_| ())
     }
 
@@ -543,15 +522,11 @@ impl<B: Backend> Yolo26X<B> {
 pub struct Yolo26XConfig;
 
 impl Yolo26XConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo26X<B> {
+    pub fn init(&self, device: &Device) -> Yolo26X {
         self.init_with_classes(80, device)
     }
 
-    pub fn init_with_classes<B: Backend>(
-        &self,
-        num_classes: usize,
-        device: &Device<B>,
-    ) -> Yolo26X<B> {
+    pub fn init_with_classes(&self, num_classes: usize, device: &Device) -> Yolo26X {
         Yolo26X {
             body: Yolo26BodyXConfig.init(device),
             head: Yolo26HeadConfig::new(384, 768, 768)
@@ -566,12 +541,9 @@ mod tests {
     use super::*;
     use crate::models::yolo26::body::Yolo26Features;
     use burn::tensor::{ElementConversion, TensorData};
-    use burn_flex::Flex;
+
     use serde::Deserialize;
     use std::collections::BTreeMap;
-
-    #[cfg(feature = "gpu")]
-    use burn::backend::Wgpu;
 
     #[derive(Deserialize)]
     struct GoldenFixture {
@@ -590,7 +562,7 @@ mod tests {
         samples: Vec<(usize, f64)>,
     }
 
-    fn assert_golden<const D: usize>(name: &str, actual: Tensor<Flex, D>, expected: &GoldenTensor) {
+    fn assert_golden<const D: usize>(name: &str, actual: Tensor<D>, expected: &GoldenTensor) {
         assert_eq!(actual.dims().to_vec(), expected.shape, "{name} shape");
         let values: Vec<f64> = actual
             .into_data()
@@ -634,11 +606,7 @@ mod tests {
         }
     }
 
-    fn assert_parity_tensors(
-        features: Yolo26Features<Flex>,
-        head: &Yolo26Head<Flex>,
-        fixture: &GoldenFixture,
-    ) {
+    fn assert_parity_tensors(features: Yolo26Features, head: &Yolo26Head, fixture: &GoldenFixture) {
         let p3 = features.p3.clone();
         let p4 = features.p4.clone();
         let p5 = features.p5.clone();
@@ -674,12 +642,12 @@ mod tests {
         );
     }
 
-    fn load_reference_image(id: &str, device: &Device<Flex>) -> Tensor<Flex, 4> {
+    fn load_reference_image(id: &str, device: &Device) -> Tensor<4> {
         let image = image::open(format!("target/{id}-preprocessed-reference.png"))
             .unwrap()
             .into_rgb8();
         let shape = [image.height() as usize, image.width() as usize, 3];
-        Tensor::<Flex, 3>::from_data(
+        Tensor::<3>::from_data(
             TensorData::new(image.into_raw(), shape).convert::<f32>(),
             device,
         )
@@ -705,7 +673,7 @@ mod tests {
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
                         let device = Default::default();
-                        let mut model = <$config>::default().init::<Flex>(&device);
+                        let mut model = <$config>::default().init(&device);
                         model.load_pytorch_weights(checkpoint).unwrap();
                         let output = model.forward(Tensor::zeros([1, 3, 64, 64], &device));
                         assert_eq!(output.boxes.dims(), [1, 84, 4]);
@@ -739,7 +707,7 @@ mod tests {
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
                         let device = Default::default();
-                        let mut model = <$config>::default().init::<Flex>(&device);
+                        let mut model = <$config>::default().init(&device);
                         model.load_burnpack_weights(checkpoint).unwrap();
                         let input = load_reference_image($id, &device);
                         let features = model.body.forward(input);
@@ -772,9 +740,9 @@ mod tests {
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
                         let device = Default::default();
-                        let mut model = <$config>::default().init::<Flex>(&device);
+                        let mut model = <$config>::default().init(&device);
                         model.load_burnpack_weights(checkpoint).unwrap();
-                        let input = Tensor::<Flex, 4>::zeros([1, 3, 640, 640], &device);
+                        let input = Tensor::<4>::zeros([1, 3, 640, 640], &device);
                         const WARMUP_RUNS: usize = 3;
                         const TIMED_RUNS: usize = 10;
 
@@ -908,9 +876,9 @@ mod tests {
                 let worker = std::thread::Builder::new()
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
-                        let mut model = <$config>::default().init::<Wgpu>(&device);
+                        let mut model = <$config>::default().init(&device);
                         model.load_burnpack_weights(checkpoint).unwrap();
-                        let input = Tensor::<Wgpu, 4>::zeros([1, 3, 640, 640], &device);
+                        let input = Tensor::<4>::zeros([1, 3, 640, 640], &device);
                         const WARMUP_RUNS: usize = 3;
                         const TIMED_RUNS: usize = 10;
 

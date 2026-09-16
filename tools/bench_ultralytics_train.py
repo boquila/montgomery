@@ -16,6 +16,25 @@ import torch
 from ultralytics import YOLO, __version__ as ultralytics_version
 
 
+def no_validation_trainer(base_trainer: type) -> type:
+    """Keep the benchmark's no-validation contract despite forced final-epoch validation.
+
+    Ultralytics validates the final epoch even when ``val=False`` and then validates ``best.pt``
+    again in ``final_eval``. It also strips optimizer state there. The benchmark needs neither:
+    validation is measured separately, and each timed epoch must leave a resumable checkpoint.
+    """
+
+    class NoValidationTrainer(base_trainer):
+        def validate(self):
+            return {}, 0.0
+
+        def final_eval(self) -> None:
+            return None
+
+    NoValidationTrainer.__name__ = f"NoValidation{base_trainer.__name__}"
+    return NoValidationTrainer
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("checkpoint", type=Path)
@@ -40,7 +59,9 @@ def main() -> None:
     torch.cuda.synchronize()
     started = time.perf_counter()
     model = YOLO(args.checkpoint)
+    trainer = None if args.val else no_validation_trainer(model._smart_load("trainer"))
     model.train(
+        trainer=trainer,
         data=args.dataset,
         epochs=args.epochs,
         batch=args.batch,
@@ -88,6 +109,9 @@ def main() -> None:
                 "imgsz": args.imgsz,
                 "workers": args.workers,
                 "seed": args.seed,
+                "validation": args.val,
+                "forced_final_validation_disabled": not args.val,
+                "checkpoints_remain_resumable": not args.val,
                 "seconds": elapsed,
             },
             indent=2,

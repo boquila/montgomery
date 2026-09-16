@@ -1,24 +1,73 @@
 use std::collections::BTreeMap;
 
-use burn::tensor::{Tensor, Transaction, activation::log_sigmoid, backend::Backend};
+use burn::tensor::{Tensor, Transaction, activation::log_sigmoid};
 
 /// Differentiable scalar plus detached diagnostics returned by every native criterion.
 ///
 /// Assignment is deliberately allowed to synchronize detached predictions to the host, but the
 /// `total` tensor always remains connected to the original model output.
-pub struct LossOutput<B: Backend> {
-    pub total: Tensor<B, 1>,
-    /// Host diagnostic captured by the criterion's single scalar synchronization.
+pub struct LossOutput {
+    pub total: Tensor<1>,
+    /// Host diagnostic when the criterion already had to synchronize for its result.
     pub total_value: f32,
-    /// A component that can be read with the other deferred totals once the epoch is complete.
-    pub deferred_component: Option<&'static str>,
+    /// Detached scalar diagnostics read together by the engine instead of synchronizing each
+    /// microbatch. A scalar may update the event total, a named component, or both.
+    pub deferred: Vec<DeferredScalar>,
     pub components: BTreeMap<String, f32>,
     pub targets: usize,
     pub foreground: usize,
     pub finite: bool,
 }
 
-pub fn scalar_value<B: Backend>(value: Tensor<B, 1>) -> f32 {
+pub struct DeferredScalar {
+    pub value: Tensor<1>,
+    pub component: Option<String>,
+    pub total: bool,
+}
+
+impl DeferredScalar {
+    pub fn total(value: Tensor<1>) -> Self {
+        Self {
+            value: value.detach(),
+            component: None,
+            total: true,
+        }
+    }
+
+    pub fn component(name: impl Into<String>, value: Tensor<1>) -> Self {
+        Self {
+            value: value.detach(),
+            component: Some(name.into()),
+            total: false,
+        }
+    }
+
+    pub fn total_and_component(name: impl Into<String>, value: Tensor<1>) -> Self {
+        Self {
+            value: value.detach(),
+            component: Some(name.into()),
+            total: true,
+        }
+    }
+}
+
+impl LossOutput {
+    pub fn has_deferred_total(&self) -> bool {
+        self.deferred.iter().any(|value| value.total)
+    }
+
+    pub fn replace_deferred_total(&mut self) {
+        self.deferred.retain(|value| !value.total);
+        self.deferred
+            .push(DeferredScalar::total(self.total.clone()));
+    }
+
+    pub fn defer_component(&mut self, name: impl Into<String>, value: Tensor<1>) {
+        self.deferred.push(DeferredScalar::component(name, value));
+    }
+}
+
+pub fn scalar_value(value: Tensor<1>) -> f32 {
     value
         .detach()
         .into_data()
@@ -27,7 +76,7 @@ pub fn scalar_value<B: Backend>(value: Tensor<B, 1>) -> f32 {
 }
 
 /// Read several detached scalar diagnostics with a single backend synchronization.
-pub fn scalar_values<B: Backend, const N: usize>(values: [Tensor<B, 1>; N]) -> [f32; N] {
+pub fn scalar_values<const N: usize>(values: [Tensor<1>; N]) -> [f32; N] {
     let transaction = values
         .into_iter()
         .fold(Transaction::default(), |transaction, value| {
@@ -42,7 +91,7 @@ pub fn scalar_values<B: Backend, const N: usize>(values: [Tensor<B, 1>; N]) -> [
     })
 }
 
-pub fn connected_zero<B: Backend, const D: usize>(tensor: Tensor<B, D>) -> Tensor<B, 1> {
+pub fn connected_zero<const D: usize>(tensor: Tensor<D>) -> Tensor<1> {
     tensor.sum() * 0.0
 }
 
@@ -52,10 +101,7 @@ pub fn bce_with_logits(logit: f32, target: f32) -> f32 {
 }
 
 /// Elementwise differentiable BCE-with-logits for Burn training graphs.
-pub fn bce_with_logits_tensor<B: Backend, const D: usize>(
-    logits: Tensor<B, D>,
-    targets: Tensor<B, D>,
-) -> Tensor<B, D> {
+pub fn bce_with_logits_tensor<const D: usize>(logits: Tensor<D>, targets: Tensor<D>) -> Tensor<D> {
     (targets.neg() + 1.0) * logits.clone() - log_sigmoid(logits)
 }
 
@@ -105,14 +151,13 @@ mod tests {
     #[test]
     fn tensor_bce_matches_scalar_reference() {
         use burn::tensor::Tensor;
-        use burn_flex::Flex;
 
         let device = Default::default();
         let logits = [-100.0, -2.0, 0.0, 2.0, 100.0];
         let targets = [0.0, 1.0, 0.0, 1.0, 1.0];
         let actual = bce_with_logits_tensor(
-            Tensor::<Flex, 1>::from_floats(logits, &device),
-            Tensor::<Flex, 1>::from_floats(targets, &device),
+            Tensor::<1>::from_floats(logits, &device),
+            Tensor::<1>::from_floats(targets, &device),
         )
         .into_data();
         let actual = actual.as_slice::<f32>().unwrap();

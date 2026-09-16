@@ -1,29 +1,28 @@
 use burn::{
-    backend::{Autodiff, Wgpu},
     module::{AutodiffModule, Module},
     nn::{
         BatchNorm, BatchNormConfig,
         conv::{Conv2d, Conv2dConfig},
     },
-    optim::{GradientsParams, Optimizer, SgdConfig},
-    tensor::{Distribution, Tensor},
+    optim::{GradientsParams, SgdConfig},
+    tensor::{Device, Distribution, Tensor},
 };
 
 #[derive(Module, Debug)]
-struct Spike<B: burn::tensor::backend::Backend> {
-    conv: Conv2d<B>,
-    bn: BatchNorm<B>,
+struct Spike {
+    conv: Conv2d,
+    bn: BatchNorm,
 }
 
-impl<B: burn::tensor::backend::Backend> Spike<B> {
-    fn init(device: &B::Device) -> Self {
+impl Spike {
+    fn init(device: &Device) -> Self {
         Self {
             conv: Conv2dConfig::new([3, 4], [3, 3]).init(device),
             bn: BatchNormConfig::new(4).init(device),
         }
     }
 
-    fn forward(&self, input: Tensor<B, 4>) -> Tensor<B, 1> {
+    fn forward(&self, input: Tensor<4>) -> Tensor<1> {
         self.bn
             .forward(self.conv.forward(input))
             .powf_scalar(2.0)
@@ -36,9 +35,9 @@ impl<B: burn::tensor::backend::Backend> Spike<B> {
 #[test]
 #[ignore = "requires a local WGPU adapter"]
 fn wgpu_autodiff_capability() {
-    type TrainBackend = Autodiff<Wgpu>;
     let (device, _) = crate::default_wgpu_device();
-    let model = Spike::<TrainBackend>::init(&device);
+    let device = device.autodiff();
+    let model = Spike::init(&device);
     let input = Tensor::random([2, 3, 16, 16], Distribution::Default, &device);
     let loss = model.forward(input);
     let grads = GradientsParams::from_grads(loss.backward(), &model);
@@ -55,19 +54,19 @@ fn wgpu_autodiff_capability() {
 
 #[test]
 fn validation_backend_does_not_mutate_batch_norm_state() {
-    type TrainBackend = Autodiff<burn_flex::Flex>;
-    let device = Default::default();
-    let model = Spike::<TrainBackend>::init(&device);
+    let device = Device::default().autodiff();
+    let model = Spike::init(&device);
     let input = Tensor::random([2, 3, 16, 16], Distribution::Default, &device);
     let _ = model.forward(input).into_data();
     let valid = model.valid();
+    let valid_device = device.inner();
     let before_mean = valid.bn.running_mean.value().into_data();
     let before_var = valid.bn.running_var.value().into_data();
     let _ = valid
         .forward(Tensor::random(
             [2, 3, 16, 16],
             Distribution::Default,
-            &device,
+            &valid_device,
         ))
         .into_data();
     assert_eq!(before_mean, valid.bn.running_mean.value().into_data());

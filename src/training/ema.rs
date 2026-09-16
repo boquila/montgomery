@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use burn::{
     module::{Module, ModuleMapper, ModuleVisitor, Param},
     optim::GradientsParams,
-    tensor::{Tensor, backend::Backend},
+    tensor::Tensor,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -52,16 +52,15 @@ impl EmaState {
 /// Tensors are paired by stable parameter ID through Burn's dimension-erased parameter container,
 /// then blended on the backend device. This covers trainable parameters and BN running state
 /// without synchronizing every tensor to the host.
-pub fn update_model<B, M>(ema: M, current: &M, state: &mut EmaState) -> Result<M, &'static str>
+pub fn update_model<M>(ema: M, current: &M, state: &mut EmaState) -> Result<M, &'static str>
 where
-    B: Backend,
-    M: Module<B>,
+    M: Module,
 {
     struct Collector {
         values: GradientsParams,
     }
-    impl<B: Backend> ModuleVisitor<B> for Collector {
-        fn visit_float<const D: usize>(&mut self, param: &Param<Tensor<B, D>>) {
+    impl ModuleVisitor for Collector {
+        fn visit_float<const D: usize>(&mut self, param: &Param<Tensor<D>>) {
             self.values.register(param.id, param.val());
         }
     }
@@ -75,10 +74,10 @@ where
         decay: f32,
         error: Option<&'static str>,
     }
-    impl<B: Backend> ModuleMapper<B> for EmaMapper {
-        fn map_float<const D: usize>(&mut self, param: Param<Tensor<B, D>>) -> Param<Tensor<B, D>> {
+    impl ModuleMapper for EmaMapper {
+        fn map_float<const D: usize>(&mut self, param: Param<Tensor<D>>) -> Param<Tensor<D>> {
             let (id, tensor, mapper) = param.consume();
-            let Some(current) = self.current.remove::<B, D>(id) else {
+            let Some(current) = self.current.remove::<D>(id) else {
                 self.error = Some("EMA model parameter IDs differ from current model");
                 return Param::from_mapped_value(id, tensor, mapper);
             };
@@ -109,7 +108,6 @@ where
 mod tests {
     use super::*;
     use burn::{module::ModuleMapper, nn::LinearConfig};
-    use burn_flex::Flex;
 
     #[test]
     fn updates_once_and_persists_counter() {
@@ -125,21 +123,18 @@ mod tests {
     #[test]
     fn model_ema_updates_parameters_by_stable_id() {
         struct AddOne;
-        impl ModuleMapper<Flex> for AddOne {
-            fn map_float<const D: usize>(
-                &mut self,
-                param: Param<Tensor<Flex, D>>,
-            ) -> Param<Tensor<Flex, D>> {
+        impl ModuleMapper for AddOne {
+            fn map_float<const D: usize>(&mut self, param: Param<Tensor<D>>) -> Param<Tensor<D>> {
                 let (id, value, mapper) = param.consume();
                 Param::from_mapped_value(id, value + 1.0, mapper)
             }
         }
         let device = Default::default();
-        let initial = LinearConfig::new(2, 2).init::<Flex>(&device);
+        let initial = LinearConfig::new(2, 2).init(&device);
         let current = initial.clone().map(&mut AddOne);
         let mut state = EmaState::new(0.9999).unwrap();
-        let ema = update_model::<Flex, _>(initial.clone(), &current, &mut state).unwrap();
-        let input = Tensor::<Flex, 2>::ones([1, 2], &device);
+        let ema = update_model(initial.clone(), &current, &mut state).unwrap();
+        let input = Tensor::<2>::ones([1, 2], &device);
         let before = initial.forward(input.clone()).into_data();
         let after = ema.forward(input.clone()).into_data();
         let target = current.forward(input).into_data();

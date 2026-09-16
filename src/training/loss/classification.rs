@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
-use burn::tensor::{Int, Tensor, activation, backend::Backend};
+use burn::tensor::{Int, Tensor, activation};
 
-use super::common::{LossOutput, cross_entropy};
+use super::common::{DeferredScalar, LossOutput, cross_entropy};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ClassificationMetrics {
@@ -51,21 +51,21 @@ pub fn classification_loss(
 }
 
 /// Mean differentiable cross entropy from raw classifier logits.
-pub fn tensor_loss<B: Backend>(
-    logits: Tensor<B, 2>,
-    classes: Tensor<B, 1, Int>,
-) -> Result<LossOutput<B>, &'static str> {
+pub fn tensor_loss(logits: Tensor<2>, classes: Tensor<1, Int>) -> Result<LossOutput, &'static str> {
     let [batch, num_classes] = logits.dims();
     if batch == 0 || num_classes == 0 || classes.dims() != [batch] {
         return Err("classification logits/classes have invalid shapes");
     }
-    let targets: Tensor<B, 2, Int> = classes.one_hot(num_classes);
+    let targets: Tensor<2, Int> = classes.one_hot(num_classes);
     let targets = targets.float();
     let total = -(activation::log_softmax(logits, 1) * targets).sum() / batch as f64;
     Ok(LossOutput {
+        deferred: vec![DeferredScalar::total_and_component(
+            "classification_loss",
+            total.clone(),
+        )],
         total,
         total_value: 0.0,
-        deferred_component: Some("classification_loss"),
         components: BTreeMap::new(),
         targets: batch,
         foreground: batch,

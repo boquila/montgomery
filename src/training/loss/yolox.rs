@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use burn::tensor::{Tensor, TensorData, backend::Backend};
+use burn::tensor::{Tensor, TensorData};
 
 use crate::{
     models::yolox::RawPredictions,
@@ -10,7 +10,7 @@ use crate::{
     },
 };
 
-use super::common::{LossOutput, bce_with_logits, bce_with_logits_tensor, scalar_values};
+use super::common::{DeferredScalar, LossOutput, bce_with_logits, bce_with_logits_tensor};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct YoloxLoss {
@@ -110,11 +110,11 @@ fn encode_l1(gt: &GroundTruth, prediction: &AnchorPrediction) -> [f32; 4] {
 /// Differentiable YOLOX criterion with deterministic detached SimOTA assignment.
 ///
 /// Assignment uses detached host values; loss terms stay on the original differentiable graph.
-pub fn tensor_loss<B: Backend>(
-    output: RawPredictions<B>,
+pub fn tensor_loss(
+    output: RawPredictions,
     targets: &[Vec<GroundTruth>],
     use_l1: bool,
-) -> Result<LossOutput<B>, &'static str> {
+) -> Result<LossOutput, &'static str> {
     let [batch, anchors, classes] = output.class_logits.dims();
     if targets.len() != batch || classes == 0 {
         return Err("YOLOX target batch or class count does not match predictions");
@@ -253,32 +253,21 @@ pub fn tensor_loss<B: Backend>(
         + objectness_loss.clone()
         + classification_loss.clone()
         + l1_loss.clone();
-    let [
-        iou_value,
-        objectness_value,
-        classification_value,
-        l1_value,
-        value,
-    ] = scalar_values([
-        iou_loss,
-        objectness_loss,
-        classification_loss,
-        l1_loss,
-        total.clone(),
-    ]);
-    let mut components = BTreeMap::new();
-    components.insert("iou_loss".into(), iou_value);
-    components.insert("objectness_loss".into(), objectness_value);
-    components.insert("classification_loss".into(), classification_value);
-    components.insert("l1_loss".into(), l1_value);
+    let deferred = vec![
+        DeferredScalar::component("iou_loss", iou_loss),
+        DeferredScalar::component("objectness_loss", objectness_loss),
+        DeferredScalar::component("classification_loss", classification_loss),
+        DeferredScalar::component("l1_loss", l1_loss),
+        DeferredScalar::total(total.clone()),
+    ];
     Ok(LossOutput {
         total,
-        total_value: value,
-        deferred_component: None,
-        components,
+        total_value: 0.0,
+        deferred,
+        components: BTreeMap::new(),
         targets: gt_count,
         foreground: foreground_count,
-        finite: value.is_finite(),
+        finite: true,
     })
 }
 

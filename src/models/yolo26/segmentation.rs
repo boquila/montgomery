@@ -9,19 +9,20 @@
 //! conv/upsample/conv/proto projection at stride 4.
 //!
 //! Because YOLO26 is end-to-end (`end2end = True`), the head output rows are already top-300
-//! selected with the raw mask coefficients gathered along — the runtime applies the same
+//! selected with the raw mask coefficients gathered along â€” the runtime applies the same
 //! score filter and no NMS, then assembles masks exactly like `ops.process_mask(upsample=True)`.
 
 use burn::{
     module::Module,
     nn::conv::{Conv2d, Conv2dConfig, ConvTranspose2d, ConvTranspose2dConfig},
-    tensor::{Device, Tensor, backend::Backend},
+    tensor::{Device, Tensor},
 };
 
 #[cfg(feature = "pretrained")]
+use burn_pack::Error as BurnpackError;
+#[cfg(feature = "pretrained")]
 use burn_store::{
-    BurnpackError, BurnpackStore, HalfPrecisionAdapter, ModuleSnapshot, PytorchStore,
-    PytorchStoreError,
+    BurnpackStore, HalfPrecisionAdapter, ModuleSnapshot, PytorchStore, PytorchStoreError,
 };
 
 use super::blocks::{Conv, ConvConfig};
@@ -42,34 +43,29 @@ pub const NUM_MASKS: usize = 32;
 /// remapping. The semantic tower exists only in training builds and is therefore absent from the
 /// default inference graph.
 #[derive(Module, Debug)]
-pub struct Proto26<B: Backend> {
-    cv1: Conv<B>,
-    upsample: ConvTranspose2d<B>,
-    cv2: Conv<B>,
-    cv3: Conv<B>,
-    feat_refine_0: Conv<B>,
-    feat_refine_1: Conv<B>,
-    feat_fuse: Conv<B>,
+pub struct Proto26 {
+    cv1: Conv,
+    upsample: ConvTranspose2d,
+    cv2: Conv,
+    cv3: Conv,
+    feat_refine_0: Conv,
+    feat_refine_1: Conv,
+    feat_fuse: Conv,
     #[cfg(feature = "training")]
-    sem_0: Conv<B>,
+    sem_0: Conv,
     #[cfg(feature = "training")]
-    sem_1: Conv<B>,
+    sem_1: Conv,
     #[cfg(feature = "training")]
-    sem_out: Conv2d<B>,
+    sem_out: Conv2d,
 }
 
-impl<B: Backend> Proto26<B> {
+impl Proto26 {
     /// Fuse the P4/P5 features onto P3 and project to the prototype maps at stride 4.
-    pub fn forward(&self, p3: Tensor<B, 4>, p4: Tensor<B, 4>, p5: Tensor<B, 4>) -> Tensor<B, 4> {
+    pub fn forward(&self, p3: Tensor<4>, p4: Tensor<4>, p5: Tensor<4>) -> Tensor<4> {
         self.forward_fused(p3, p4, p5).0
     }
 
-    fn forward_fused(
-        &self,
-        p3: Tensor<B, 4>,
-        p4: Tensor<B, 4>,
-        p5: Tensor<B, 4>,
-    ) -> (Tensor<B, 4>, Tensor<B, 4>) {
+    fn forward_fused(&self, p3: Tensor<4>, p4: Tensor<4>, p5: Tensor<4>) -> (Tensor<4>, Tensor<4>) {
         let feat = p3 + super::blocks::upsample_nearest_2x(self.feat_refine_0.forward(p4));
         let feat = feat
             + super::blocks::upsample_nearest_2x(super::blocks::upsample_nearest_2x(
@@ -104,7 +100,7 @@ struct Proto26Config {
 }
 
 impl Proto26Config {
-    fn init<B: Backend>(&self, device: &Device<B>) -> Proto26<B> {
+    fn init(&self, device: &Device) -> Proto26 {
         Proto26 {
             cv1: ConvConfig::new(self.hidden_channels, self.hidden_channels, 3, 1).init(device),
             upsample: ConvTranspose2dConfig::new(
@@ -136,14 +132,14 @@ impl Proto26Config {
 /// light DWConv classification flavor). Field names match the official `one2one_cv4` checkpoint
 /// keys after remapping.
 #[derive(Module, Debug)]
-struct MaskBranch<B: Backend> {
-    mask_0: Conv<B>,
-    mask_1: Conv<B>,
-    mask_out: Conv2d<B>,
+struct MaskBranch {
+    mask_0: Conv,
+    mask_1: Conv,
+    mask_out: Conv2d,
 }
 
-impl<B: Backend> MaskBranch<B> {
-    fn forward(&self, input: Tensor<B, 4>) -> Tensor<B, 3> {
+impl MaskBranch {
+    fn forward(&self, input: Tensor<4>) -> Tensor<3> {
         let [batch, _, height, width] = input.dims();
         let x = self.mask_1.forward(self.mask_0.forward(input));
         self.mask_out
@@ -158,7 +154,7 @@ struct MaskBranchConfig {
 }
 
 impl MaskBranchConfig {
-    fn init<B: Backend>(&self, device: &Device<B>) -> MaskBranch<B> {
+    fn init(&self, device: &Device) -> MaskBranch {
         MaskBranch {
             mask_0: ConvConfig::new(self.input_channels, self.mask_channels, 3, 1).init(device),
             mask_1: ConvConfig::new(self.mask_channels, self.mask_channels, 3, 1).init(device),
@@ -170,49 +166,46 @@ impl MaskBranchConfig {
 }
 
 /// YOLO26-seg model output: the shared end-to-end detection decode plus the mask tensors.
-pub struct SegmentOutput<B: Backend> {
+pub struct SegmentOutput {
     /// Decoded end-to-end detection predictions in model-input space.
-    pub decoded: DecodedPredictions<B>,
+    pub decoded: DecodedPredictions,
     /// Raw (unnormalized) mask coefficients, `[batch, num_masks, anchors]`.
-    pub coefficients: Tensor<B, 3>,
+    pub coefficients: Tensor<3>,
     /// Mask prototypes, `[batch, num_masks, proto_height, proto_width]` at stride 4.
-    pub prototypes: Tensor<B, 4>,
+    pub prototypes: Tensor<4>,
 }
 
 #[cfg(feature = "training")]
-pub struct DualSegmentTrainOutput<B: Backend> {
-    pub detection: DualRawPredictions<B>,
-    pub one_to_many_coefficients: Tensor<B, 3>,
-    pub one_to_one_coefficients: Tensor<B, 3>,
-    pub one_to_many_prototypes: Tensor<B, 4>,
-    pub one_to_one_prototypes: Tensor<B, 4>,
-    pub one_to_many_semantic: Tensor<B, 4>,
-    pub one_to_one_semantic: Tensor<B, 4>,
+pub struct DualSegmentTrainOutput {
+    pub detection: DualRawPredictions,
+    pub one_to_many_coefficients: Tensor<3>,
+    pub one_to_one_coefficients: Tensor<3>,
+    pub one_to_many_prototypes: Tensor<4>,
+    pub one_to_one_prototypes: Tensor<4>,
+    pub one_to_many_semantic: Tensor<4>,
+    pub one_to_one_semantic: Tensor<4>,
 }
 
 /// Ultralytics YOLO26 `Segment26` head: the shared end-to-end detect head plus the Proto26 module
 /// and one one2one mask-coefficient branch per scale.
 #[derive(Module, Debug)]
-pub struct Yolo26SegHead<B: Backend> {
-    detect: Yolo26Head<B>,
-    proto: Proto26<B>,
-    p3_mask: MaskBranch<B>,
-    p4_mask: MaskBranch<B>,
-    p5_mask: MaskBranch<B>,
+pub struct Yolo26SegHead {
+    detect: Yolo26Head,
+    proto: Proto26,
+    p3_mask: MaskBranch,
+    p4_mask: MaskBranch,
+    p5_mask: MaskBranch,
     #[cfg(feature = "training")]
-    o2m_p3_mask: MaskBranch<B>,
+    o2m_p3_mask: MaskBranch,
     #[cfg(feature = "training")]
-    o2m_p4_mask: MaskBranch<B>,
+    o2m_p4_mask: MaskBranch,
     #[cfg(feature = "training")]
-    o2m_p5_mask: MaskBranch<B>,
+    o2m_p5_mask: MaskBranch,
 }
 
-impl<B: Backend> Yolo26SegHead<B> {
+impl Yolo26SegHead {
     #[cfg(feature = "training")]
-    pub fn forward_train(
-        &self,
-        features: super::body::Yolo26Features<B>,
-    ) -> DualSegmentTrainOutput<B> {
+    pub fn forward_train(&self, features: super::body::Yolo26Features) -> DualSegmentTrainOutput {
         let super::body::Yolo26Features { p3, p4, p5 } = features;
         let detection = self.detect.forward_dual(super::body::Yolo26Features {
             p3: p3.clone(),
@@ -247,7 +240,7 @@ impl<B: Backend> Yolo26SegHead<B> {
         }
     }
 
-    pub fn forward(&self, features: super::body::Yolo26Features<B>) -> SegmentOutput<B> {
+    pub fn forward(&self, features: super::body::Yolo26Features) -> SegmentOutput {
         let coefficients = Tensor::cat(
             vec![
                 self.p3_mask.forward(features.p3.clone()),
@@ -313,7 +306,7 @@ impl Yolo26SegHeadConfig {
         self
     }
 
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo26SegHead<B> {
+    pub fn init(&self, device: &Device) -> Yolo26SegHead {
         Yolo26SegHead {
             detect: Yolo26HeadConfig::new(self.p3_channels, self.p4_channels, self.p5_channels)
                 .with_num_classes(self.num_classes)
@@ -574,18 +567,18 @@ macro_rules! seg_model {
     ($model:ident, $config:ident, $body_struct:ident, $id:literal, $doc:expr) => {
         #[doc = $doc]
         #[derive(Module, Debug)]
-        pub struct $model<B: Backend> {
-            body: $body_struct<B>,
-            head: Yolo26SegHead<B>,
+        pub struct $model {
+            body: $body_struct,
+            head: Yolo26SegHead,
         }
 
-        impl<B: Backend> $model<B> {
-            pub fn forward(&self, input: Tensor<B, 4>) -> SegmentOutput<B> {
+        impl $model {
+            pub fn forward(&self, input: Tensor<4>) -> SegmentOutput {
                 self.head.forward(self.body.forward(input))
             }
 
             #[cfg(feature = "training")]
-            pub fn forward_train(&self, input: Tensor<B, 4>) -> DualSegmentTrainOutput<B> {
+            pub fn forward_train(&self, input: Tensor<4>) -> DualSegmentTrainOutput {
                 self.head.forward_train(self.body.forward(input))
             }
 
@@ -606,8 +599,7 @@ macro_rules! seg_model {
                 path: impl Into<std::path::PathBuf>,
             ) -> Result<(), BurnpackError> {
                 let mut store = BurnpackStore::from_file(path.into())
-                    .with_from_adapter(HalfPrecisionAdapter::new())
-                    .zero_copy(true);
+                    .with_from_adapter(HalfPrecisionAdapter::new());
                 self.load_from(&mut store).map(|_| ())
             }
 
@@ -671,14 +663,10 @@ seg_model!(
 );
 
 impl Yolo26SegNConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo26SegN<B> {
+    pub fn init(&self, device: &Device) -> Yolo26SegN {
         self.init_with_classes(80, device)
     }
-    pub fn init_with_classes<B: Backend>(
-        &self,
-        classes: usize,
-        device: &Device<B>,
-    ) -> Yolo26SegN<B> {
+    pub fn init_with_classes(&self, classes: usize, device: &Device) -> Yolo26SegN {
         Yolo26SegN {
             body: super::body::Yolo26BodyNConfig.init(device),
             head: Yolo26SegHeadConfig::new(64, 128, 256, 64)
@@ -689,14 +677,10 @@ impl Yolo26SegNConfig {
 }
 
 impl Yolo26SegSConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo26SegS<B> {
+    pub fn init(&self, device: &Device) -> Yolo26SegS {
         self.init_with_classes(80, device)
     }
-    pub fn init_with_classes<B: Backend>(
-        &self,
-        classes: usize,
-        device: &Device<B>,
-    ) -> Yolo26SegS<B> {
+    pub fn init_with_classes(&self, classes: usize, device: &Device) -> Yolo26SegS {
         Yolo26SegS {
             body: super::body::Yolo26BodySConfig.init(device),
             head: Yolo26SegHeadConfig::new(128, 256, 512, 128)
@@ -707,14 +691,10 @@ impl Yolo26SegSConfig {
 }
 
 impl Yolo26SegMConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo26SegM<B> {
+    pub fn init(&self, device: &Device) -> Yolo26SegM {
         self.init_with_classes(80, device)
     }
-    pub fn init_with_classes<B: Backend>(
-        &self,
-        classes: usize,
-        device: &Device<B>,
-    ) -> Yolo26SegM<B> {
+    pub fn init_with_classes(&self, classes: usize, device: &Device) -> Yolo26SegM {
         Yolo26SegM {
             body: super::body::Yolo26BodyMConfig.init(device),
             head: Yolo26SegHeadConfig::new(256, 512, 512, 256)
@@ -725,14 +705,10 @@ impl Yolo26SegMConfig {
 }
 
 impl Yolo26SegLConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo26SegL<B> {
+    pub fn init(&self, device: &Device) -> Yolo26SegL {
         self.init_with_classes(80, device)
     }
-    pub fn init_with_classes<B: Backend>(
-        &self,
-        classes: usize,
-        device: &Device<B>,
-    ) -> Yolo26SegL<B> {
+    pub fn init_with_classes(&self, classes: usize, device: &Device) -> Yolo26SegL {
         Yolo26SegL {
             body: super::body::Yolo26BodyLConfig.init(device),
             head: Yolo26SegHeadConfig::new(256, 512, 512, 256)
@@ -743,14 +719,10 @@ impl Yolo26SegLConfig {
 }
 
 impl Yolo26SegXConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo26SegX<B> {
+    pub fn init(&self, device: &Device) -> Yolo26SegX {
         self.init_with_classes(80, device)
     }
-    pub fn init_with_classes<B: Backend>(
-        &self,
-        classes: usize,
-        device: &Device<B>,
-    ) -> Yolo26SegX<B> {
+    pub fn init_with_classes(&self, classes: usize, device: &Device) -> Yolo26SegX {
         Yolo26SegX {
             body: super::body::Yolo26BodyXConfig.init(device),
             head: Yolo26SegHeadConfig::new(384, 768, 768, 384)
@@ -765,7 +737,7 @@ mod parity_tests {
     use super::*;
     use crate::models::yolo26::body::Yolo26Features;
     use burn::tensor::{ElementConversion, TensorData};
-    use burn_flex::Flex;
+
     use serde::Deserialize;
     use std::collections::BTreeMap;
 
@@ -786,7 +758,7 @@ mod parity_tests {
         samples: Vec<(usize, f64)>,
     }
 
-    fn assert_golden<const D: usize>(name: &str, actual: Tensor<Flex, D>, expected: &GoldenTensor) {
+    fn assert_golden<const D: usize>(name: &str, actual: Tensor<D>, expected: &GoldenTensor) {
         assert_eq!(actual.dims().to_vec(), expected.shape, "{name} shape");
         let values: Vec<f64> = actual
             .into_data()
@@ -830,12 +802,12 @@ mod parity_tests {
         }
     }
 
-    fn load_reference_image(id: &str, device: &Device<Flex>) -> Tensor<Flex, 4> {
+    fn load_reference_image(id: &str, device: &Device) -> Tensor<4> {
         let image = image::open(format!("target/{id}-preprocessed-reference.png"))
             .unwrap()
             .into_rgb8();
         let shape = [image.height() as usize, image.width() as usize, 3];
-        Tensor::<Flex, 3>::from_data(
+        Tensor::<3>::from_data(
             TensorData::new(image.into_raw(), shape).convert::<f32>(),
             device,
         )
@@ -861,7 +833,7 @@ mod parity_tests {
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
                         let device = Default::default();
-                        let mut model = <$config>::default().init::<Flex>(&device);
+                        let mut model = <$config>::default().init(&device);
                         model.load_pytorch_weights(checkpoint).unwrap();
                         let output = model.forward(Tensor::zeros([1, 3, 64, 64], &device));
                         assert_eq!(output.decoded.boxes.dims(), [1, 84, 4]);
@@ -900,7 +872,7 @@ mod parity_tests {
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
                         let device = Default::default();
-                        let mut model = <$config>::default().init::<Flex>(&device);
+                        let mut model = <$config>::default().init(&device);
                         model.load_burnpack_weights(checkpoint).unwrap();
                         let features = model.body.forward(load_reference_image($id, &device));
                         let raw = model.head.detect.forward_raw(Yolo26Features {
@@ -968,9 +940,9 @@ mod parity_tests {
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
                         let device = Default::default();
-                        let mut model = <$config>::default().init::<Flex>(&device);
+                        let mut model = <$config>::default().init(&device);
                         model.load_burnpack_weights(checkpoint).unwrap();
-                        let input = Tensor::<Flex, 4>::zeros([1, 3, 640, 640], &device);
+                        let input = Tensor::<4>::zeros([1, 3, 640, 640], &device);
                         const WARMUP_RUNS: usize = 3;
                         const TIMED_RUNS: usize = 10;
 
@@ -1021,9 +993,9 @@ mod parity_tests {
                 let worker = std::thread::Builder::new()
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
-                        let mut model = <$config>::default().init::<burn::backend::Wgpu>(&device);
+                        let mut model = <$config>::default().init(&device);
                         model.load_burnpack_weights(checkpoint).unwrap();
-                        let input = Tensor::<burn::backend::Wgpu, 4>::zeros([1, 3, 640, 640], &device);
+                        let input = Tensor::<4>::zeros([1, 3, 640, 640], &device);
                         const WARMUP_RUNS: usize = 3;
                         const TIMED_RUNS: usize = 10;
 

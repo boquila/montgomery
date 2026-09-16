@@ -1,6 +1,6 @@
 use burn::{
     module::Module,
-    tensor::{Device, Tensor, backend::Backend},
+    tensor::{Device, Tensor},
 };
 
 use super::{
@@ -11,26 +11,26 @@ use super::{
 #[cfg(feature = "pretrained")]
 use {
     super::weights,
+    burn_pack::Error as BurnpackError,
     burn_store::{
-        BurnpackError, BurnpackStore, HalfPrecisionAdapter, ModuleSnapshot, PytorchStore,
-        PytorchStoreError,
+        BurnpackStore, HalfPrecisionAdapter, ModuleSnapshot, PytorchStore, PytorchStoreError,
     },
     std::path::PathBuf,
 };
 
 /// Native Burn YOLOv3-Tiny-Ultralytics model.
 #[derive(Module, Debug)]
-pub struct Yolov3Tiny<B: Backend> {
-    body: Yolov3TinyBody<B>,
-    head: DetectHead<B>,
+pub struct Yolov3Tiny {
+    body: Yolov3TinyBody,
+    head: DetectHead,
 }
 
-impl<B: Backend> Yolov3Tiny<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> DecodedPredictions<B> {
+impl Yolov3Tiny {
+    pub fn forward(&self, input: Tensor<4>) -> DecodedPredictions {
         self.head.forward(self.body.forward(input))
     }
 
-    pub fn forward_train(&self, input: Tensor<B, 4>) -> RawPredictions<B> {
+    pub fn forward_train(&self, input: Tensor<4>) -> RawPredictions {
         self.head.forward_raw(self.body.forward(input))
     }
 
@@ -63,9 +63,8 @@ impl<B: Backend> Yolov3Tiny<B> {
     /// Load Montgomery's versioned, half-precision native Burnpack artifact.
     #[cfg(feature = "pretrained")]
     pub fn load_burnpack_weights(&mut self, path: impl Into<PathBuf>) -> Result<(), BurnpackError> {
-        let mut store = BurnpackStore::from_file(path.into())
-            .with_from_adapter(HalfPrecisionAdapter::new())
-            .zero_copy(true);
+        let mut store =
+            BurnpackStore::from_file(path.into()).with_from_adapter(HalfPrecisionAdapter::new());
         self.load_from(&mut store).map(|_| ())
     }
 
@@ -88,15 +87,11 @@ impl<B: Backend> Yolov3Tiny<B> {
 pub struct Yolov3TinyConfig;
 
 impl Yolov3TinyConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov3Tiny<B> {
+    pub fn init(&self, device: &Device) -> Yolov3Tiny {
         self.init_with_classes(80, device)
     }
 
-    pub fn init_with_classes<B: Backend>(
-        &self,
-        num_classes: usize,
-        device: &Device<B>,
-    ) -> Yolov3Tiny<B> {
+    pub fn init_with_classes(&self, num_classes: usize, device: &Device) -> Yolov3Tiny {
         assert!(num_classes > 0, "class count must be positive");
         Yolov3Tiny {
             body: Yolov3TinyBodyConfig.init(device),
@@ -110,7 +105,7 @@ mod tests {
     use super::*;
     use crate::models::yolov3_tiny::body::Yolov3TinyFeatures;
     use burn::tensor::{ElementConversion, TensorData};
-    use burn_flex::Flex;
+
     use serde::Deserialize;
     use std::collections::BTreeMap;
 
@@ -131,7 +126,7 @@ mod tests {
         samples: Vec<(usize, f64)>,
     }
 
-    fn assert_golden<const D: usize>(name: &str, actual: Tensor<Flex, D>, expected: &GoldenTensor) {
+    fn assert_golden<const D: usize>(name: &str, actual: Tensor<D>, expected: &GoldenTensor) {
         assert_eq!(actual.dims().to_vec(), expected.shape, "{name} shape");
         let values: Vec<f64> = actual
             .into_data()
@@ -189,7 +184,7 @@ mod tests {
             .stack_size(64 * 1024 * 1024)
             .spawn(move || {
                 let device = Default::default();
-                let mut model = Yolov3TinyConfig.init::<Flex>(&device);
+                let mut model = Yolov3TinyConfig.init(&device);
                 model.load_pytorch_weights(checkpoint).unwrap();
                 let output = model.forward(Tensor::zeros([1, 3, 64, 64], &device));
                 assert_eq!(output.boxes.dims(), [1, 20, 4]);
@@ -215,13 +210,13 @@ mod tests {
             .stack_size(64 * 1024 * 1024)
             .spawn(move || {
                 let device = Default::default();
-                let mut model = Yolov3TinyConfig.init::<Flex>(&device);
+                let mut model = Yolov3TinyConfig.init(&device);
                 model.load_burnpack_weights(checkpoint).unwrap();
                 let image = image::open("target/yolov3-tinyu-preprocessed-reference.png")
                     .unwrap()
                     .into_rgb8();
                 let shape = [image.height() as usize, image.width() as usize, 3];
-                let input = Tensor::<Flex, 3>::from_data(
+                let input = Tensor::<3>::from_data(
                     TensorData::new(image.into_raw(), shape).convert::<f32>(),
                     &device,
                 )

@@ -5,11 +5,16 @@
 //! YOLOv8 (n/s/m/l/x), and YOLO12 (n/s/m/l/x) inference paths, plus YOLO11-seg (n/s/m/l/x),
 //! YOLO26-seg (n/s/m/l/x), and YOLOv8-seg (n/s/m/l/x) instance segmentation and the
 //! YOLO26-cls/YOLO11-cls/YOLOv8-cls (n/s/m/l/x) ImageNet-1k classification. Model inference and
-//! post-processing run from Rust — on the Flex CPU backend by default, or on the Wgpu GPU backend
+//! post-processing run from Rust â€” on the Flex CPU backend by default, or on the Wgpu GPU backend
 //! (Vulkan/DX12/Metal) when built with the `gpu` feature. No Python runtime or ONNX runtime is
 //! involved.
 
 extern crate alloc;
+
+// Burn 0.22's RecordState derive resolves support symbols through the consuming crate.
+#[cfg(feature = "training")]
+#[doc(hidden)]
+pub use burn::optim::{RecordState, StateSink, StateSource, join_path};
 
 mod data;
 #[cfg(feature = "onnx")]
@@ -63,9 +68,7 @@ use crate::models::yolov10::{
 };
 use crate::models::yolox::Yolox;
 use crate::postprocess::{BoundingBox, nms};
-use burn::tensor::{Device, ElementConversion, Tensor, TensorData, backend::Backend};
-#[cfg(feature = "pretrained")]
-use burn_flex::Flex;
+use burn::tensor::{Device, ElementConversion, Tensor, TensorData};
 use image::{DynamicImage, GrayImage, ImageBuffer, Rgb, RgbImage, RgbaImage};
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "pretrained")]
@@ -740,65 +743,65 @@ fn benchmark_percentile(sorted: &[f64], percentile: f64) -> f64 {
 }
 
 #[cfg_attr(not(feature = "pretrained"), allow(dead_code))]
-enum RuntimeModel<B: Backend> {
-    Yolox(Box<Yolox<B>>),
-    Yolov3Tiny(Box<Yolov3Tiny<B>>),
-    Yolov10N(Box<crate::models::yolov10::Yolov10N<B>>),
-    Yolov10S(Box<crate::models::yolov10::Yolov10S<B>>),
-    Yolov10M(Box<crate::models::yolov10::Yolov10M<B>>),
-    Yolov10B(Box<crate::models::yolov10::Yolov10B<B>>),
-    Yolov10L(Box<crate::models::yolov10::Yolov10L<B>>),
-    Yolov10X(Box<crate::models::yolov10::Yolov10X<B>>),
-    Yolo11N(Box<crate::models::yolo11::Yolo11N<B>>),
-    Yolo11S(Box<crate::models::yolo11::Yolo11S<B>>),
-    Yolo11M(Box<crate::models::yolo11::Yolo11M<B>>),
-    Yolo11L(Box<crate::models::yolo11::Yolo11L<B>>),
-    Yolo11X(Box<crate::models::yolo11::Yolo11X<B>>),
-    Yolo11SegN(Box<crate::models::yolo11::Yolo11SegN<B>>),
-    Yolo11SegS(Box<crate::models::yolo11::Yolo11SegS<B>>),
-    Yolo11SegM(Box<crate::models::yolo11::Yolo11SegM<B>>),
-    Yolo11SegL(Box<crate::models::yolo11::Yolo11SegL<B>>),
-    Yolo11SegX(Box<crate::models::yolo11::Yolo11SegX<B>>),
-    Yolo11ClsN(Box<crate::models::yolo11::Yolo11ClsN<B>>),
-    Yolo11ClsS(Box<crate::models::yolo11::Yolo11ClsS<B>>),
-    Yolo11ClsM(Box<crate::models::yolo11::Yolo11ClsM<B>>),
-    Yolo11ClsL(Box<crate::models::yolo11::Yolo11ClsL<B>>),
-    Yolo11ClsX(Box<crate::models::yolo11::Yolo11ClsX<B>>),
-    Yolov8N(Box<crate::models::yolov8::Yolov8N<B>>),
-    Yolov8S(Box<crate::models::yolov8::Yolov8S<B>>),
-    Yolov8M(Box<crate::models::yolov8::Yolov8M<B>>),
-    Yolov8L(Box<crate::models::yolov8::Yolov8L<B>>),
-    Yolov8X(Box<crate::models::yolov8::Yolov8X<B>>),
-    Yolov8SegN(Box<crate::models::yolov8::Yolov8SegN<B>>),
-    Yolov8SegS(Box<crate::models::yolov8::Yolov8SegS<B>>),
-    Yolov8SegM(Box<crate::models::yolov8::Yolov8SegM<B>>),
-    Yolov8SegL(Box<crate::models::yolov8::Yolov8SegL<B>>),
-    Yolov8SegX(Box<crate::models::yolov8::Yolov8SegX<B>>),
-    Yolov8ClsN(Box<crate::models::yolov8::Yolov8ClsN<B>>),
-    Yolov8ClsS(Box<crate::models::yolov8::Yolov8ClsS<B>>),
-    Yolov8ClsM(Box<crate::models::yolov8::Yolov8ClsM<B>>),
-    Yolov8ClsL(Box<crate::models::yolov8::Yolov8ClsL<B>>),
-    Yolov8ClsX(Box<crate::models::yolov8::Yolov8ClsX<B>>),
-    Yolo12N(Box<crate::models::yolo12::Yolo12N<B>>),
-    Yolo12S(Box<crate::models::yolo12::Yolo12S<B>>),
-    Yolo12M(Box<crate::models::yolo12::Yolo12M<B>>),
-    Yolo12L(Box<crate::models::yolo12::Yolo12L<B>>),
-    Yolo12X(Box<crate::models::yolo12::Yolo12X<B>>),
-    Yolo26N(Box<crate::models::yolo26::Yolo26N<B>>),
-    Yolo26S(Box<crate::models::yolo26::Yolo26S<B>>),
-    Yolo26M(Box<crate::models::yolo26::Yolo26M<B>>),
-    Yolo26L(Box<crate::models::yolo26::Yolo26L<B>>),
-    Yolo26X(Box<crate::models::yolo26::Yolo26X<B>>),
-    Yolo26SegN(Box<crate::models::yolo26::Yolo26SegN<B>>),
-    Yolo26SegS(Box<crate::models::yolo26::Yolo26SegS<B>>),
-    Yolo26SegM(Box<crate::models::yolo26::Yolo26SegM<B>>),
-    Yolo26SegL(Box<crate::models::yolo26::Yolo26SegL<B>>),
-    Yolo26SegX(Box<crate::models::yolo26::Yolo26SegX<B>>),
-    Yolo26ClsN(Box<crate::models::yolo26::Yolo26ClsN<B>>),
-    Yolo26ClsS(Box<crate::models::yolo26::Yolo26ClsS<B>>),
-    Yolo26ClsM(Box<crate::models::yolo26::Yolo26ClsM<B>>),
-    Yolo26ClsL(Box<crate::models::yolo26::Yolo26ClsL<B>>),
-    Yolo26ClsX(Box<crate::models::yolo26::Yolo26ClsX<B>>),
+enum RuntimeModel {
+    Yolox(Box<Yolox>),
+    Yolov3Tiny(Box<Yolov3Tiny>),
+    Yolov10N(Box<crate::models::yolov10::Yolov10N>),
+    Yolov10S(Box<crate::models::yolov10::Yolov10S>),
+    Yolov10M(Box<crate::models::yolov10::Yolov10M>),
+    Yolov10B(Box<crate::models::yolov10::Yolov10B>),
+    Yolov10L(Box<crate::models::yolov10::Yolov10L>),
+    Yolov10X(Box<crate::models::yolov10::Yolov10X>),
+    Yolo11N(Box<crate::models::yolo11::Yolo11N>),
+    Yolo11S(Box<crate::models::yolo11::Yolo11S>),
+    Yolo11M(Box<crate::models::yolo11::Yolo11M>),
+    Yolo11L(Box<crate::models::yolo11::Yolo11L>),
+    Yolo11X(Box<crate::models::yolo11::Yolo11X>),
+    Yolo11SegN(Box<crate::models::yolo11::Yolo11SegN>),
+    Yolo11SegS(Box<crate::models::yolo11::Yolo11SegS>),
+    Yolo11SegM(Box<crate::models::yolo11::Yolo11SegM>),
+    Yolo11SegL(Box<crate::models::yolo11::Yolo11SegL>),
+    Yolo11SegX(Box<crate::models::yolo11::Yolo11SegX>),
+    Yolo11ClsN(Box<crate::models::yolo11::Yolo11ClsN>),
+    Yolo11ClsS(Box<crate::models::yolo11::Yolo11ClsS>),
+    Yolo11ClsM(Box<crate::models::yolo11::Yolo11ClsM>),
+    Yolo11ClsL(Box<crate::models::yolo11::Yolo11ClsL>),
+    Yolo11ClsX(Box<crate::models::yolo11::Yolo11ClsX>),
+    Yolov8N(Box<crate::models::yolov8::Yolov8N>),
+    Yolov8S(Box<crate::models::yolov8::Yolov8S>),
+    Yolov8M(Box<crate::models::yolov8::Yolov8M>),
+    Yolov8L(Box<crate::models::yolov8::Yolov8L>),
+    Yolov8X(Box<crate::models::yolov8::Yolov8X>),
+    Yolov8SegN(Box<crate::models::yolov8::Yolov8SegN>),
+    Yolov8SegS(Box<crate::models::yolov8::Yolov8SegS>),
+    Yolov8SegM(Box<crate::models::yolov8::Yolov8SegM>),
+    Yolov8SegL(Box<crate::models::yolov8::Yolov8SegL>),
+    Yolov8SegX(Box<crate::models::yolov8::Yolov8SegX>),
+    Yolov8ClsN(Box<crate::models::yolov8::Yolov8ClsN>),
+    Yolov8ClsS(Box<crate::models::yolov8::Yolov8ClsS>),
+    Yolov8ClsM(Box<crate::models::yolov8::Yolov8ClsM>),
+    Yolov8ClsL(Box<crate::models::yolov8::Yolov8ClsL>),
+    Yolov8ClsX(Box<crate::models::yolov8::Yolov8ClsX>),
+    Yolo12N(Box<crate::models::yolo12::Yolo12N>),
+    Yolo12S(Box<crate::models::yolo12::Yolo12S>),
+    Yolo12M(Box<crate::models::yolo12::Yolo12M>),
+    Yolo12L(Box<crate::models::yolo12::Yolo12L>),
+    Yolo12X(Box<crate::models::yolo12::Yolo12X>),
+    Yolo26N(Box<crate::models::yolo26::Yolo26N>),
+    Yolo26S(Box<crate::models::yolo26::Yolo26S>),
+    Yolo26M(Box<crate::models::yolo26::Yolo26M>),
+    Yolo26L(Box<crate::models::yolo26::Yolo26L>),
+    Yolo26X(Box<crate::models::yolo26::Yolo26X>),
+    Yolo26SegN(Box<crate::models::yolo26::Yolo26SegN>),
+    Yolo26SegS(Box<crate::models::yolo26::Yolo26SegS>),
+    Yolo26SegM(Box<crate::models::yolo26::Yolo26SegM>),
+    Yolo26SegL(Box<crate::models::yolo26::Yolo26SegL>),
+    Yolo26SegX(Box<crate::models::yolo26::Yolo26SegX>),
+    Yolo26ClsN(Box<crate::models::yolo26::Yolo26ClsN>),
+    Yolo26ClsS(Box<crate::models::yolo26::Yolo26ClsS>),
+    Yolo26ClsM(Box<crate::models::yolo26::Yolo26ClsM>),
+    Yolo26ClsL(Box<crate::models::yolo26::Yolo26ClsL>),
+    Yolo26ClsX(Box<crate::models::yolo26::Yolo26ClsX>),
 }
 
 /// A ready-to-run object detector over a Burn backend.
@@ -806,10 +809,10 @@ enum RuntimeModel<B: Backend> {
 /// The backend is a type parameter: [`Flex`] on CPU, or `Wgpu` for GPU inference (Vulkan/DX12 on
 /// Windows and Linux, Metal on macOS) when built with the `gpu` feature. Constructors resolve the
 /// backend's default device; the `_on_device` variants accept an explicit device.
-pub struct Predictor<B: Backend> {
+pub struct Predictor {
     model_id: ModelId,
-    model: RuntimeModel<B>,
-    device: Device<B>,
+    model: RuntimeModel,
+    device: Device,
     options: PredictOptions,
     class_names: Vec<String>,
     input_size: usize,
@@ -817,11 +820,11 @@ pub struct Predictor<B: Backend> {
 
 /// A model loaded on Montgomery's default CPU backend.
 ///
-/// This is the ergonomic entry point for normal inference. It dereferences to [`Predictor<Flex>`],
+/// This is the ergonomic entry point for normal inference. It dereferences to [`Predictor`],
 /// so the task-specific methods remain available without an extra accessor. Use [`Predictor`]
 /// directly when selecting a different backend or device.
 #[cfg(feature = "pretrained")]
-pub struct Model(Predictor<Flex>);
+pub struct Model(Predictor);
 
 #[cfg(feature = "pretrained")]
 impl Model {
@@ -836,14 +839,14 @@ impl Model {
     }
 
     /// Consume the convenience wrapper and return the underlying CPU predictor.
-    pub fn into_predictor(self) -> Predictor<Flex> {
+    pub fn into_predictor(self) -> Predictor {
         self.0
     }
 }
 
 #[cfg(feature = "pretrained")]
 impl std::ops::Deref for Model {
-    type Target = Predictor<Flex>;
+    type Target = Predictor;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -981,25 +984,24 @@ pub type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 /// builds, so the graph is built in the worker thread.
 /// A model construction-and-load closure handed to the large-stack loader worker.
 #[cfg(feature = "pretrained")]
-type ModelLoader<B> = Box<dyn FnOnce(&Device<B>) -> Result<RuntimeModel<B>> + Send>;
+type ModelLoader = Box<dyn FnOnce(&Device) -> Result<RuntimeModel> + Send>;
 
 #[cfg(feature = "pretrained")]
-fn load_model_checkpoint<B: Backend>(
+fn load_model_checkpoint(
     model_id: ModelId,
     checkpoint: PathBuf,
-    device: Device<B>,
+    device: Device,
     num_classes: usize,
-) -> Result<RuntimeModel<B>> {
+) -> Result<RuntimeModel> {
     use burn_store::ModuleSnapshot as _;
 
     macro_rules! load_variant {
         ($config:ty, $variant:path) => {
-            move |device: &Device<B>| -> Result<RuntimeModel<B>> {
-                let mut model = <$config>::default().init_with_classes::<B>(num_classes, device);
+            move |device: &Device| -> Result<RuntimeModel> {
+                let mut model = <$config>::default().init_with_classes(num_classes, device);
                 let mut store = burn_store::BurnpackStore::from_file(&checkpoint)
                     .with_from_adapter(burn_store::HalfPrecisionAdapter::new())
-                    .allow_partial(cfg!(feature = "training"))
-                    .zero_copy(true);
+                    .allow_partial(cfg!(feature = "training"));
                 let result = model.load_from(&mut store)?;
                 if result.missing.iter().any(|(path, _)| {
                     !path.contains(".o2m_") && !path.starts_with("head.proto.sem_")
@@ -1013,14 +1015,14 @@ fn load_model_checkpoint<B: Backend>(
             }
         };
     }
-    let loader: ModelLoader<B> = match model_id {
+    let loader: ModelLoader = match model_id {
         ModelId::YoloxNano
         | ModelId::YoloxTiny
         | ModelId::YoloxS
         | ModelId::YoloxM
         | ModelId::YoloxL
-        | ModelId::YoloxX => Box::new(move |device: &Device<B>| {
-            let constructor = yolox_constructor::<B>(model_id);
+        | ModelId::YoloxX => Box::new(move |device: &Device| {
+            let constructor = yolox_constructor(model_id);
             let mut model = constructor(num_classes, device);
             model.load_burnpack_weights(checkpoint)?;
             Ok(RuntimeModel::Yolox(Box::new(model)))
@@ -1095,29 +1097,29 @@ fn load_model_checkpoint<B: Backend>(
 /// Resolve the YOLOX graph constructor for a YOLOX scale identifier. Every YOLOX scale shares the
 /// same [`Yolox`] graph; the scale is baked into the depth/width parameters passed here.
 #[cfg(feature = "pretrained")]
-fn yolox_constructor<B: Backend>(model_id: ModelId) -> fn(usize, &Device<B>) -> Yolox<B> {
+fn yolox_constructor(model_id: ModelId) -> fn(usize, &Device) -> Yolox {
     match model_id {
-        ModelId::YoloxNano => Yolox::<B>::yolox_nano,
-        ModelId::YoloxTiny => Yolox::<B>::yolox_tiny,
-        ModelId::YoloxS => Yolox::<B>::yolox_s,
-        ModelId::YoloxM => Yolox::<B>::yolox_m,
-        ModelId::YoloxL => Yolox::<B>::yolox_l,
-        ModelId::YoloxX => Yolox::<B>::yolox_x,
+        ModelId::YoloxNano => Yolox::yolox_nano,
+        ModelId::YoloxTiny => Yolox::yolox_tiny,
+        ModelId::YoloxS => Yolox::yolox_s,
+        ModelId::YoloxM => Yolox::yolox_m,
+        ModelId::YoloxL => Yolox::yolox_l,
+        ModelId::YoloxX => Yolox::yolox_x,
         _ => unreachable!("non-YOLOX models do not use the YOLOX constructor"),
     }
 }
 
 /// Uniform end-to-end detection entry point shared by every YOLOv10/YOLO26 scale variant, so the
 /// runtime can dispatch to any of them without naming the concrete scale type.
-trait EndToEndDetector<B: Backend> {
-    fn detect(&self, input: Tensor<B, 4>) -> (Tensor<B, 3>, Tensor<B, 3>);
+trait EndToEndDetector {
+    fn detect(&self, input: Tensor<4>) -> (Tensor<3>, Tensor<3>);
 }
 
 macro_rules! impl_end_to_end_detector {
     ($family:ident: [$($model:ident),+ $(,)?]) => {
         $(
-            impl<B: Backend> EndToEndDetector<B> for crate::models::$family::$model<B> {
-                fn detect(&self, input: Tensor<B, 4>) -> (Tensor<B, 3>, Tensor<B, 3>) {
+            impl EndToEndDetector for crate::models::$family::$model {
+                fn detect(&self, input: Tensor<4>) -> (Tensor<3>, Tensor<3>) {
                     let output = self.forward(input);
                     (output.boxes, output.scores)
                 }
@@ -1131,18 +1133,18 @@ impl_end_to_end_detector!(yolo26: [Yolo26N, Yolo26S, Yolo26M, Yolo26L, Yolo26X])
 
 /// Uniform classification entry point shared by every YOLO26-cls and YOLO11-cls scale variant, so
 /// the runtime can dispatch to any of them without naming the concrete scale type.
-trait EndToEndClassifier<B: Backend> {
+trait EndToEndClassifier {
     fn classify(
         &self,
-        input: Tensor<B, 4>,
-    ) -> crate::models::yolo26::classification::ClassificationOutput<B>;
+        input: Tensor<4>,
+    ) -> crate::models::yolo26::classification::ClassificationOutput;
 }
 
-impl<B: Backend, M: EndToEndClassifier<B>> EndToEndClassifier<B> for Box<M> {
+impl<M: EndToEndClassifier> EndToEndClassifier for Box<M> {
     fn classify(
         &self,
-        input: Tensor<B, 4>,
-    ) -> crate::models::yolo26::classification::ClassificationOutput<B> {
+        input: Tensor<4>,
+    ) -> crate::models::yolo26::classification::ClassificationOutput {
         (**self).classify(input)
     }
 }
@@ -1150,11 +1152,11 @@ impl<B: Backend, M: EndToEndClassifier<B>> EndToEndClassifier<B> for Box<M> {
 macro_rules! impl_end_to_end_classifier {
     ($family:ident: [$($model:ident),+ $(,)?]) => {
         $(
-            impl<B: Backend> EndToEndClassifier<B> for crate::models::$family::$model<B> {
+            impl EndToEndClassifier for crate::models::$family::$model {
                 fn classify(
                     &self,
-                    input: Tensor<B, 4>,
-                ) -> crate::models::yolo26::classification::ClassificationOutput<B> {
+                    input: Tensor<4>,
+                ) -> crate::models::yolo26::classification::ClassificationOutput {
                     self.forward(input)
                 }
             }
@@ -1167,12 +1169,12 @@ impl_end_to_end_classifier!(yolo11: [Yolo11ClsN, Yolo11ClsS, Yolo11ClsM, Yolo11C
 impl_end_to_end_classifier!(yolov8: [Yolov8ClsN, Yolov8ClsS, Yolov8ClsM, Yolov8ClsL, Yolov8ClsX]);
 
 /// Uniform classic-detection entry point shared by every NMS-based detector family.
-trait ClassicDetector<B: Backend> {
-    fn detect(&self, input: Tensor<B, 4>) -> (Tensor<B, 3>, Tensor<B, 3>);
+trait ClassicDetector {
+    fn detect(&self, input: Tensor<4>) -> (Tensor<3>, Tensor<3>);
 }
 
-impl<B: Backend> ClassicDetector<B> for Yolox<B> {
-    fn detect(&self, input: Tensor<B, 4>) -> (Tensor<B, 3>, Tensor<B, 3>) {
+impl ClassicDetector for Yolox {
+    fn detect(&self, input: Tensor<4>) -> (Tensor<3>, Tensor<3>) {
         let output = self.forward(input);
         let [batch, anchors, channels] = output.dims();
         let boxes = output.clone().slice([0..batch, 0..anchors, 0..4]);
@@ -1182,8 +1184,8 @@ impl<B: Backend> ClassicDetector<B> for Yolox<B> {
     }
 }
 
-impl<B: Backend> ClassicDetector<B> for Yolov3Tiny<B> {
-    fn detect(&self, input: Tensor<B, 4>) -> (Tensor<B, 3>, Tensor<B, 3>) {
+impl ClassicDetector for Yolov3Tiny {
+    fn detect(&self, input: Tensor<4>) -> (Tensor<3>, Tensor<3>) {
         let output = self.forward(input);
         let [batch, anchors, _] = output.boxes.dims();
         let left_top = output.boxes.clone().slice([0..batch, 0..anchors, 0..2]);
@@ -1197,8 +1199,8 @@ impl<B: Backend> ClassicDetector<B> for Yolov3Tiny<B> {
 macro_rules! impl_classic_detector {
     ($family:ident: [$($model:ident),+ $(,)?]) => {
         $(
-            impl<B: Backend> ClassicDetector<B> for crate::models::$family::$model<B> {
-                fn detect(&self, input: Tensor<B, 4>) -> (Tensor<B, 3>, Tensor<B, 3>) {
+            impl ClassicDetector for crate::models::$family::$model {
+                fn detect(&self, input: Tensor<4>) -> (Tensor<3>, Tensor<3>) {
                     let output = self.forward(input);
                     (output.boxes, output.scores)
                 }
@@ -1211,8 +1213,8 @@ impl_classic_detector!(yolo11: [Yolo11N, Yolo11S, Yolo11M, Yolo11L, Yolo11X]);
 impl_classic_detector!(yolov8: [Yolov8N, Yolov8S, Yolov8M, Yolov8L, Yolov8X]);
 impl_classic_detector!(yolo12: [Yolo12N, Yolo12S, Yolo12M, Yolo12L, Yolo12X]);
 
-impl<B: Backend, M: ClassicDetector<B>> ClassicDetector<B> for Box<M> {
-    fn detect(&self, input: Tensor<B, 4>) -> (Tensor<B, 3>, Tensor<B, 3>) {
+impl<M: ClassicDetector> ClassicDetector for Box<M> {
+    fn detect(&self, input: Tensor<4>) -> (Tensor<3>, Tensor<3>) {
         (**self).detect(input)
     }
 }
@@ -1221,9 +1223,9 @@ impl<B: Backend, M: ClassicDetector<B>> ClassicDetector<B> for Box<M> {
 ///
 /// Implementations normalize family-specific head layouts to center-size boxes and per-class
 /// detection scores before feeding the generic class-aware NMS helper.
-fn run_classic_detections<B: Backend>(
-    model: &impl ClassicDetector<B>,
-    input: Tensor<B, 4>,
+fn run_classic_detections(
+    model: &impl ClassicDetector,
+    input: Tensor<4>,
     iou_threshold: f32,
     confidence_threshold: f32,
 ) -> Vec<Vec<Vec<BoundingBox>>> {
@@ -1233,15 +1235,15 @@ fn run_classic_detections<B: Backend>(
 
 /// Uniform classic instance-segmentation entry point shared by the YOLO11-seg scale variants, so
 /// the runtime can dispatch to any of them without naming the concrete scale type.
-pub(crate) trait ClassicSegmenter<B: Backend> {
-    fn segment(&self, input: Tensor<B, 4>) -> crate::models::yolo11::SegmentOutput<B>;
+pub(crate) trait ClassicSegmenter {
+    fn segment(&self, input: Tensor<4>) -> crate::models::yolo11::SegmentOutput;
 }
 
 macro_rules! impl_classic_segmenter {
     ($family:ident: [$($model:ident),+ $(,)?]) => {
         $(
-            impl<B: Backend> ClassicSegmenter<B> for crate::models::$family::$model<B> {
-                fn segment(&self, input: Tensor<B, 4>) -> crate::models::yolo11::SegmentOutput<B> {
+            impl ClassicSegmenter for crate::models::$family::$model {
+                fn segment(&self, input: Tensor<4>) -> crate::models::yolo11::SegmentOutput {
                     self.forward(input)
                 }
             }
@@ -1252,27 +1254,26 @@ macro_rules! impl_classic_segmenter {
 impl_classic_segmenter!(yolo11: [Yolo11SegN, Yolo11SegS, Yolo11SegM, Yolo11SegL, Yolo11SegX]);
 impl_classic_segmenter!(yolov8: [Yolov8SegN, Yolov8SegS, Yolov8SegM, Yolov8SegL, Yolov8SegX]);
 
-impl<B: Backend, M: ClassicSegmenter<B>> ClassicSegmenter<B> for Box<M> {
-    fn segment(&self, input: Tensor<B, 4>) -> crate::models::yolo11::SegmentOutput<B> {
+impl<M: ClassicSegmenter> ClassicSegmenter for Box<M> {
+    fn segment(&self, input: Tensor<4>) -> crate::models::yolo11::SegmentOutput {
         (**self).segment(input)
     }
 }
 
 /// Uniform end-to-end instance-segmentation entry point shared by the YOLO26-seg scale variants,
 /// so the runtime can dispatch to any of them without naming the concrete scale type.
-pub(crate) trait EndToEndSegmenter<B: Backend> {
-    fn segment(&self, input: Tensor<B, 4>)
-    -> crate::models::yolo26::segmentation::SegmentOutput<B>;
+pub(crate) trait EndToEndSegmenter {
+    fn segment(&self, input: Tensor<4>) -> crate::models::yolo26::segmentation::SegmentOutput;
 }
 
 macro_rules! impl_end_to_end_segmenter {
     ($family:ident: [$($model:ident),+ $(,)?]) => {
         $(
-            impl<B: Backend> EndToEndSegmenter<B> for crate::models::$family::$model<B> {
+            impl EndToEndSegmenter for crate::models::$family::$model {
                 fn segment(
                     &self,
-                    input: Tensor<B, 4>,
-                ) -> crate::models::yolo26::segmentation::SegmentOutput<B> {
+                    input: Tensor<4>,
+                ) -> crate::models::yolo26::segmentation::SegmentOutput {
                     self.forward(input)
                 }
             }
@@ -1282,11 +1283,8 @@ macro_rules! impl_end_to_end_segmenter {
 
 impl_end_to_end_segmenter!(yolo26: [Yolo26SegN, Yolo26SegS, Yolo26SegM, Yolo26SegL, Yolo26SegX]);
 
-impl<B: Backend, M: EndToEndSegmenter<B>> EndToEndSegmenter<B> for Box<M> {
-    fn segment(
-        &self,
-        input: Tensor<B, 4>,
-    ) -> crate::models::yolo26::segmentation::SegmentOutput<B> {
+impl<M: EndToEndSegmenter> EndToEndSegmenter for Box<M> {
+    fn segment(&self, input: Tensor<4>) -> crate::models::yolo26::segmentation::SegmentOutput {
         (**self).segment(input)
     }
 }
@@ -1295,12 +1293,12 @@ impl<B: Backend, M: EndToEndSegmenter<B>> EndToEndSegmenter<B> for Box<M> {
 ///
 /// The YOLO26-seg head output mirrors Ultralytics' end2end postprocess: the top
 /// `max_detections` anchors by best-class score are kept, then the top `max_detections`
-/// (anchor, class) pairs among them, and finally the confidence filter is applied — no
+/// (anchor, class) pairs among them, and finally the confidence filter is applied â€” no
 /// non-maximum suppression. The surviving anchors' raw mask coefficients ride along in
 /// [`SegmentationOutputCpu`] for the shared mask assembly.
-pub(crate) fn run_end_to_end_segmentations<B: Backend>(
-    model: &impl EndToEndSegmenter<B>,
-    input: Tensor<B, 4>,
+pub(crate) fn run_end_to_end_segmentations(
+    model: &impl EndToEndSegmenter,
+    input: Tensor<4>,
     max_detections: usize,
     confidence_threshold: f32,
 ) -> SegmentationOutputCpu {
@@ -1315,26 +1313,26 @@ pub(crate) fn run_end_to_end_segmentations<B: Backend>(
         .decoded
         .boxes
         .into_data()
-        .iter::<B::FloatElem>()
+        .iter::<f32>()
         .map(|value| value.elem::<f32>())
         .collect();
     let scores: Vec<f32> = output
         .decoded
         .scores
         .into_data()
-        .iter::<B::FloatElem>()
+        .iter::<f32>()
         .map(|value| value.elem::<f32>())
         .collect();
     let coefficients: Vec<f32> = output
         .coefficients
         .into_data()
-        .iter::<B::FloatElem>()
+        .iter::<f32>()
         .map(|value| value.elem::<f32>())
         .collect();
     let prototypes: Vec<f32> = output
         .prototypes
         .into_data()
-        .iter::<B::FloatElem>()
+        .iter::<f32>()
         .map(|value| value.elem::<f32>())
         .collect();
 
@@ -1434,9 +1432,9 @@ pub(crate) struct SegmentationOutputCpu {
 /// rows are filtered by the best class score, suppressed with class-aware NMS (per-class greedy
 /// suppression on center-size boxes converted to XYXY), and the mask coefficients of every
 /// surviving anchor are carried along for the mask assembly.
-pub(crate) fn run_classic_segmentations<B: Backend>(
-    model: &impl ClassicSegmenter<B>,
-    input: Tensor<B, 4>,
+pub(crate) fn run_classic_segmentations(
+    model: &impl ClassicSegmenter,
+    input: Tensor<4>,
     iou_threshold: f32,
     confidence_threshold: f32,
 ) -> SegmentationOutputCpu {
@@ -1449,25 +1447,25 @@ pub(crate) fn run_classic_segmentations<B: Backend>(
     let boxes: Vec<f32> = output
         .boxes
         .into_data()
-        .iter::<B::FloatElem>()
+        .iter::<f32>()
         .map(|value| value.elem::<f32>())
         .collect();
     let scores: Vec<f32> = output
         .scores
         .into_data()
-        .iter::<B::FloatElem>()
+        .iter::<f32>()
         .map(|value| value.elem::<f32>())
         .collect();
     let coefficients: Vec<f32> = output
         .coefficients
         .into_data()
-        .iter::<B::FloatElem>()
+        .iter::<f32>()
         .map(|value| value.elem::<f32>())
         .collect();
     let prototypes: Vec<f32> = output
         .prototypes
         .into_data()
-        .iter::<B::FloatElem>()
+        .iter::<f32>()
         .map(|value| value.elem::<f32>())
         .collect();
 
@@ -1662,7 +1660,7 @@ pub(crate) fn canvas_instance_mask(
 /// Sample a canvas-frame boolean mask onto the full source-image grid.
 ///
 /// Every source pixel `(x, y)` samples the canvas mask at the nearest canvas pixel to
-/// `(x * scale + pad_x, y * scale + pad_y)` — the exact inverse of the letterbox geometry that
+/// `(x * scale + pad_x, y * scale + pad_y)` â€” the exact inverse of the letterbox geometry that
 /// [`LetterboxedImage::to_source_box`] applies to box edges. Pixels outside the canvas (possible
 /// only through rounding at the borders) stay uncovered.
 fn source_instance_mask(
@@ -1694,16 +1692,16 @@ fn source_instance_mask(
     }
 }
 
-impl<B: Backend, M: EndToEndDetector<B>> EndToEndDetector<B> for Box<M> {
-    fn detect(&self, input: Tensor<B, 4>) -> (Tensor<B, 3>, Tensor<B, 3>) {
+impl<M: EndToEndDetector> EndToEndDetector for Box<M> {
+    fn detect(&self, input: Tensor<4>) -> (Tensor<3>, Tensor<3>) {
         (**self).detect(input)
     }
 }
 
 /// Decode normalized end-to-end one2one predictions for any scale variant.
-fn run_end_to_end<B: Backend>(
-    model: &impl EndToEndDetector<B>,
-    input: Tensor<B, 4>,
+fn run_end_to_end(
+    model: &impl EndToEndDetector,
+    input: Tensor<4>,
     max_detections: usize,
     confidence_threshold: f32,
 ) -> Vec<Vec<Vec<BoundingBox>>> {
@@ -1711,7 +1709,7 @@ fn run_end_to_end<B: Backend>(
     end2end_topk_detections(boxes, scores, max_detections, confidence_threshold)
 }
 
-impl<B: Backend> Predictor<B> {
+impl Predictor {
     /// Load a native Burnpack artifact and infer its architecture from embedded metadata.
     ///
     /// This is the preferred constructor. Model construction and weight loading happen once;
@@ -1724,12 +1722,12 @@ impl<B: Backend> Predictor<B> {
     /// Load an artifact with explicit prediction thresholds.
     #[cfg(feature = "pretrained")]
     pub fn with_options(checkpoint: impl Into<PathBuf>, options: PredictOptions) -> Result<Self> {
-        Self::with_options_on_device(checkpoint, Device::<B>::default(), options)
+        Self::with_options_on_device(checkpoint, Device::default(), options)
     }
 
     /// Load an artifact on an explicit device using default prediction thresholds.
     #[cfg(feature = "pretrained")]
-    pub fn new_on_device(checkpoint: impl Into<PathBuf>, device: Device<B>) -> Result<Self> {
+    pub fn new_on_device(checkpoint: impl Into<PathBuf>, device: Device) -> Result<Self> {
         Self::with_options_on_device(checkpoint, device, PredictOptions::default())
     }
 
@@ -1737,7 +1735,7 @@ impl<B: Backend> Predictor<B> {
     #[cfg(feature = "pretrained")]
     pub fn with_options_on_device(
         checkpoint: impl Into<PathBuf>,
-        device: Device<B>,
+        device: Device,
         options: PredictOptions,
     ) -> Result<Self> {
         let options = options.validate()?;
@@ -1757,7 +1755,7 @@ impl<B: Backend> Predictor<B> {
     #[cfg(feature = "pretrained")]
     fn load_from_metadata(
         checkpoint: PathBuf,
-        device: Device<B>,
+        device: Device,
         options: PredictOptions,
         metadata: ArtifactMetadata,
     ) -> Result<Self> {
@@ -1789,7 +1787,7 @@ impl<B: Backend> Predictor<B> {
         checkpoint: impl Into<PathBuf>,
         options: PredictOptions,
     ) -> Result<Self> {
-        Self::from_checkpoint_on_device(model_id, checkpoint, Device::<B>::default(), options)
+        Self::from_checkpoint_on_device(model_id, checkpoint, Device::default(), options)
     }
 
     /// Load a native Burnpack artifact on an explicit device.
@@ -1797,7 +1795,7 @@ impl<B: Backend> Predictor<B> {
     pub fn from_checkpoint_on_device(
         model_id: ModelId,
         checkpoint: impl Into<PathBuf>,
-        device: Device<B>,
+        device: Device,
         options: PredictOptions,
     ) -> Result<Self> {
         let options = options.validate()?;
@@ -1826,7 +1824,7 @@ impl<B: Backend> Predictor<B> {
         checkpoint: impl Into<PathBuf>,
         options: PredictOptions,
     ) -> Result<Self> {
-        Self::from_trained_artifact_on_device(model_id, checkpoint, Device::<B>::default(), options)
+        Self::from_trained_artifact_on_device(model_id, checkpoint, Device::default(), options)
     }
 
     /// Explicit-device variant of [`Predictor::from_trained_artifact`].
@@ -1834,7 +1832,7 @@ impl<B: Backend> Predictor<B> {
     pub fn from_trained_artifact_on_device(
         model_id: ModelId,
         checkpoint: impl Into<PathBuf>,
-        device: Device<B>,
+        device: Device,
         options: PredictOptions,
     ) -> Result<Self> {
         let options = options.validate()?;
@@ -2364,7 +2362,7 @@ impl<B: Backend> Predictor<B> {
         let probs: Vec<f32> = output
             .probs
             .into_data()
-            .iter::<B::FloatElem>()
+            .iter::<f32>()
             .map(|value| value.elem::<f32>())
             .collect();
         let mut order: Vec<usize> = (0..probs.len()).collect();
@@ -2505,7 +2503,7 @@ pub fn pack_weights_to(
             let device = Default::default();
             macro_rules! pack_variant {
                 ($config:ty) => {{
-                    let mut model = <$config>::default().init::<Flex>(&device);
+                    let mut model = <$config>::default().init(&device);
                     model.load_pytorch_weights(&input)?;
                     model.save_burnpack_weights(&output)?;
                 }};
@@ -2518,12 +2516,12 @@ pub fn pack_weights_to(
                 }};
             }
             match model_id {
-                ModelId::YoloxNano => pack_yolox!(Yolox::<Flex>::yolox_nano),
-                ModelId::YoloxTiny => pack_yolox!(Yolox::<Flex>::yolox_tiny),
-                ModelId::YoloxS => pack_yolox!(Yolox::<Flex>::yolox_s),
-                ModelId::YoloxM => pack_yolox!(Yolox::<Flex>::yolox_m),
-                ModelId::YoloxL => pack_yolox!(Yolox::<Flex>::yolox_l),
-                ModelId::YoloxX => pack_yolox!(Yolox::<Flex>::yolox_x),
+                ModelId::YoloxNano => pack_yolox!(Yolox::yolox_nano),
+                ModelId::YoloxTiny => pack_yolox!(Yolox::yolox_tiny),
+                ModelId::YoloxS => pack_yolox!(Yolox::yolox_s),
+                ModelId::YoloxM => pack_yolox!(Yolox::yolox_m),
+                ModelId::YoloxL => pack_yolox!(Yolox::yolox_l),
+                ModelId::YoloxX => pack_yolox!(Yolox::yolox_x),
                 ModelId::Yolov3TinyU => pack_variant!(Yolov3TinyConfig),
                 ModelId::Yolov10N => pack_variant!(Yolov10NConfig),
                 ModelId::Yolov10S => pack_variant!(Yolov10SConfig),
@@ -2613,7 +2611,7 @@ pub fn pack_weights_to(
     })
 }
 
-fn image_to_tensor<B: Backend>(image: DynamicImage, device: &Device<B>) -> Tensor<B, 3> {
+fn image_to_tensor(image: DynamicImage, device: &Device) -> Tensor<3> {
     let rgb = image.into_rgb8();
     let width = rgb.width() as usize;
     let height = rgb.height() as usize;
@@ -2630,8 +2628,8 @@ fn image_to_tensor<B: Backend>(image: DynamicImage, device: &Device<B>) -> Tenso
         chw[plane + index] = pixel[1] as f32;
         chw[2 * plane + index] = pixel[2] as f32;
     }
-    Tensor::<B, 3>::from_data(
-        TensorData::new(chw, [3, height, width]).convert::<B::FloatElem>(),
+    Tensor::<3>::from_data(
+        TensorData::new(chw, [3, height, width]).convert::<f32>(),
         device,
     )
 }
@@ -2643,9 +2641,9 @@ fn image_to_tensor<B: Backend>(image: DynamicImage, device: &Device<B>) -> Tenso
 /// strongest (anchor, class) pairs among them, and finally apply the confidence threshold. No
 /// non-maximum suppression is applied because the one2one head is trained to emit one prediction
 /// per object.
-pub(crate) fn end2end_topk_detections<B: Backend>(
-    boxes: Tensor<B, 3>,
-    scores: Tensor<B, 3>,
+pub(crate) fn end2end_topk_detections(
+    boxes: Tensor<3>,
+    scores: Tensor<3>,
     max_detections: usize,
     confidence_threshold: f32,
 ) -> Vec<Vec<Vec<BoundingBox>>> {
@@ -2724,18 +2722,18 @@ pub(crate) fn end2end_topk_detections<B: Backend>(
 /// OpenGL, or WebGPU), and the driver. Every later operation on the same device reuses that
 /// runtime.
 #[cfg(feature = "gpu")]
-pub fn default_wgpu_device() -> (burn::backend::wgpu::WgpuDevice, String) {
-    use burn::backend::wgpu::{RuntimeOptions, WgpuDevice, graphics::AutoGraphicsApi, init_setup};
+pub fn default_wgpu_device() -> (burn::tensor::Device, String) {
+    use burn::tensor::{Device, DeviceKind};
     use std::sync::OnceLock;
 
     // The wgpu runtime registers one compute client per device per process; re-initializing an
     // already-registered device panics, so resolve the default device exactly once and share it.
-    static DEVICE: OnceLock<(WgpuDevice, String)> = OnceLock::new();
+    static DEVICE: OnceLock<(Device, String)> = OnceLock::new();
     DEVICE
         .get_or_init(|| {
-            let device = WgpuDevice::default();
-            let setup = init_setup::<AutoGraphicsApi>(&device, RuntimeOptions::default());
-            (device, format!("{:?}", setup.adapter.get_info()))
+            let device = Device::wgpu(DeviceKind::DefaultDevice);
+            let description = format!("{device:?}");
+            (device, description)
         })
         .clone()
 }
@@ -3103,12 +3101,12 @@ mod tests {
         let worker = std::thread::Builder::new()
             .stack_size(64 * 1024 * 1024)
             .spawn(|| {
-                let device = Device::<Flex>::default();
-                let mut official = Yolox::<Flex>::yolox_nano(COCO_CLASSES.len(), &device);
+                let device = Device::default();
+                let mut official = Yolox::yolox_nano(COCO_CLASSES.len(), &device);
                 official
                     .load_pytorch_weights("target/checkpoints/yolox_nano.pth")
                     .unwrap();
-                let mut artifact = Yolox::<Flex>::yolox_nano(COCO_CLASSES.len(), &device);
+                let mut artifact = Yolox::yolox_nano(COCO_CLASSES.len(), &device);
                 artifact
                     .load_burnpack_weights("target/yolox-nano.bpk")
                     .unwrap();
@@ -3235,8 +3233,7 @@ mod tests {
                     $id
                 );
                 let predictor =
-                    Predictor::<Flex>::from_checkpoint($model_id, checkpoint, Default::default())
-                        .unwrap();
+                    Predictor::from_checkpoint($model_id, checkpoint, Default::default()).unwrap();
                 let (image, detections) = predictor
                     .predict_segmentation_path("docs/dog_bike_man.jpg")
                     .unwrap();

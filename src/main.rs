@@ -8,10 +8,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-#[cfg(feature = "gpu")]
-use burn::backend::Wgpu;
-use burn::tensor::{Device, backend::Backend};
-use burn_flex::Flex;
+use burn::tensor::Device;
 #[cfg(feature = "training")]
 use clap::ArgGroup;
 use clap::{Args as ClapArgs, Parser, Subcommand, ValueEnum};
@@ -811,12 +808,12 @@ fn predict(args: PredictArgs) -> montgomery::Result<()> {
         iou: args.iou,
     };
     match args.device {
-        DeviceSelection::Cpu => run_predict::<Flex>(&args, options, Device::<Flex>::default()),
+        DeviceSelection::Cpu => run_predict(&args, options, Device::default()),
         #[cfg(feature = "gpu")]
         DeviceSelection::Gpu => {
             let (device, adapter) = montgomery::default_wgpu_device();
             eprintln!("GPU adapter: {adapter}");
-            run_predict::<Wgpu>(&args, options, device)
+            run_predict(&args, options, device)
         }
         #[cfg(not(feature = "gpu"))]
         DeviceSelection::Gpu => Err(
@@ -834,8 +831,8 @@ fn bench(args: BenchArgs) -> montgomery::Result<()> {
     let device_started = Instant::now();
     match args.device {
         DeviceSelection::Cpu => {
-            let device = Device::<Flex>::default();
-            run_bench::<Flex>(
+            let device = Device::default();
+            run_bench(
                 &args,
                 device,
                 None,
@@ -845,7 +842,7 @@ fn bench(args: BenchArgs) -> montgomery::Result<()> {
         #[cfg(feature = "gpu")]
         DeviceSelection::Gpu => {
             let (device, adapter) = montgomery::default_wgpu_device();
-            run_bench::<Wgpu>(
+            run_bench(
                 &args,
                 device,
                 Some(adapter),
@@ -861,14 +858,14 @@ fn bench(args: BenchArgs) -> montgomery::Result<()> {
     }
 }
 
-fn run_bench<B: Backend>(
+fn run_bench(
     args: &BenchArgs,
-    device: Device<B>,
+    device: Device,
     adapter: Option<String>,
     device_setup_ms: f64,
 ) -> montgomery::Result<()> {
     let load_started = Instant::now();
-    let predictor = Predictor::<B>::new_on_device(&args.model, device)?;
+    let predictor = Predictor::new_on_device(&args.model, device)?;
     let model_load_host_ms = load_started.elapsed().as_secs_f64() * 1e3;
     let inference = predictor.benchmark(BenchmarkOptions {
         warmup_runs: args.warmup,
@@ -927,10 +924,10 @@ fn print_bench_report(report: &BenchReport, json: bool) -> montgomery::Result<()
     Ok(())
 }
 
-fn run_predict<B: Backend>(
+fn run_predict(
     args: &PredictArgs,
     options: PredictOptions,
-    device: Device<B>,
+    device: Device,
 ) -> montgomery::Result<()> {
     let model = args.model.clone();
     let output = args
@@ -938,7 +935,7 @@ fn run_predict<B: Backend>(
         .clone()
         .unwrap_or_else(|| default_output(&args.source, args.masks));
 
-    let predictor: Predictor<B> = Predictor::with_options_on_device(model, device, options)?;
+    let predictor: Predictor = Predictor::with_options_on_device(model, device, options)?;
     eprintln!(
         "Loaded {} ({}) with Burn.",
         args.model.display(),

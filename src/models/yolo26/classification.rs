@@ -11,7 +11,7 @@
 use burn::{
     module::Module,
     nn,
-    tensor::{Device, Tensor, backend::Backend},
+    tensor::{Device, Tensor},
 };
 
 #[cfg(feature = "pretrained")]
@@ -39,24 +39,24 @@ pub const NUM_CLASSES: usize = 1000;
 const HEAD_HIDDEN: usize = 1280;
 
 /// Classification head output: pre-softmax logits and their softmax probabilities.
-pub struct ClassificationOutput<B: Backend> {
+pub struct ClassificationOutput {
     /// Raw linear logits, `[batch, NUM_CLASSES]`.
-    pub logits: Tensor<B, 2>,
+    pub logits: Tensor<2>,
     /// Softmax probabilities, `[batch, NUM_CLASSES]` (Ultralytics' `Classify` output).
-    pub probs: Tensor<B, 2>,
+    pub probs: Tensor<2>,
 }
 
 /// Ultralytics `Classify` head: 1x1 convolution, global average pooling, dropout (inert at
 /// inference), and one linear layer. Field names match the official `model.10` checkpoint keys
 /// after remapping.
 #[derive(Module, Debug)]
-pub struct ClassifyHead<B: Backend> {
-    conv: Conv<B>,
-    linear: nn::Linear<B>,
+pub struct ClassifyHead {
+    conv: Conv,
+    linear: nn::Linear,
 }
 
-impl<B: Backend> ClassifyHead<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> ClassificationOutput<B> {
+impl ClassifyHead {
+    pub fn forward(&self, input: Tensor<4>) -> ClassificationOutput {
         let [batch, _, _, _] = input.dims();
         let pooled = burn::tensor::module::adaptive_avg_pool2d(self.conv.forward(input), [1, 1])
             .reshape([batch, HEAD_HIDDEN]);
@@ -65,7 +65,7 @@ impl<B: Backend> ClassifyHead<B> {
         ClassificationOutput { logits, probs }
     }
 
-    pub fn forward_train(&self, input: Tensor<B, 4>) -> Tensor<B, 2> {
+    pub fn forward_train(&self, input: Tensor<4>) -> Tensor<2> {
         let [batch, _, _, _] = input.dims();
         let pooled = burn::tensor::module::adaptive_avg_pool2d(self.conv.forward(input), [1, 1])
             .reshape([batch, HEAD_HIDDEN]);
@@ -93,7 +93,7 @@ impl ClassifyHeadConfig {
         self
     }
 
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> ClassifyHead<B> {
+    pub fn init(&self, device: &Device) -> ClassifyHead {
         ClassifyHead {
             conv: conv_cfg(self.input_channels, HEAD_HIDDEN, 1, 1).init(device),
             linear: nn::LinearConfig::new(HEAD_HIDDEN, self.num_classes).init(device),
@@ -104,21 +104,21 @@ impl ClassifyHeadConfig {
 /// YOLO26-cls backbone (layers 0-9), n and s scales: plain C3k2 bottleneck chains on the early
 /// stages, C3k chains on the later stages, and the C2PSA stage where the detect body has SPPF.
 #[derive(Module, Debug)]
-pub struct Yolo26ClassifyBodySmall<B: Backend> {
-    model_0: Conv<B>,
-    model_1: Conv<B>,
-    model_2: C3k2<B>,
-    model_3: Conv<B>,
-    model_4: C3k2<B>,
-    model_5: Conv<B>,
-    model_6: C3k2C3k<B>,
-    model_7: Conv<B>,
-    model_8: C3k2C3k<B>,
-    model_9: C2Psa<B>,
+pub struct Yolo26ClassifyBodySmall {
+    model_0: Conv,
+    model_1: Conv,
+    model_2: C3k2,
+    model_3: Conv,
+    model_4: C3k2,
+    model_5: Conv,
+    model_6: C3k2C3k,
+    model_7: Conv,
+    model_8: C3k2C3k,
+    model_9: C2Psa,
 }
 
-impl<B: Backend> Yolo26ClassifyBodySmall<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> Tensor<B, 4> {
+impl Yolo26ClassifyBodySmall {
+    pub fn forward(&self, input: Tensor<4>) -> Tensor<4> {
         let x = self.model_0.forward(input);
         let x = self.model_1.forward(x);
         let x = self.model_2.forward(x);
@@ -135,21 +135,21 @@ impl<B: Backend> Yolo26ClassifyBodySmall<B> {
 /// YOLO26-cls backbone (layers 0-9), m/l/x scales: `parse_model` forces `c3k=True` on every C3k2
 /// stage and the YAML caps `max_channels` at 512.
 #[derive(Module, Debug)]
-pub struct Yolo26ClassifyBodyLarge<B: Backend> {
-    model_0: Conv<B>,
-    model_1: Conv<B>,
-    model_2: C3k2C3k<B>,
-    model_3: Conv<B>,
-    model_4: C3k2C3k<B>,
-    model_5: Conv<B>,
-    model_6: C3k2C3k<B>,
-    model_7: Conv<B>,
-    model_8: C3k2C3k<B>,
-    model_9: C2Psa<B>,
+pub struct Yolo26ClassifyBodyLarge {
+    model_0: Conv,
+    model_1: Conv,
+    model_2: C3k2C3k,
+    model_3: Conv,
+    model_4: C3k2C3k,
+    model_5: Conv,
+    model_6: C3k2C3k,
+    model_7: Conv,
+    model_8: C3k2C3k,
+    model_9: C2Psa,
 }
 
-impl<B: Backend> Yolo26ClassifyBodyLarge<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> Tensor<B, 4> {
+impl Yolo26ClassifyBodyLarge {
+    pub fn forward(&self, input: Tensor<4>) -> Tensor<4> {
         let x = self.model_0.forward(input);
         let x = self.model_1.forward(x);
         let x = self.model_2.forward(x);
@@ -241,7 +241,7 @@ fn pytorch_store(path: impl Into<std::path::PathBuf>) -> burn_store::PytorchStor
 pub struct Yolo26ClassifyBodyNConfig;
 
 impl Yolo26ClassifyBodyNConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo26ClassifyBodySmall<B> {
+    pub fn init(&self, device: &Device) -> Yolo26ClassifyBodySmall {
         Yolo26ClassifyBodySmall {
             model_0: conv_cfg(3, 16, 3, 2).init(device),
             model_1: conv_cfg(16, 32, 3, 2).init(device),
@@ -272,7 +272,7 @@ impl Yolo26ClassifyBodyNConfig {
 pub struct Yolo26ClassifyBodySConfig;
 
 impl Yolo26ClassifyBodySConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo26ClassifyBodySmall<B> {
+    pub fn init(&self, device: &Device) -> Yolo26ClassifyBodySmall {
         Yolo26ClassifyBodySmall {
             model_0: conv_cfg(3, 32, 3, 2).init(device),
             model_1: conv_cfg(32, 64, 3, 2).init(device),
@@ -303,7 +303,7 @@ impl Yolo26ClassifyBodySConfig {
 pub struct Yolo26ClassifyBodyMConfig;
 
 impl Yolo26ClassifyBodyMConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo26ClassifyBodyLarge<B> {
+    pub fn init(&self, device: &Device) -> Yolo26ClassifyBodyLarge {
         Yolo26ClassifyBodyLarge {
             model_0: conv_cfg(3, 64, 3, 2).init(device),
             model_1: conv_cfg(64, 128, 3, 2).init(device),
@@ -334,7 +334,7 @@ impl Yolo26ClassifyBodyMConfig {
 pub struct Yolo26ClassifyBodyLConfig;
 
 impl Yolo26ClassifyBodyLConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo26ClassifyBodyLarge<B> {
+    pub fn init(&self, device: &Device) -> Yolo26ClassifyBodyLarge {
         Yolo26ClassifyBodyLarge {
             model_0: conv_cfg(3, 64, 3, 2).init(device),
             model_1: conv_cfg(64, 128, 3, 2).init(device),
@@ -365,7 +365,7 @@ impl Yolo26ClassifyBodyLConfig {
 pub struct Yolo26ClassifyBodyXConfig;
 
 impl Yolo26ClassifyBodyXConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo26ClassifyBodyLarge<B> {
+    pub fn init(&self, device: &Device) -> Yolo26ClassifyBodyLarge {
         Yolo26ClassifyBodyLarge {
             model_0: conv_cfg(3, 96, 3, 2).init(device),
             model_1: conv_cfg(96, 192, 3, 2).init(device),
@@ -395,12 +395,9 @@ impl Yolo26ClassifyBodyXConfig {
 mod tests {
     use super::*;
     use burn::tensor::{ElementConversion, TensorData};
-    use burn_flex::Flex;
+
     use serde::Deserialize;
     use std::collections::BTreeMap;
-
-    #[cfg(feature = "gpu")]
-    use burn::backend::Wgpu;
 
     #[derive(Deserialize)]
     struct GoldenFixture {
@@ -419,7 +416,7 @@ mod tests {
         samples: Vec<(usize, f64)>,
     }
 
-    fn assert_golden<const D: usize>(name: &str, actual: Tensor<Flex, D>, expected: &GoldenTensor) {
+    fn assert_golden<const D: usize>(name: &str, actual: Tensor<D>, expected: &GoldenTensor) {
         assert_eq!(actual.dims().to_vec(), expected.shape, "{name} shape");
         let values: Vec<f64> = actual
             .into_data()
@@ -463,12 +460,12 @@ mod tests {
         }
     }
 
-    fn load_reference_image(id: &str, device: &Device<Flex>) -> Tensor<Flex, 4> {
+    fn load_reference_image(id: &str, device: &Device) -> Tensor<4> {
         let image = image::open(format!("target/{id}-preprocessed-reference.png"))
             .unwrap()
             .into_rgb8();
         let shape = [image.height() as usize, image.width() as usize, 3];
-        Tensor::<Flex, 3>::from_data(
+        Tensor::<3>::from_data(
             TensorData::new(image.into_raw(), shape).convert::<f32>(),
             device,
         )
@@ -494,7 +491,7 @@ mod tests {
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
                         let device = Default::default();
-                        let mut model = <$config>::default().init::<Flex>(&device);
+                        let mut model = <$config>::default().init(&device);
                         model.load_pytorch_weights(checkpoint).unwrap();
                         let output = model.forward(Tensor::zeros([1, 3, 64, 64], &device));
                         assert_eq!(output.probs.dims(), [1, NUM_CLASSES]);
@@ -530,7 +527,7 @@ mod tests {
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
                         let device = Default::default();
-                        let mut model = <$config>::default().init::<Flex>(&device);
+                        let mut model = <$config>::default().init(&device);
                         model.load_burnpack_weights(checkpoint).unwrap();
                         let input = load_reference_image($id, &device);
                         let backbone = model.body.forward(input);
@@ -575,9 +572,9 @@ mod tests {
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
                         let device = Default::default();
-                        let mut model = <$config>::default().init::<Flex>(&device);
+                        let mut model = <$config>::default().init(&device);
                         model.load_burnpack_weights(checkpoint).unwrap();
-                        let input = Tensor::<Flex, 4>::zeros([1, 3, 224, 224], &device);
+                        let input = Tensor::<4>::zeros([1, 3, 224, 224], &device);
                         const WARMUP_RUNS: usize = 3;
                         const TIMED_RUNS: usize = 10;
 
@@ -644,7 +641,7 @@ mod tests {
                     "pack the {} artifact with pack-weights first",
                     $id
                 );
-                let predictor = crate::Predictor::<Flex>::from_checkpoint(
+                let predictor = crate::Predictor::from_checkpoint(
                     crate::ModelId::from_str($id).unwrap(),
                     checkpoint,
                     Default::default(),
@@ -721,9 +718,9 @@ mod tests {
                 let worker = std::thread::Builder::new()
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
-                        let mut model = <$config>::default().init::<Wgpu>(&device);
+                        let mut model = <$config>::default().init(&device);
                         model.load_burnpack_weights(checkpoint).unwrap();
-                        let input = Tensor::<Wgpu, 4>::zeros([1, 3, 224, 224], &device);
+                        let input = Tensor::<4>::zeros([1, 3, 224, 224], &device);
                         const WARMUP_RUNS: usize = 3;
                         const TIMED_RUNS: usize = 10;
 

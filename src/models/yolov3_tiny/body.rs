@@ -8,7 +8,6 @@ use burn::{
     tensor::{
         Device, Tensor,
         activation::silu,
-        backend::Backend,
         module::interpolate,
         ops::{InterpolateMode, InterpolateOptions, PadMode},
     },
@@ -16,13 +15,13 @@ use burn::{
 
 /// Convolution, batch normalization, and SiLU activation used by Ultralytics YOLO models.
 #[derive(Module, Debug)]
-pub struct Conv<B: Backend> {
-    conv: Conv2d<B>,
-    bn: BatchNorm<B>,
+pub struct Conv {
+    conv: Conv2d,
+    bn: BatchNorm,
 }
 
-impl<B: Backend> Conv<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> Tensor<B, 4> {
+impl Conv {
+    pub fn forward(&self, input: Tensor<4>) -> Tensor<4> {
         silu(self.bn.forward(self.conv.forward(input)))
     }
 }
@@ -49,7 +48,7 @@ impl ConvConfig {
         }
     }
 
-    pub(super) fn init<B: Backend>(&self, device: &Device<B>) -> Conv<B> {
+    pub(super) fn init(&self, device: &Device) -> Conv {
         let padding = (self.kernel_size - 1) / 2;
         let conv = Conv2dConfig::new(
             [self.in_channels, self.out_channels],
@@ -73,11 +72,11 @@ impl ConvConfig {
 }
 
 /// Feature maps for the two YOLOv3-Tiny detection scales.
-pub struct Yolov3TinyFeatures<B: Backend> {
+pub struct Yolov3TinyFeatures {
     /// P4/16 feature map with 256 channels.
-    pub p4: Tensor<B, 4>,
+    pub p4: Tensor<4>,
     /// P5/32 feature map with 512 channels.
-    pub p5: Tensor<B, 4>,
+    pub p5: Tensor<4>,
 }
 
 /// Complete YOLOv3-Tiny-Ultralytics backbone and feature-pyramid body (layers 0–19).
@@ -85,28 +84,28 @@ pub struct Yolov3TinyFeatures<B: Backend> {
 /// Field names retain the source graph indices so official checkpoint remapping stays mechanical
 /// and parity failures can be localized to a specific declared layer.
 #[derive(Module, Debug)]
-pub struct Yolov3TinyBody<B: Backend> {
-    model_0: Conv<B>,
+pub struct Yolov3TinyBody {
+    model_0: Conv,
     model_1: MaxPool2d,
-    model_2: Conv<B>,
+    model_2: Conv,
     model_3: MaxPool2d,
-    model_4: Conv<B>,
+    model_4: Conv,
     model_5: MaxPool2d,
-    model_6: Conv<B>,
+    model_6: Conv,
     model_7: MaxPool2d,
-    model_8: Conv<B>,
+    model_8: Conv,
     model_9: MaxPool2d,
-    model_10: Conv<B>,
+    model_10: Conv,
     model_12: MaxPool2d,
-    model_13: Conv<B>,
-    model_14: Conv<B>,
-    model_15: Conv<B>,
-    model_16: Conv<B>,
-    model_19: Conv<B>,
+    model_13: Conv,
+    model_14: Conv,
+    model_15: Conv,
+    model_16: Conv,
+    model_19: Conv,
 }
 
-impl<B: Backend> Yolov3TinyBody<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> Yolov3TinyFeatures<B> {
+impl Yolov3TinyBody {
+    pub fn forward(&self, input: Tensor<4>) -> Yolov3TinyFeatures {
         let x = self.model_0.forward(input);
         let x = self.model_1.forward(x);
         let x = self.model_2.forward(x);
@@ -145,7 +144,7 @@ impl<B: Backend> Yolov3TinyBody<B> {
 pub struct Yolov3TinyBodyConfig;
 
 impl Yolov3TinyBodyConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov3TinyBody<B> {
+    pub fn init(&self, device: &Device) -> Yolov3TinyBody {
         let pool_stride_2 = || MaxPool2dConfig::new([2, 2]).with_strides([2, 2]).init();
         Yolov3TinyBody {
             model_0: ConvConfig::new(3, 16, 3, 1).init(device),
@@ -172,7 +171,6 @@ impl Yolov3TinyBodyConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use burn_flex::Flex;
 
     #[test]
     fn produces_declared_p4_and_p5_shapes() {
@@ -180,7 +178,7 @@ mod tests {
             .stack_size(32 * 1024 * 1024)
             .spawn(|| {
                 let device = Default::default();
-                let body: Yolov3TinyBody<Flex> = Yolov3TinyBodyConfig.init(&device);
+                let body: Yolov3TinyBody = Yolov3TinyBodyConfig.init(&device);
                 let input = Tensor::zeros([1, 3, 64, 64], &device);
                 let output = body.forward(input);
                 assert_eq!(output.p4.dims(), [1, 256, 4, 4]);

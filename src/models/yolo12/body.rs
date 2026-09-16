@@ -1,6 +1,6 @@
 use burn::{
     module::Module,
-    tensor::{Device, Tensor, backend::Backend},
+    tensor::{Device, Tensor},
 };
 
 use super::blocks::{
@@ -12,7 +12,7 @@ use super::blocks::{
 ///
 /// The type is shared with the YOLO11 detection head, whose graph YOLO12 reuses byte for byte
 /// (light DWConv classification towers, DFL decode).
-pub type Yolo12Features<B> = crate::models::yolo11::body::Yolo11Features<B>;
+pub type Yolo12Features = crate::models::yolo11::body::Yolo11Features;
 
 /// Complete YOLO12 backbone and feature-pyramid body (layers 0-20), n and s scales.
 ///
@@ -23,26 +23,26 @@ pub type Yolo12Features<B> = crate::models::yolo11::body::Yolo11Features<B>;
 /// flavor, and the P5 stage (20) is a C3k2 with a C3k chain. The m/l/x scales force the C3k chain
 /// onto layers 2/4 (`parse_model`'s m/l/x rule) and use [`Yolo12BodyLarge`] instead.
 #[derive(Module, Debug)]
-pub struct Yolo12BodySmall<B: Backend> {
-    model_0: Conv<B>,
-    model_1: Conv<B>,
-    model_2: C3k2<B>,
-    model_3: Conv<B>,
-    model_4: C3k2<B>,
-    model_5: Conv<B>,
-    model_6: A2C2fAttn<B>,
-    model_7: Conv<B>,
-    model_8: A2C2fAttn<B>,
-    model_11: A2C2fC3k<B>,
-    model_14: A2C2fC3k<B>,
-    model_15: Conv<B>,
-    model_17: A2C2fC3k<B>,
-    model_18: Conv<B>,
-    model_20: C3k2C3k<B>,
+pub struct Yolo12BodySmall {
+    model_0: Conv,
+    model_1: Conv,
+    model_2: C3k2,
+    model_3: Conv,
+    model_4: C3k2,
+    model_5: Conv,
+    model_6: A2C2fAttn,
+    model_7: Conv,
+    model_8: A2C2fAttn,
+    model_11: A2C2fC3k,
+    model_14: A2C2fC3k,
+    model_15: Conv,
+    model_17: A2C2fC3k,
+    model_18: Conv,
+    model_20: C3k2C3k,
 }
 
-impl<B: Backend> Yolo12BodySmall<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> Yolo12Features<B> {
+impl Yolo12BodySmall {
+    pub fn forward(&self, input: Tensor<4>) -> Yolo12Features {
         let x = self.model_0.forward(input);
         let x = self.model_1.forward(x);
         let x = self.model_2.forward(x);
@@ -101,28 +101,28 @@ pub struct Yolo12BodyConfig {
 }
 
 /// The declared layer set shared by both body graph flavors.
-struct Yolo12BodyParts<B: Backend> {
-    model_0: Conv<B>,
-    model_1: Conv<B>,
-    model_2: Option<C3k2<B>>,
-    model_2_c3k: Option<C3k2C3k<B>>,
-    model_3: Conv<B>,
-    model_4: Option<C3k2<B>>,
-    model_4_c3k: Option<C3k2C3k<B>>,
-    model_5: Conv<B>,
-    model_6: A2C2fAttn<B>,
-    model_7: Conv<B>,
-    model_8: A2C2fAttn<B>,
-    model_11: A2C2fC3k<B>,
-    model_14: A2C2fC3k<B>,
-    model_15: Conv<B>,
-    model_17: A2C2fC3k<B>,
-    model_18: Conv<B>,
-    model_20: C3k2C3k<B>,
+struct Yolo12BodyParts {
+    model_0: Conv,
+    model_1: Conv,
+    model_2: Option<C3k2>,
+    model_2_c3k: Option<C3k2C3k>,
+    model_3: Conv,
+    model_4: Option<C3k2>,
+    model_4_c3k: Option<C3k2C3k>,
+    model_5: Conv,
+    model_6: A2C2fAttn,
+    model_7: Conv,
+    model_8: A2C2fAttn,
+    model_11: A2C2fC3k,
+    model_14: A2C2fC3k,
+    model_15: Conv,
+    model_17: A2C2fC3k,
+    model_18: Conv,
+    model_20: C3k2C3k,
 }
 
 impl Yolo12BodyConfig {
-    fn init<B: Backend>(&self, device: &Device<B>, early_c3k: bool) -> Yolo12BodyParts<B> {
+    fn init(&self, device: &Device, early_c3k: bool) -> Yolo12BodyParts {
         let [r6, r8] = self.a2_repeats;
         let [r11, r14, r17] = self.neck_repeats;
         let [area4, area1] = self.area;
@@ -184,7 +184,7 @@ impl Yolo12BodyConfig {
 pub struct Yolo12BodyNConfig;
 
 impl Yolo12BodyNConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo12BodySmall<B> {
+    pub fn init(&self, device: &Device) -> Yolo12BodySmall {
         let parts = Yolo12BodyConfig {
             w0: 16,
             w1: 32,
@@ -211,7 +211,7 @@ impl Yolo12BodyNConfig {
 pub struct Yolo12BodySConfig;
 
 impl Yolo12BodySConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo12BodySmall<B> {
+    pub fn init(&self, device: &Device) -> Yolo12BodySmall {
         let parts = Yolo12BodyConfig {
             w0: 32,
             w1: 64,
@@ -241,7 +241,7 @@ impl Yolo12BodySConfig {
 pub struct Yolo12BodyMConfig;
 
 impl Yolo12BodyMConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo12BodyLarge<B> {
+    pub fn init(&self, device: &Device) -> Yolo12BodyLarge {
         let parts = Yolo12BodyConfig {
             w0: 64,
             w1: 128,
@@ -271,7 +271,7 @@ impl Yolo12BodyMConfig {
 pub struct Yolo12BodyLConfig;
 
 impl Yolo12BodyLConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo12BodyLarge<B> {
+    pub fn init(&self, device: &Device) -> Yolo12BodyLarge {
         let parts = Yolo12BodyConfig {
             w0: 64,
             w1: 128,
@@ -298,7 +298,7 @@ impl Yolo12BodyLConfig {
 pub struct Yolo12BodyXConfig;
 
 impl Yolo12BodyXConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolo12BodyLarge<B> {
+    pub fn init(&self, device: &Device) -> Yolo12BodyLarge {
         let parts = Yolo12BodyConfig {
             w0: 96,
             w1: 192,
@@ -320,7 +320,7 @@ impl Yolo12BodyXConfig {
     }
 }
 
-fn assemble_small<B: Backend>(parts: Yolo12BodyParts<B>) -> Yolo12BodySmall<B> {
+fn assemble_small(parts: Yolo12BodyParts) -> Yolo12BodySmall {
     Yolo12BodySmall {
         model_0: parts.model_0,
         model_1: parts.model_1,
@@ -344,7 +344,7 @@ fn assemble_small<B: Backend>(parts: Yolo12BodyParts<B>) -> Yolo12BodySmall<B> {
     }
 }
 
-fn assemble_large<B: Backend>(parts: Yolo12BodyParts<B>) -> Yolo12BodyLarge<B> {
+fn assemble_large(parts: Yolo12BodyParts) -> Yolo12BodyLarge {
     Yolo12BodyLarge {
         model_0: parts.model_0,
         model_1: parts.model_1,
@@ -371,26 +371,26 @@ fn assemble_large<B: Backend>(parts: Yolo12BodyParts<B>) -> Yolo12BodyLarge<B> {
 /// structurally from the n/s body. The l/x scales carry the learnable gamma residual on the
 /// area-attention stages.
 #[derive(Module, Debug)]
-pub struct Yolo12BodyLarge<B: Backend> {
-    model_0: Conv<B>,
-    model_1: Conv<B>,
-    model_2: C3k2C3k<B>,
-    model_3: Conv<B>,
-    model_4: C3k2C3k<B>,
-    model_5: Conv<B>,
-    model_6: A2C2fAttn<B>,
-    model_7: Conv<B>,
-    model_8: A2C2fAttn<B>,
-    model_11: A2C2fC3k<B>,
-    model_14: A2C2fC3k<B>,
-    model_15: Conv<B>,
-    model_17: A2C2fC3k<B>,
-    model_18: Conv<B>,
-    model_20: C3k2C3k<B>,
+pub struct Yolo12BodyLarge {
+    model_0: Conv,
+    model_1: Conv,
+    model_2: C3k2C3k,
+    model_3: Conv,
+    model_4: C3k2C3k,
+    model_5: Conv,
+    model_6: A2C2fAttn,
+    model_7: Conv,
+    model_8: A2C2fAttn,
+    model_11: A2C2fC3k,
+    model_14: A2C2fC3k,
+    model_15: Conv,
+    model_17: A2C2fC3k,
+    model_18: Conv,
+    model_20: C3k2C3k,
 }
 
-impl<B: Backend> Yolo12BodyLarge<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> Yolo12Features<B> {
+impl Yolo12BodyLarge {
+    pub fn forward(&self, input: Tensor<4>) -> Yolo12Features {
         let x = self.model_0.forward(input);
         let x = self.model_1.forward(x);
         let x = self.model_2.forward(x);

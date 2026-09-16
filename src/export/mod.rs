@@ -1,6 +1,6 @@
 //! Offline ONNX artifact export.
 //!
-//! Burn 0.21 does not export ONNX graphs. This module therefore loads the exact requested model
+//! Burn does not export these ONNX graphs directly. This module therefore loads the requested model
 //! in Rust, snapshots its parameters to SafeTensors, and launches the pinned repository-owned
 //! Python graph adapter. Python, PyTorch, ONNX and ONNX Runtime are build-time export dependencies
 //! only; published artifacts have no dependency on them.
@@ -18,7 +18,6 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use burn_flex::Flex;
 use sha2::{Digest, Sha256};
 
 use crate::{COCO_CLASSES, ModelId, PredictOptions, Predictor, Result, data::IMAGENET_CLASSES};
@@ -194,7 +193,7 @@ fn export_staged(
         .stack_size(64 * 1024 * 1024)
         .spawn(move || {
             let predictor =
-                Predictor::<Flex>::from_checkpoint(model_id, checkpoint, PredictOptions::default())
+                Predictor::from_checkpoint(model_id, checkpoint, PredictOptions::default())
                     .map_err(|error| format!("checkpoint loading failed: {error}"))?;
             let audit = snapshot::write_snapshot(&predictor, &snapshot_for_worker, spec)?;
             let references = if write_burn_references {

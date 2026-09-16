@@ -1,18 +1,18 @@
 use burn::{
     module::Module,
-    tensor::{Device, Tensor, backend::Backend},
+    tensor::{Device, Tensor},
 };
 
 use super::blocks::{C2f, C2fConfig, Conv, ConvConfig, Sppf, SppfConfig, upsample_nearest_2x};
 
 /// Feature maps for the three YOLOv8 detection scales.
-pub struct Yolov8Features<B: Backend> {
+pub struct Yolov8Features {
     /// P3/8 feature map.
-    pub p3: Tensor<B, 4>,
+    pub p3: Tensor<4>,
     /// P4/16 feature map.
-    pub p4: Tensor<B, 4>,
+    pub p4: Tensor<4>,
     /// P5/32 feature map.
-    pub p5: Tensor<B, 4>,
+    pub p5: Tensor<4>,
 }
 
 /// Complete YOLOv8 backbone and feature-pyramid body (layers 0-21).
@@ -23,27 +23,27 @@ pub struct Yolov8Features<B: Backend> {
 /// the backbone C2f stages carrying shortcuts and the neck C2f stages running without them; only
 /// the depth-scaled repeat counts and the width-scaled channel counts change per scale.
 #[derive(Module, Debug)]
-pub struct Yolov8Body<B: Backend> {
-    model_0: Conv<B>,
-    model_1: Conv<B>,
-    model_2: C2f<B>,
-    model_3: Conv<B>,
-    model_4: C2f<B>,
-    model_5: Conv<B>,
-    model_6: C2f<B>,
-    model_7: Conv<B>,
-    model_8: C2f<B>,
-    model_9: Sppf<B>,
-    model_12: C2f<B>,
-    model_15: C2f<B>,
-    model_16: Conv<B>,
-    model_18: C2f<B>,
-    model_19: Conv<B>,
-    model_21: C2f<B>,
+pub struct Yolov8Body {
+    model_0: Conv,
+    model_1: Conv,
+    model_2: C2f,
+    model_3: Conv,
+    model_4: C2f,
+    model_5: Conv,
+    model_6: C2f,
+    model_7: Conv,
+    model_8: C2f,
+    model_9: Sppf,
+    model_12: C2f,
+    model_15: C2f,
+    model_16: Conv,
+    model_18: C2f,
+    model_19: Conv,
+    model_21: C2f,
 }
 
-impl<B: Backend> Yolov8Body<B> {
-    pub fn forward(&self, input: Tensor<B, 4>) -> Yolov8Features<B> {
+impl Yolov8Body {
+    pub fn forward(&self, input: Tensor<4>) -> Yolov8Features {
         let x = self.model_0.forward(input);
         let x = self.model_1.forward(x);
         let x = self.model_2.forward(x);
@@ -89,7 +89,7 @@ pub struct Yolov8BodyConfig {
 }
 
 impl Yolov8BodyConfig {
-    fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8Body<B> {
+    fn init(&self, device: &Device) -> Yolov8Body {
         // Channel table per layer: out_0..out_8 are the outputs of backbone layers 0-8 (the SPPF
         // width equals out_8); the neck reuses those widths symmetrically: 12 out = out_5, 15 out
         // = out_4 (the backbone P3 tap), 18 out = out_5, 21 out = out_8.
@@ -124,7 +124,7 @@ impl Yolov8BodyConfig {
 pub struct Yolov8BodyNConfig;
 
 impl Yolov8BodyNConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8Body<B> {
+    pub fn init(&self, device: &Device) -> Yolov8Body {
         Yolov8BodyConfig {
             widths: [16, 32, 32, 64, 64, 128, 128, 256, 256, 256],
             backbone_repeats: [1, 2, 2, 1],
@@ -139,7 +139,7 @@ impl Yolov8BodyNConfig {
 pub struct Yolov8BodySConfig;
 
 impl Yolov8BodySConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8Body<B> {
+    pub fn init(&self, device: &Device) -> Yolov8Body {
         Yolov8BodyConfig {
             widths: [32, 64, 64, 128, 128, 256, 256, 512, 512, 512],
             backbone_repeats: [1, 2, 2, 1],
@@ -154,7 +154,7 @@ impl Yolov8BodySConfig {
 pub struct Yolov8BodyMConfig;
 
 impl Yolov8BodyMConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8Body<B> {
+    pub fn init(&self, device: &Device) -> Yolov8Body {
         Yolov8BodyConfig {
             widths: [48, 96, 96, 192, 192, 384, 384, 576, 576, 576],
             backbone_repeats: [2, 4, 4, 2],
@@ -169,7 +169,7 @@ impl Yolov8BodyMConfig {
 pub struct Yolov8BodyLConfig;
 
 impl Yolov8BodyLConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8Body<B> {
+    pub fn init(&self, device: &Device) -> Yolov8Body {
         Yolov8BodyConfig {
             widths: [64, 128, 128, 256, 256, 512, 512, 512, 512, 512],
             backbone_repeats: [3, 6, 6, 3],
@@ -184,7 +184,7 @@ impl Yolov8BodyLConfig {
 pub struct Yolov8BodyXConfig;
 
 impl Yolov8BodyXConfig {
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> Yolov8Body<B> {
+    pub fn init(&self, device: &Device) -> Yolov8Body {
         Yolov8BodyConfig {
             widths: [80, 160, 160, 320, 320, 640, 640, 640, 640, 640],
             backbone_repeats: [3, 6, 6, 3],

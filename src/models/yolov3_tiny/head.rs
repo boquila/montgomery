@@ -1,7 +1,7 @@
 use burn::{
     module::Module,
     nn::conv::{Conv2d, Conv2dConfig},
-    tensor::{Device, Tensor, TensorData, activation, backend::Backend},
+    tensor::{Device, Tensor, TensorData, activation},
 };
 
 use super::body::{Conv, ConvConfig, Yolov3TinyFeatures};
@@ -10,34 +10,34 @@ const DEFAULT_NUM_CLASSES: usize = 80;
 const REG_MAX: usize = 16;
 
 /// Raw predictions before DFL projection and anchor-grid decoding.
-pub struct RawPredictions<B: Backend> {
+pub struct RawPredictions {
     /// `[batch, 4 * reg_max, anchors]`.
-    pub boxes: Tensor<B, 3>,
+    pub boxes: Tensor<3>,
     /// `[batch, classes, anchors]`.
-    pub scores: Tensor<B, 3>,
+    pub scores: Tensor<3>,
 }
 
 /// Decoded predictions in model-input space.
-pub struct DecodedPredictions<B: Backend> {
+pub struct DecodedPredictions {
     /// Unnormalized `XYXY` model-input pixels, `[batch, anchors, 4]`.
-    pub boxes: Tensor<B, 3>,
+    pub boxes: Tensor<3>,
     /// Per-class sigmoid probabilities, `[batch, anchors, classes]`.
-    pub scores: Tensor<B, 3>,
+    pub scores: Tensor<3>,
 }
 
 #[derive(Module, Debug)]
-struct DetectionBranch<B: Backend> {
-    box_0: Conv<B>,
-    box_1: Conv<B>,
-    box_2: Conv2d<B>,
-    cls_0: Conv<B>,
-    cls_1: Conv<B>,
-    cls_2: Conv2d<B>,
+struct DetectionBranch {
+    box_0: Conv,
+    box_1: Conv,
+    box_2: Conv2d,
+    cls_0: Conv,
+    cls_1: Conv,
+    cls_2: Conv2d,
     num_classes: usize,
 }
 
-impl<B: Backend> DetectionBranch<B> {
-    fn forward(&self, input: Tensor<B, 4>) -> (Tensor<B, 3>, Tensor<B, 3>) {
+impl DetectionBranch {
+    fn forward(&self, input: Tensor<4>) -> (Tensor<3>, Tensor<3>) {
         let [batch, _, height, width] = input.dims();
         let boxes = self
             .box_2
@@ -57,7 +57,7 @@ struct DetectionBranchConfig {
 }
 
 impl DetectionBranchConfig {
-    fn init<B: Backend>(&self, device: &Device<B>) -> DetectionBranch<B> {
+    fn init(&self, device: &Device) -> DetectionBranch {
         // Detect.legacy=True for v3/v5/v8/v9: both towers use ordinary Conv blocks.
         let box_channels = 64;
         let class_channels = 256;
@@ -79,13 +79,13 @@ impl DetectionBranchConfig {
 
 /// Ultralytics anchor-free, objectness-free split detection head used by YOLOv3-Tiny-U.
 #[derive(Module, Debug)]
-pub struct DetectHead<B: Backend> {
-    p4: DetectionBranch<B>,
-    p5: DetectionBranch<B>,
+pub struct DetectHead {
+    p4: DetectionBranch,
+    p5: DetectionBranch,
 }
 
-impl<B: Backend> DetectHead<B> {
-    pub fn forward_raw(&self, features: Yolov3TinyFeatures<B>) -> RawPredictions<B> {
+impl DetectHead {
+    pub fn forward_raw(&self, features: Yolov3TinyFeatures) -> RawPredictions {
         let (boxes_p4, scores_p4) = self.p4.forward(features.p4);
         let (boxes_p5, scores_p5) = self.p5.forward(features.p5);
         RawPredictions {
@@ -94,7 +94,7 @@ impl<B: Backend> DetectHead<B> {
         }
     }
 
-    pub fn forward(&self, features: Yolov3TinyFeatures<B>) -> DecodedPredictions<B> {
+    pub fn forward(&self, features: Yolov3TinyFeatures) -> DecodedPredictions {
         let p4_shape = features.p4.dims();
         let p5_shape = features.p5.dims();
         let device = features.p4.device();
@@ -104,7 +104,7 @@ impl<B: Backend> DetectHead<B> {
         // DFL integral: softmax each 16-bin side distribution, then project onto [0, 15].
         let distribution =
             activation::softmax(raw.boxes.reshape([batch, 4, REG_MAX, anchors_count]), 2);
-        let projection = Tensor::<B, 4>::from_data(
+        let projection = Tensor::<4>::from_data(
             TensorData::new(
                 (0..REG_MAX).map(|value| value as f32).collect(),
                 [1, 1, REG_MAX, 1],
@@ -116,7 +116,7 @@ impl<B: Backend> DetectHead<B> {
             .squeeze_dim::<3>(2)
             .swap_dims(1, 2);
 
-        let (anchors, strides) = make_anchors::<B>(
+        let (anchors, strides) = make_anchors(
             [
                 (p4_shape[2], p4_shape[3], 16.0),
                 (p5_shape[2], p5_shape[3], 32.0),
@@ -154,7 +154,7 @@ impl DetectHeadConfig {
         Self { num_classes }
     }
 
-    pub fn init<B: Backend>(&self, device: &Device<B>) -> DetectHead<B> {
+    pub fn init(&self, device: &Device) -> DetectHead {
         DetectHead {
             p4: DetectionBranchConfig {
                 input_channels: 256,
@@ -170,10 +170,7 @@ impl DetectHeadConfig {
     }
 }
 
-fn make_anchors<B: Backend>(
-    levels: [(usize, usize, f32); 2],
-    device: &Device<B>,
-) -> (Tensor<B, 2>, Tensor<B, 2>) {
+fn make_anchors(levels: [(usize, usize, f32); 2], device: &Device) -> (Tensor<2>, Tensor<2>) {
     let total: usize = levels.iter().map(|(height, width, _)| height * width).sum();
     let mut anchors = Vec::with_capacity(total * 2);
     let mut strides = Vec::with_capacity(total);
@@ -195,7 +192,6 @@ fn make_anchors<B: Backend>(
 mod tests {
     use super::*;
     use crate::models::yolov3_tiny::body::Yolov3TinyBodyConfig;
-    use burn_flex::Flex;
 
     #[test]
     fn decodes_two_feature_levels_to_xyxy_and_scores() {
@@ -203,8 +199,8 @@ mod tests {
             .stack_size(48 * 1024 * 1024)
             .spawn(|| {
                 let device = Default::default();
-                let body = Yolov3TinyBodyConfig.init::<Flex>(&device);
-                let head = DetectHeadConfig::default().init::<Flex>(&device);
+                let body = Yolov3TinyBodyConfig.init(&device);
+                let head = DetectHeadConfig::default().init(&device);
                 let input = Tensor::zeros([1, 3, 64, 64], &device);
                 let output = head.forward(body.forward(input));
                 assert_eq!(output.boxes.dims(), [1, 20, 4]);

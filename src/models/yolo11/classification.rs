@@ -9,7 +9,7 @@
 
 use burn::{
     module::Module,
-    tensor::{Device, Tensor, backend::Backend},
+    tensor::{Device, Tensor},
 };
 
 #[cfg(feature = "pretrained")]
@@ -91,7 +91,7 @@ mod parity_tests {
     use super::*;
     use crate::models::yolo26::classification::NUM_CLASSES;
     use burn::tensor::{ElementConversion, TensorData};
-    use burn_flex::Flex;
+
     use serde::Deserialize;
     use std::collections::BTreeMap;
 
@@ -112,7 +112,7 @@ mod parity_tests {
         samples: Vec<(usize, f64)>,
     }
 
-    fn assert_golden<const D: usize>(name: &str, actual: Tensor<Flex, D>, expected: &GoldenTensor) {
+    fn assert_golden<const D: usize>(name: &str, actual: Tensor<D>, expected: &GoldenTensor) {
         assert_eq!(actual.dims().to_vec(), expected.shape, "{name} shape");
         let values: Vec<f64> = actual
             .into_data()
@@ -156,12 +156,12 @@ mod parity_tests {
         }
     }
 
-    fn load_reference_image(id: &str, device: &Device<Flex>) -> Tensor<Flex, 4> {
+    fn load_reference_image(id: &str, device: &Device) -> Tensor<4> {
         let image = image::open(format!("target/{id}-preprocessed-reference.png"))
             .unwrap()
             .into_rgb8();
         let shape = [image.height() as usize, image.width() as usize, 3];
-        Tensor::<Flex, 3>::from_data(
+        Tensor::<3>::from_data(
             TensorData::new(image.into_raw(), shape).convert::<f32>(),
             device,
         )
@@ -185,7 +185,7 @@ mod parity_tests {
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
                         let device = Default::default();
-                        let mut model = <$config>::default().init::<Flex>(&device);
+                        let mut model = <$config>::default().init(&device);
                         model.load_pytorch_weights(checkpoint).unwrap();
                         let output = model.forward(Tensor::zeros([1, 3, 64, 64], &device));
                         assert_eq!(output.probs.dims(), [1, NUM_CLASSES]);
@@ -221,7 +221,7 @@ mod parity_tests {
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
                         let device = Default::default();
-                        let mut model = <$config>::default().init::<Flex>(&device);
+                        let mut model = <$config>::default().init(&device);
                         model.load_burnpack_weights(checkpoint).unwrap();
                         let input = load_reference_image($id, &device);
                         let backbone = model.body.forward(input);
@@ -263,9 +263,9 @@ mod parity_tests {
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
                         let device = Default::default();
-                        let mut model = <$config>::default().init::<Flex>(&device);
+                        let mut model = <$config>::default().init(&device);
                         model.load_burnpack_weights(checkpoint).unwrap();
-                        let input = Tensor::<Flex, 4>::zeros([1, 3, 224, 224], &device);
+                        let input = Tensor::<4>::zeros([1, 3, 224, 224], &device);
                         const WARMUP_RUNS: usize = 3;
                         const TIMED_RUNS: usize = 10;
 
@@ -314,9 +314,9 @@ mod parity_tests {
                 let worker = std::thread::Builder::new()
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
-                        let mut model = <$config>::default().init::<burn::backend::Wgpu>(&device);
+                        let mut model = <$config>::default().init(&device);
                         model.load_burnpack_weights(checkpoint).unwrap();
-                        let input = Tensor::<burn::backend::Wgpu, 4>::zeros([1, 3, 224, 224], &device);
+                        let input = Tensor::<4>::zeros([1, 3, 224, 224], &device);
                         const WARMUP_RUNS: usize = 3;
                         const TIMED_RUNS: usize = 10;
 
@@ -380,7 +380,7 @@ mod parity_tests {
                     "pack the {} artifact with pack-weights first",
                     $id
                 );
-                let predictor = crate::Predictor::<Flex>::from_checkpoint(
+                let predictor = crate::Predictor::from_checkpoint(
                     crate::ModelId::from_str($id).unwrap(),
                     checkpoint,
                     Default::default(),
