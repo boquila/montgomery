@@ -11,6 +11,12 @@ fn main() -> montgomery::Result<()> {
     match prediction {
         Prediction::Detections(items) => println!("{} detections", items.len()),
         Prediction::Segmentations(items) => println!("{} segmented instances", items.len()),
+        Prediction::Semantics(mask) => println!(
+            "semantic mask {}x{} ({} labeled pixels)",
+            mask.width,
+            mask.height,
+            mask.data.len()
+        ),
         Prediction::Classifications(items) => {
             for item in items {
                 println!("{}: {:.1}%", item.class_name, item.confidence * 100.0);

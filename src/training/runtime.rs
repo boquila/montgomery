@@ -948,6 +948,12 @@ fn train_inner(
             request.image_size.map(|side| [side, side]),
         )?
     };
+    if spec.task == crate::training::TaskKind::Semantic {
+        return Err(
+            "semantic segmentation models are inference-only; native training is not supported"
+                .into(),
+        );
+    }
     if (spec.task == crate::training::TaskKind::Classify)
         != (dataset.format == DatasetFormat::ClassificationFolders)
     {
@@ -1507,6 +1513,18 @@ fn train_inner(
             crate::models::yolo26::Yolo26SegXConfig.init(&device),
             ReplacedProjection::Yolo26Segment
         ),
+        // Unreachable: train_inner rejects semantic models before dispatch. The arms exist
+        // so an accidental removal of that gate fails closed instead of training a wrong loss.
+        ModelId::Yolo26NSem
+        | ModelId::Yolo26SSem
+        | ModelId::Yolo26MSem
+        | ModelId::Yolo26LSem
+        | ModelId::Yolo26XSem => {
+            return Err(
+                "semantic segmentation models are inference-only; native training is not supported"
+                    .into(),
+            );
+        }
     }?;
     if !request.dry_run && !probe_only && request.export_artifacts {
         export_run_artifacts(&run)?;
@@ -3186,6 +3204,16 @@ fn export_inner(
             ModelId::Yolo26MSeg => save!(crate::models::yolo26::Yolo26SegMConfig),
             ModelId::Yolo26LSeg => save!(crate::models::yolo26::Yolo26SegLConfig),
             ModelId::Yolo26XSeg => save!(crate::models::yolo26::Yolo26SegXConfig),
+            // Unreachable: semantic checkpoints can never exist because native training
+            // rejects semantic models. Kept explicit so the match fails closed.
+            ModelId::Yolo26NSem
+            | ModelId::Yolo26SSem
+            | ModelId::Yolo26MSem
+            | ModelId::Yolo26LSem
+            | ModelId::Yolo26XSem => Err(
+                "semantic segmentation models are inference-only; native training is not supported"
+                    .into(),
+            ),
         };
     let exported = exported?;
     let predictor = crate::Predictor::from_trained_artifact_on_device(
@@ -3220,6 +3248,7 @@ where
     let task = match spec.task {
         crate::training::TaskKind::Detect => "detect",
         crate::training::TaskKind::Segment => "segment",
+        crate::training::TaskKind::Semantic => "semantic",
         crate::training::TaskKind::Classify => "classify",
     };
     let mut store = burn_store::BurnpackStore::from_file(output)

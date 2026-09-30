@@ -20,7 +20,10 @@ use std::{
 
 use sha2::{Digest, Sha256};
 
-use crate::{COCO_CLASSES, ModelId, PredictOptions, Predictor, Result, data::IMAGENET_CLASSES};
+use crate::{
+    CITYSCAPES_CLASSES, COCO_CLASSES, ModelId, PredictOptions, Predictor, Result,
+    data::IMAGENET_CLASSES,
+};
 
 pub use manifest::PublishedArtifact as OnnxArtifact;
 pub use spec::{ExternalDataPolicy, OnnxPrecision, OnnxProfile};
@@ -238,6 +241,10 @@ fn export_staged(
     let (git_commit, git_dirty) = git_identity();
     let class_names = match spec.task {
         ExportTask::Classify => IMAGENET_CLASSES
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect(),
+        ExportTask::Semantic => CITYSCAPES_CLASSES
             .iter()
             .map(|name| (*name).to_owned())
             .collect(),

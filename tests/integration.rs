@@ -13,16 +13,17 @@ use image::{DynamicImage, Rgb};
 use montgomery::models::{
     yolo11::{Yolo11ClsNConfig, Yolo11NConfig, Yolo11SegNConfig},
     yolo12::Yolo12NConfig,
-    yolo26::{Yolo26ClsNConfig, Yolo26NConfig, Yolo26SegNConfig},
+    yolo26::{Yolo26ClsNConfig, Yolo26NConfig, Yolo26SegNConfig, Yolo26SemNConfig},
     yolov3_tiny::Yolov3TinyConfig,
     yolov8::{Yolov8ClsNConfig, Yolov8NConfig, Yolov8SegNConfig},
     yolov10::Yolov10NConfig,
     yolox::Yolox,
 };
 use montgomery::{
-    CLASSIFICATION_TOP_K, CLASSIFY_INPUT_SIZE, COCO_CLASSES, Detection, INPUT_SIZE, InstanceMask,
-    Model, ModelId, ModelTask, PredictOptions, Prediction, Predictor, SegmentationDetection,
-    annotate, annotate_segmentation, pack_weights_to,
+    CITYSCAPES_CLASSES, CLASSIFICATION_TOP_K, CLASSIFY_INPUT_SIZE, COCO_CLASSES, Detection,
+    INPUT_SIZE, InstanceMask, Model, ModelId, ModelTask, PredictOptions, Prediction, Predictor,
+    SEMANTIC_INPUT_SIZE, SegmentationDetection, SemanticMask, annotate, annotate_segmentation,
+    annotate_semantic, pack_weights_to,
 };
 
 fn montgomery(args: &[&str]) -> Output {
@@ -108,6 +109,18 @@ fn segmentation_families_run_complete_public_graphs() {
 }
 
 #[test]
+fn semantic_families_run_complete_public_graphs() {
+    with_model_stack(|| {
+        let device = Device::new(FlexDevice);
+        let input = Tensor::<4>::zeros([1, 3, 64, 64], &device);
+
+        // A 64 px input yields stride-8 logits with the 19 Cityscapes classes by default.
+        let yolo26 = Yolo26SemNConfig.init(&device).forward(input);
+        assert_eq!(yolo26.logits.dims(), [1, CITYSCAPES_CLASSES.len(), 8, 8]);
+    });
+}
+
+#[test]
 fn classification_families_run_complete_public_graphs() {
     with_model_stack(|| {
         let device = Device::new(FlexDevice);
@@ -129,7 +142,7 @@ fn classification_families_run_complete_public_graphs() {
 
 #[test]
 fn model_catalog_is_a_consistent_public_registry() {
-    assert_eq!(ModelId::ALL.len(), 63);
+    assert_eq!(ModelId::ALL.len(), 68);
     assert_eq!(ModelId::default(), ModelId::YoloxNano);
 
     let mut canonical_names = HashSet::new();
@@ -145,6 +158,8 @@ fn model_catalog_is_a_consistent_public_registry() {
 
         let expected_size = if name.ends_with("-cls") {
             CLASSIFY_INPUT_SIZE
+        } else if name.ends_with("-sem") {
+            SEMANTIC_INPUT_SIZE
         } else if matches!(model, ModelId::YoloxNano | ModelId::YoloxTiny) {
             416
         } else {
@@ -157,6 +172,8 @@ fn model_catalog_is_a_consistent_public_registry() {
         );
         let expected_task = if name.ends_with("-cls") {
             ModelTask::Classification
+        } else if name.ends_with("-sem") {
+            ModelTask::Semantic
         } else if name.ends_with("-seg") {
             ModelTask::Segmentation
         } else {
@@ -172,6 +189,7 @@ fn model_catalog_is_a_consistent_public_registry() {
         ("yolo11n_seg", ModelId::Yolo11NSeg),
         ("yolov8x_cls", ModelId::Yolov8XCls),
         ("yolo26-xlarge", ModelId::Yolo26X),
+        ("yolo26n_sem", ModelId::Yolo26NSem),
     ] {
         assert_eq!(alias.parse(), Ok(model), "alias {alias}");
     }
@@ -180,6 +198,9 @@ fn model_catalog_is_a_consistent_public_registry() {
     assert_eq!(COCO_CLASSES.len(), 80);
     assert_eq!(COCO_CLASSES[0], "person");
     assert_eq!(COCO_CLASSES[79], "toothbrush");
+    assert_eq!(CITYSCAPES_CLASSES.len(), 19);
+    assert_eq!(CITYSCAPES_CLASSES[0], "road");
+    assert_eq!(CITYSCAPES_CLASSES[18], "bicycle");
     assert_eq!(CLASSIFICATION_TOP_K, 5);
 }
 
@@ -194,8 +215,23 @@ fn simple_model_api_has_a_concrete_cpu_default_and_task_aware_results() {
     let detections = Prediction::Detections(Vec::new());
     assert_eq!(detections.detections(), Some([].as_slice()));
     assert!(detections.segmentations().is_none());
+    assert!(detections.semantics().is_none());
     assert!(detections.classifications().is_none());
     assert!(detections.is_empty());
+
+    let mask = Prediction::Semantics(SemanticMask {
+        width: 2,
+        height: 1,
+        data: vec![0, 3],
+    });
+    assert_eq!(mask.semantics().unwrap().data, vec![0, 3]);
+    assert_eq!(mask.semantics().unwrap().pixels_for_class(0), 1);
+    assert_eq!(
+        mask.semantics().unwrap().class_histogram(4),
+        vec![1, 0, 0, 1]
+    );
+    assert!(mask.detections().is_none());
+    assert!(!mask.is_empty());
 }
 
 #[test]
@@ -205,6 +241,17 @@ fn classifies_a_hot_dog() {
     assert_eq!(
         prediction.classifications().unwrap()[0].class_name,
         "hot_dog"
+    );
+
+    // Task entry points reject foreign architectures with a task-specific error.
+    let image = image::open("tests/assets/hot-dog.jpg").unwrap();
+    let error = model
+        .predict_semantic(&image)
+        .expect_err("classification model must reject semantic prediction")
+        .to_string();
+    assert!(
+        error.contains("not a semantic-segmentation model"),
+        "{error}"
     );
 }
 
@@ -339,11 +386,27 @@ fn renderers_preserve_source_geometry_and_public_result_schema() {
     assert_eq!(*segmented.get_pixel(2, 2), black, "mask interior");
     assert_eq!(*segmented.get_pixel(6, 6), class_color, "box overlays mask");
 
-    let json = serde_json::to_value((&box_detection, &segmentation)).unwrap();
+    let semantic = SemanticMask {
+        width: 10,
+        height: 10,
+        data: vec![2; 100],
+    };
+    let overlaid = annotate_semantic(&source, &semantic).to_rgb8();
+    assert_eq!(overlaid.dimensions(), (10, 10));
+    assert_ne!(*overlaid.get_pixel(5, 5), black, "overlay tints the map");
+    assert_eq!(
+        *source.to_rgb8().get_pixel(5, 5),
+        black,
+        "input was mutated"
+    );
+
+    let json = serde_json::to_value((&box_detection, &segmentation, &semantic)).unwrap();
     assert_eq!(json[0]["xmin"], 2.0);
     assert_eq!(json[0]["xmax"], 7.0);
     assert_eq!(json[1]["mask"]["width"], 10);
     assert_eq!(json[1]["mask"]["data"].as_array().unwrap().len(), 100);
+    assert_eq!(json[2]["width"], 10);
+    assert_eq!(json[2]["data"].as_array().unwrap().len(), 100);
 }
 
 #[test]

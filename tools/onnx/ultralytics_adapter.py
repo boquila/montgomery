@@ -14,17 +14,22 @@ from contracts import UltralyticsCompatible, UltralyticsPortable
 def _import_source(root: Path):
     root = root.resolve(strict=True)
     sys.path.insert(0, str(root))
-    from ultralytics.nn.tasks import ClassificationModel, DetectionModel, SegmentationModel
+    from ultralytics.nn.tasks import (
+        ClassificationModel,
+        DetectionModel,
+        SegmentationModel,
+        SemanticSegmentationModel,
+    )
     import ultralytics
 
     resolved = Path(ultralytics.__file__).resolve()
     if root not in resolved.parents:
         raise RuntimeError(f"resolved Ultralytics import {resolved} is outside pinned source {root}")
-    return DetectionModel, SegmentationModel, ClassificationModel
+    return DetectionModel, SegmentationModel, ClassificationModel, SemanticSegmentationModel
 
 
 def _construct(manifest: dict, root: Path) -> torch.nn.Module:
-    DetectionModel, SegmentationModel, ClassificationModel = _import_source(root)
+    DetectionModel, SegmentationModel, ClassificationModel, SemanticSegmentationModel = _import_source(root)
     task = manifest["task"]
     cfg = manifest["graph_config"]
     classes = int(manifest["num_classes"])
@@ -32,6 +37,8 @@ def _construct(manifest: dict, root: Path) -> torch.nn.Module:
         model = ClassificationModel(cfg=cfg, ch=3, nc=classes, verbose=False)
     elif task == "segment":
         model = SegmentationModel(cfg=cfg, ch=3, nc=classes, verbose=False)
+    elif task == "semantic":
+        model = SemanticSegmentationModel(cfg=cfg, ch=3, nc=classes, verbose=False)
     else:
         model = DetectionModel(cfg=cfg, ch=3, nc=classes, verbose=False)
     # Released v8/v11 checkpoints predate the source refactor that changed SPPF.cv1 to act=False.
@@ -51,6 +58,11 @@ def _allowed_missing(key: str, manifest: dict) -> bool:
         if suffix.startswith(("cv2.", "cv3.", "cv4.")):
             return True
         if ".proto.semseg." in key:
+            return True
+    if manifest["task"] == "semantic":
+        # Training-only deep-supervision head and the parameter-free stride buffer have no
+        # inference counterpart in the native Burn graph.
+        if ".aux_head." in key or key == "model.17.stride":
             return True
     return False
 
