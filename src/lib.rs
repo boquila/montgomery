@@ -3569,11 +3569,12 @@ pub fn annotate_semantic(image: &DynamicImage, mask: &SemanticMask) -> DynamicIm
     DynamicImage::ImageRgb8(output)
 }
 
-/// Render a source-space depth map as a grayscale image.
+/// Render a source-space depth map with the viridis colormap.
 ///
-/// Nearer pixels are brighter: the map's own minimum maps to white and its maximum to black
-/// (a flat map renders uniform white; non-finite pixels render black). The source image is
-/// not blended in — depth carries no class identity to overlay.
+/// Nearer pixels map toward yellow and farther pixels toward dark purple: the map's own
+/// minimum maps to `t = 1` and its maximum to `t = 0` (a flat map renders uniform yellow;
+/// non-finite pixels render black). The source image is not blended in — depth carries no
+/// class identity to overlay.
 pub fn annotate_depth(map: &DepthMap) -> DynamicImage {
     let stats = map.stats();
     let span = (stats.max - stats.min).max(f32::EPSILON);
@@ -3581,18 +3582,46 @@ pub fn annotate_depth(map: &DepthMap) -> DynamicImage {
     for y in 0..map.height {
         for x in 0..map.width {
             let value = map.data[y as usize * map.width as usize + x as usize];
-            // Nearer (smaller) depths are brighter; clamp guards non-finite inputs.
-            let shade = if value.is_finite() {
-                ((1.0 - (value - stats.min) / span) * 255.0)
-                    .round()
-                    .clamp(0.0, 255.0) as u8
+            // Nearer (smaller) depths lean yellow; clamp guards non-finite inputs.
+            let color = if value.is_finite() {
+                viridis(1.0 - (value - stats.min) / span)
             } else {
-                0
+                Rgb([0, 0, 0])
             };
-            output.put_pixel(x, y, Rgb([shade, shade, shade]));
+            output.put_pixel(x, y, color);
         }
     }
     DynamicImage::ImageRgb8(output)
+}
+
+/// Viridis colormap: perceptually uniform purple-to-teal-to-yellow.
+///
+/// `t` is clamped to `[0, 1]` and linearly interpolated between nine stops.
+fn viridis(t: f32) -> Rgb<u8> {
+    const STOPS: [[u8; 3]; 9] = [
+        [68, 1, 84],
+        [72, 40, 120],
+        [62, 83, 160],
+        [49, 120, 157],
+        [38, 153, 158],
+        [50, 183, 148],
+        [97, 209, 107],
+        [173, 226, 44],
+        [253, 231, 37],
+    ];
+    let t = t.clamp(0.0, 1.0);
+    let position = t * (STOPS.len() - 1) as f32;
+    let low = position.floor() as usize;
+    let high = (low + 1).min(STOPS.len() - 1);
+    let fraction = position - low as f32;
+    Rgb([
+        (f32::from(STOPS[low][0])
+            + (f32::from(STOPS[high][0]) - f32::from(STOPS[low][0])) * fraction) as u8,
+        (f32::from(STOPS[low][1])
+            + (f32::from(STOPS[high][1]) - f32::from(STOPS[low][1])) * fraction) as u8,
+        (f32::from(STOPS[low][2])
+            + (f32::from(STOPS[high][2]) - f32::from(STOPS[low][2])) * fraction) as u8,
+    ])
 }
 
 /// Stroke the boundary pixels of a source-space boolean mask.
