@@ -17,6 +17,13 @@ fn main() -> montgomery::Result<()> {
             mask.height,
             mask.data.len()
         ),
+        Prediction::Depth(map) => {
+            let stats = map.stats();
+            println!(
+                "depth map {}x{} (meters): min {:.2}, max {:.2}, mean {:.2}",
+                map.width, map.height, stats.min, stats.max, stats.mean
+            );
+        }
         Prediction::Classifications(items) => {
             for item in items {
                 println!("{}: {:.1}%", item.class_name, item.confidence * 100.0);

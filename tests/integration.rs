@@ -13,17 +13,19 @@ use image::{DynamicImage, Rgb};
 use montgomery::models::{
     yolo11::{Yolo11ClsNConfig, Yolo11NConfig, Yolo11SegNConfig},
     yolo12::Yolo12NConfig,
-    yolo26::{Yolo26ClsNConfig, Yolo26NConfig, Yolo26SegNConfig, Yolo26SemNConfig},
+    yolo26::{
+        Yolo26ClsNConfig, Yolo26DepthNConfig, Yolo26NConfig, Yolo26SegNConfig, Yolo26SemNConfig,
+    },
     yolov3_tiny::Yolov3TinyConfig,
     yolov8::{Yolov8ClsNConfig, Yolov8NConfig, Yolov8SegNConfig},
     yolov10::Yolov10NConfig,
     yolox::Yolox,
 };
 use montgomery::{
-    CITYSCAPES_CLASSES, CLASSIFICATION_TOP_K, CLASSIFY_INPUT_SIZE, COCO_CLASSES, Detection,
-    INPUT_SIZE, InstanceMask, Model, ModelId, ModelTask, PredictOptions, Prediction, Predictor,
-    SEMANTIC_INPUT_SIZE, SegmentationDetection, SemanticMask, annotate, annotate_segmentation,
-    annotate_semantic, pack_weights_to,
+    CITYSCAPES_CLASSES, CLASSIFICATION_TOP_K, CLASSIFY_INPUT_SIZE, COCO_CLASSES, DEPTH_INPUT_SIZE,
+    DepthMap, Detection, INPUT_SIZE, InstanceMask, Model, ModelId, ModelTask, PredictOptions,
+    Prediction, Predictor, SEMANTIC_INPUT_SIZE, SegmentationDetection, SemanticMask, annotate,
+    annotate_depth, annotate_segmentation, annotate_semantic, pack_weights_to,
 };
 
 fn montgomery(args: &[&str]) -> Output {
@@ -121,6 +123,19 @@ fn semantic_families_run_complete_public_graphs() {
 }
 
 #[test]
+fn depth_families_run_complete_public_graphs() {
+    with_model_stack(|| {
+        let device = Device::new(FlexDevice);
+        let input = Tensor::<4>::zeros([1, 3, 64, 64], &device);
+
+        // A 64 px input yields a single-channel stride-4 map; depth is positive by
+        // construction (exp of the clamped tower output, scaled by calibration).
+        let yolo26 = Yolo26DepthNConfig.init(&device).forward(input);
+        assert_eq!(yolo26.depth.dims(), [1, 1, 16, 16]);
+    });
+}
+
+#[test]
 fn classification_families_run_complete_public_graphs() {
     with_model_stack(|| {
         let device = Device::new(FlexDevice);
@@ -142,7 +157,7 @@ fn classification_families_run_complete_public_graphs() {
 
 #[test]
 fn model_catalog_is_a_consistent_public_registry() {
-    assert_eq!(ModelId::ALL.len(), 68);
+    assert_eq!(ModelId::ALL.len(), 73);
     assert_eq!(ModelId::default(), ModelId::YoloxNano);
 
     let mut canonical_names = HashSet::new();
@@ -160,6 +175,8 @@ fn model_catalog_is_a_consistent_public_registry() {
             CLASSIFY_INPUT_SIZE
         } else if name.ends_with("-sem") {
             SEMANTIC_INPUT_SIZE
+        } else if name.ends_with("-depth") {
+            DEPTH_INPUT_SIZE
         } else if matches!(model, ModelId::YoloxNano | ModelId::YoloxTiny) {
             416
         } else {
@@ -174,6 +191,8 @@ fn model_catalog_is_a_consistent_public_registry() {
             ModelTask::Classification
         } else if name.ends_with("-sem") {
             ModelTask::Semantic
+        } else if name.ends_with("-depth") {
+            ModelTask::Depth
         } else if name.ends_with("-seg") {
             ModelTask::Segmentation
         } else {
@@ -190,6 +209,7 @@ fn model_catalog_is_a_consistent_public_registry() {
         ("yolov8x_cls", ModelId::Yolov8XCls),
         ("yolo26-xlarge", ModelId::Yolo26X),
         ("yolo26n_sem", ModelId::Yolo26NSem),
+        ("yolo26n_depth", ModelId::Yolo26NDepth),
     ] {
         assert_eq!(alias.parse(), Ok(model), "alias {alias}");
     }
@@ -216,6 +236,7 @@ fn simple_model_api_has_a_concrete_cpu_default_and_task_aware_results() {
     assert_eq!(detections.detections(), Some([].as_slice()));
     assert!(detections.segmentations().is_none());
     assert!(detections.semantics().is_none());
+    assert!(detections.depth().is_none());
     assert!(detections.classifications().is_none());
     assert!(detections.is_empty());
 
@@ -253,6 +274,11 @@ fn classifies_a_hot_dog() {
         error.contains("not a semantic-segmentation model"),
         "{error}"
     );
+    let error = model
+        .predict_depth(&image)
+        .expect_err("classification model must reject depth prediction")
+        .to_string();
+    assert!(error.contains("not a depth-estimation model"), "{error}");
 }
 
 #[test]
@@ -400,13 +426,33 @@ fn renderers_preserve_source_geometry_and_public_result_schema() {
         "input was mutated"
     );
 
-    let json = serde_json::to_value((&box_detection, &segmentation, &semantic)).unwrap();
+    let depth = DepthMap {
+        width: 10,
+        height: 10,
+        data: vec![2.5; 100],
+    };
+    assert_eq!(depth.stats().min, 2.5);
+    assert_eq!(depth.stats().max, 2.5);
+    assert_eq!(depth.stats().mean, 2.5);
+    let rendered = annotate_depth(&depth).to_rgb8();
+    assert_eq!(rendered.dimensions(), (10, 10));
+    // A flat map renders uniform white (min maps to white).
+    assert_eq!(*rendered.get_pixel(5, 5), Rgb([255, 255, 255]));
+    assert_eq!(
+        *source.to_rgb8().get_pixel(5, 5),
+        black,
+        "input was mutated"
+    );
+
+    let json = serde_json::to_value((&box_detection, &segmentation, &semantic, &depth)).unwrap();
     assert_eq!(json[0]["xmin"], 2.0);
     assert_eq!(json[0]["xmax"], 7.0);
     assert_eq!(json[1]["mask"]["width"], 10);
     assert_eq!(json[1]["mask"]["data"].as_array().unwrap().len(), 100);
     assert_eq!(json[2]["width"], 10);
     assert_eq!(json[2]["data"].as_array().unwrap().len(), 100);
+    assert_eq!(json[3]["width"], 10);
+    assert_eq!(json[3]["data"].as_array().unwrap().len(), 100);
 }
 
 #[test]

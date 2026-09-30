@@ -16,6 +16,7 @@ def _import_source(root: Path):
     sys.path.insert(0, str(root))
     from ultralytics.nn.tasks import (
         ClassificationModel,
+        DepthModel,
         DetectionModel,
         SegmentationModel,
         SemanticSegmentationModel,
@@ -25,11 +26,11 @@ def _import_source(root: Path):
     resolved = Path(ultralytics.__file__).resolve()
     if root not in resolved.parents:
         raise RuntimeError(f"resolved Ultralytics import {resolved} is outside pinned source {root}")
-    return DetectionModel, SegmentationModel, ClassificationModel, SemanticSegmentationModel
+    return DetectionModel, SegmentationModel, ClassificationModel, SemanticSegmentationModel, DepthModel
 
 
 def _construct(manifest: dict, root: Path) -> torch.nn.Module:
-    DetectionModel, SegmentationModel, ClassificationModel, SemanticSegmentationModel = _import_source(root)
+    DetectionModel, SegmentationModel, ClassificationModel, SemanticSegmentationModel, DepthModel = _import_source(root)
     task = manifest["task"]
     cfg = manifest["graph_config"]
     classes = int(manifest["num_classes"])
@@ -39,6 +40,8 @@ def _construct(manifest: dict, root: Path) -> torch.nn.Module:
         model = SegmentationModel(cfg=cfg, ch=3, nc=classes, verbose=False)
     elif task == "semantic":
         model = SemanticSegmentationModel(cfg=cfg, ch=3, nc=classes, verbose=False)
+    elif task == "depth":
+        model = DepthModel(cfg=cfg, ch=3, nc=classes, verbose=False)
     else:
         model = DetectionModel(cfg=cfg, ch=3, nc=classes, verbose=False)
     # Released v8/v11 checkpoints predate the source refactor that changed SPPF.cv1 to act=False.

@@ -14,7 +14,8 @@ For a new family, scale, or task, follow [docs/MODEL_BRINGUP.md](docs/MODEL_BRIN
   experimental Ultralytics-family graphs and native Burnpack loaders.
 - YOLOv8, YOLO11, and YOLO26 also provide `-seg` variants; YOLOv8, YOLO11, and YOLO26 provide
   `-cls` variants. YOLO26 additionally provides inference-only `-sem` semantic-segmentation
-  variants (dense class maps, no boxes; see `src/models/yolo26/semantic.rs`).
+  variants (dense class maps, no boxes; see `src/models/yolo26/semantic.rs`) and `-depth`
+  monocular depth-estimation variants (dense meters, no boxes; see `src/models/yolo26/depth.rs`).
 - `src/data/letterbox.rs`: inference preprocessing and reversible source-image geometry.
 - `src/data/augmentation/`: feature-gated, traceable detect/segment/classify augmentation pinned
   to Ultralytics `v8.4.117-2-g461196cf0`. Parity lives in `tests/augmentation_parity.rs`.
@@ -117,6 +118,13 @@ rescaling. Golden tensor tests are the authority for these quirks.
   `SemanticSegment` tower, and returns a dense source-image class map (`SemanticMask`) via
   bilinear upsample plus per-pixel argmax. `predict_semantic()` is the only entry point;
   `predict()` exposes no boxes for these models. Training rejects `-sem` architectures.
+- Monocular depth estimation (`yolo26n/s/m/l/x-depth`, inference-only) reuses the same
+  letterbox at a 768 px default input, fuses P3/P4/P5 through the 256-wide `Depth` tower
+  with corner-aligned bilinear steps, and returns a dense source-image float map in meters
+  (`DepthMap`) via bilinear upsample plus letterbox inversion. `predict_depth()` is the
+  only entry point. The checkpoint's `refine.2` block is dead weight (never executed
+  upstream) and stays unmapped; the `cal_a`/`cal_b` buffers are load-bearing. Training
+  rejects `-depth` architectures.
 
 ## Augmentation and training
 

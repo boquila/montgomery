@@ -23,6 +23,7 @@ pub enum ExportTask {
     Detect,
     Segment,
     Semantic,
+    Depth,
     Classify,
 }
 
@@ -119,6 +120,11 @@ const SEMANTIC_OUTPUTS: &[OutputTensorSpec] = &[OutputTensorSpec {
     name: "logits",
     rank: 4,
     semantic: "unnormalized per-pixel class logits at stride 8",
+}];
+const DEPTH_OUTPUTS: &[OutputTensorSpec] = &[OutputTensorSpec {
+    name: "depth",
+    rank: 4,
+    semantic: "calibrated per-pixel depth in meters at stride 4",
 }];
 const CLASSIFY_OUTPUTS: &[OutputTensorSpec] = &[
     OutputTensorSpec {
@@ -496,6 +502,36 @@ impl ExportSpec {
                 "x",
                 "yolo26x-sem.yaml",
             ),
+            Yolo26NDepth => (
+                ExportFamily::Yolo26,
+                ExportTask::Depth,
+                "n",
+                "yolo26n-depth.yaml",
+            ),
+            Yolo26SDepth => (
+                ExportFamily::Yolo26,
+                ExportTask::Depth,
+                "s",
+                "yolo26s-depth.yaml",
+            ),
+            Yolo26MDepth => (
+                ExportFamily::Yolo26,
+                ExportTask::Depth,
+                "m",
+                "yolo26m-depth.yaml",
+            ),
+            Yolo26LDepth => (
+                ExportFamily::Yolo26,
+                ExportTask::Depth,
+                "l",
+                "yolo26l-depth.yaml",
+            ),
+            Yolo26XDepth => (
+                ExportFamily::Yolo26,
+                ExportTask::Depth,
+                "x",
+                "yolo26x-depth.yaml",
+            ),
             Yolo26NCls => (
                 ExportFamily::Yolo26,
                 ExportTask::Classify,
@@ -533,10 +569,11 @@ impl ExportSpec {
             ExportTask::Detect => DETECT_OUTPUTS,
             ExportTask::Segment => SEGMENT_OUTPUTS,
             ExportTask::Semantic => SEMANTIC_OUTPUTS,
+            ExportTask::Depth => DEPTH_OUTPUTS,
             ExportTask::Classify => CLASSIFY_OUTPUTS,
         };
         let box_format = match (family, task) {
-            (_, ExportTask::Classify) | (_, ExportTask::Semantic) => None,
+            (_, ExportTask::Classify) | (_, ExportTask::Semantic) | (_, ExportTask::Depth) => None,
             (ExportFamily::Yolo11 | ExportFamily::Yolov8 | ExportFamily::Yolo12, _) => {
                 Some(BoxFormat::Xywh)
             }
@@ -564,6 +601,8 @@ impl ExportSpec {
                 1000
             } else if task == ExportTask::Semantic {
                 19
+            } else if task == ExportTask::Depth {
+                1
             } else {
                 80
             },

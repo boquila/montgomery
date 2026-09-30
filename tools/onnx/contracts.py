@@ -29,6 +29,10 @@ class UltralyticsPortable(torch.nn.Module):
             # Eval-mode SemanticSegment returns raw stride-8 logits [B, nc, H/8, W/8].
             return result
 
+        if self.task == "depth":
+            # Eval-mode Depth returns calibrated stride-4 depth [B, 1, H/4, W/4] in meters.
+            return result
+
         head = self.model.model[-1]
         if self.task == "segment":
             (decoded, prototypes), raw = result
@@ -85,4 +89,6 @@ def output_names(task: str, profile: str, family: str) -> list[str]:
         return ["boxes", "scores", "coefficients", "prototypes"]
     if task == "semantic":
         return ["logits"]
+    if task == "depth":
+        return ["depth"]
     return ["logits", "probabilities"]

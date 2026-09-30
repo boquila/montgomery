@@ -26,7 +26,7 @@ use montgomery::training::runtime::{
 };
 use montgomery::{
     BenchmarkOptions, InferenceBenchmark, ModelId, ModelTask, PredictOptions, Predictor, annotate,
-    annotate_segmentation, annotate_semantic, pack_weights, pack_weights_to,
+    annotate_depth, annotate_segmentation, annotate_semantic, pack_weights, pack_weights_to,
 };
 use serde::Serialize;
 
@@ -59,8 +59,8 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Run detection, instance segmentation, semantic segmentation, or classification on an
-    /// image.
+    /// Run detection, instance segmentation, semantic segmentation, depth estimation, or
+    /// classification on an image.
     Predict(PredictArgs),
     /// Measure cold-start and steady-state inference speed without loading an image.
     Bench(BenchArgs),
@@ -404,6 +404,16 @@ fn semantic_default_output(input: &std::path::Path) -> PathBuf {
         .and_then(|s| s.to_str())
         .unwrap_or("prediction");
     input.with_file_name(format!("{stem}-semantic.png"))
+}
+
+/// Default rendered output for the depth task: a grayscale visualization of the dense map
+/// in meters (nearer is brighter), kept on its own `-depth.png` path.
+fn depth_default_output(input: &std::path::Path) -> PathBuf {
+    let stem = input
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("prediction");
+    input.with_file_name(format!("{stem}-depth.png"))
 }
 
 #[cfg(feature = "training")]
@@ -980,6 +990,15 @@ fn run_predict(
             report_semantic(args, &image, &output, predictor.class_names(), &mask)?;
             return Ok(());
         }
+        ModelTask::Depth => {
+            let output = match &args.output {
+                Some(output) => output.clone(),
+                None => depth_default_output(&args.source),
+            };
+            let (image, map) = predictor.predict_depth_path(&args.source)?;
+            report_depth(args, &image, &output, &map)?;
+            return Ok(());
+        }
         ModelTask::Detection => {}
     }
     if args.masks {
@@ -1289,6 +1308,62 @@ fn report_semantic(
     Ok(())
 }
 
+/// Print depth-estimation results (range summary table or JSON) and save the grayscale
+/// visualization.
+///
+/// The JSON carries the source-space dimensions plus the map statistics in meters; the full
+/// float map itself is rendered into the output image rather than printed.
+fn report_depth(
+    args: &PredictArgs,
+    image: &image::DynamicImage,
+    output: &std::path::Path,
+    map: &montgomery::DepthMap,
+) -> montgomery::Result<()> {
+    let _ = image;
+    let stats = map.stats();
+    if args.json {
+        #[derive(Serialize)]
+        struct JsonOutput {
+            task: &'static str,
+            width: u32,
+            height: u32,
+            coordinate_space: &'static str,
+            units: &'static str,
+            min_meters: f32,
+            max_meters: f32,
+            mean_meters: f32,
+        }
+
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&JsonOutput {
+                task: "depth",
+                width: map.width,
+                height: map.height,
+                coordinate_space: "source_image",
+                units: "meters",
+                min_meters: stats.min,
+                max_meters: stats.max,
+                mean_meters: stats.mean,
+            })?
+        );
+    } else {
+        println!(
+            "Depth map {}x{} (meters): min {:.2}, max {:.2}, mean {:.2}",
+            map.width, map.height, stats.min, stats.max, stats.mean
+        );
+    }
+
+    annotate_depth(map).save(output)?;
+    eprintln!(
+        "Saved depth map ({}x{}) to {}",
+        map.width,
+        map.height,
+        output.display()
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1306,6 +1381,10 @@ mod tests {
         assert_eq!(
             semantic_default_output(std::path::Path::new("photos/dog.jpg")),
             PathBuf::from("photos/dog-semantic.png")
+        );
+        assert_eq!(
+            depth_default_output(std::path::Path::new("photos/dog.jpg")),
+            PathBuf::from("photos/dog-depth.png")
         );
     }
 

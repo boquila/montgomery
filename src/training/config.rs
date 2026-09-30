@@ -22,14 +22,16 @@ fn recommended_worker_count(logical_cpus: usize) -> usize {
 
 /// Task represented by a trainable model graph.
 ///
-/// `Semantic` covers the YOLO26-sem dense-segmentation family, which is inference-only:
-/// native training rejects it before any loss is built.
+/// `Semantic` covers the YOLO26-sem dense-segmentation family and `Depth` the YOLO26-depth
+/// dense-estimation family; both are inference-only and native training rejects them before
+/// any loss is built.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum TaskKind {
     Detect,
     Segment,
     Semantic,
+    Depth,
     Classify,
 }
 
@@ -41,6 +43,7 @@ impl TaskKind {
             | Yolov8SSeg | Yolov8MSeg | Yolov8LSeg | Yolov8XSeg | Yolo26NSeg | Yolo26SSeg
             | Yolo26MSeg | Yolo26LSeg | Yolo26XSeg => Self::Segment,
             Yolo26NSem | Yolo26SSem | Yolo26MSem | Yolo26LSem | Yolo26XSem => Self::Semantic,
+            Yolo26NDepth | Yolo26SDepth | Yolo26MDepth | Yolo26LDepth | Yolo26XDepth => Self::Depth,
             Yolo11NCls | Yolo11SCls | Yolo11MCls | Yolo11LCls | Yolo11XCls | Yolov8NCls
             | Yolov8SCls | Yolov8MCls | Yolov8LCls | Yolov8XCls | Yolo26NCls | Yolo26SCls
             | Yolo26MCls | Yolo26LCls | Yolo26XCls => Self::Classify,

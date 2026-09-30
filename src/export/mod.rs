@@ -248,6 +248,7 @@ fn export_staged(
             .iter()
             .map(|name| (*name).to_owned())
             .collect(),
+        ExportTask::Depth => vec!["depth".to_owned()],
         _ => COCO_CLASSES.iter().map(|name| (*name).to_owned()).collect(),
     };
     let preprocessing = match spec.family {
