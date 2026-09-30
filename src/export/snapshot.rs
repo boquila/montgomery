@@ -37,6 +37,11 @@ struct SemanticReference {
     logits: Param<Tensor<4>>,
 }
 
+#[derive(Module, Debug)]
+struct DepthReference {
+    depth: Param<Tensor<4>>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct TensorAudit {
     pub tensor_count: usize,
@@ -135,6 +140,11 @@ pub(crate) fn write_snapshot(
         RuntimeModel::Yolo26SemM(model) => save!(model.as_ref()),
         RuntimeModel::Yolo26SemL(model) => save!(model.as_ref()),
         RuntimeModel::Yolo26SemX(model) => save!(model.as_ref()),
+        RuntimeModel::Yolo26DepthN(model) => save!(model.as_ref()),
+        RuntimeModel::Yolo26DepthS(model) => save!(model.as_ref()),
+        RuntimeModel::Yolo26DepthM(model) => save!(model.as_ref()),
+        RuntimeModel::Yolo26DepthL(model) => save!(model.as_ref()),
+        RuntimeModel::Yolo26DepthX(model) => save!(model.as_ref()),
         RuntimeModel::Yolo26ClsN(model) => save!(model.as_ref()),
         RuntimeModel::Yolo26ClsS(model) => save!(model.as_ref()),
         RuntimeModel::Yolo26ClsM(model) => save!(model.as_ref()),
@@ -220,6 +230,15 @@ pub(crate) fn write_references(
                 let output = $output;
                 let module = SemanticReference {
                     logits: Param::from_tensor(output.logits),
+                };
+                save_reference(&module, &path)?;
+            }};
+        }
+        macro_rules! save_depth {
+            ($output:expr) => {{
+                let output = $output;
+                let module = DepthReference {
+                    depth: Param::from_tensor(output.depth),
                 };
                 save_reference(&module, &path)?;
             }};
@@ -424,6 +443,11 @@ pub(crate) fn write_references(
             RuntimeModel::Yolo26SemM(model) => save_semantic!(model.forward(input)),
             RuntimeModel::Yolo26SemL(model) => save_semantic!(model.forward(input)),
             RuntimeModel::Yolo26SemX(model) => save_semantic!(model.forward(input)),
+            RuntimeModel::Yolo26DepthN(model) => save_depth!(model.forward(input)),
+            RuntimeModel::Yolo26DepthS(model) => save_depth!(model.forward(input)),
+            RuntimeModel::Yolo26DepthM(model) => save_depth!(model.forward(input)),
+            RuntimeModel::Yolo26DepthL(model) => save_depth!(model.forward(input)),
+            RuntimeModel::Yolo26DepthX(model) => save_depth!(model.forward(input)),
             RuntimeModel::Yolo11ClsN(model) => save_classify!(model.forward(input)),
             RuntimeModel::Yolo11ClsS(model) => save_classify!(model.forward(input)),
             RuntimeModel::Yolo11ClsM(model) => save_classify!(model.forward(input)),

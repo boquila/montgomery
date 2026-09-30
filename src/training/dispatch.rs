@@ -38,6 +38,7 @@ pub enum LossFamily {
     Yolo26DualDirect,
     Yolo26DualSegment,
     Semantic,
+    Depth,
     Classification,
 }
 
@@ -106,6 +107,16 @@ pub const fn recipe_for(model: ModelId) -> TrainingRecipe {
             reg_max: 0,
             end_to_end: false,
         },
+        // Depth models are inference-only for the same reason (three backbone levels
+        // feeding a stride-4 head).
+        Yolo26NDepth | Yolo26SDepth | Yolo26MDepth | Yolo26LDepth | Yolo26XDepth => {
+            TrainingRecipe {
+                loss: LossFamily::Depth,
+                levels: 3,
+                reg_max: 0,
+                end_to_end: false,
+            }
+        }
         Yolo11NCls | Yolo11SCls | Yolo11MCls | Yolo11LCls | Yolo11XCls | Yolov8NCls
         | Yolov8SCls | Yolov8MCls | Yolov8LCls | Yolov8XCls | Yolo26NCls | Yolo26SCls
         | Yolo26MCls | Yolo26LCls | Yolo26XCls => TrainingRecipe {

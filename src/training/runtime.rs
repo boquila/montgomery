@@ -954,6 +954,11 @@ fn train_inner(
                 .into(),
         );
     }
+    if spec.task == crate::training::TaskKind::Depth {
+        return Err(
+            "depth estimation models are inference-only; native training is not supported".into(),
+        );
+    }
     if (spec.task == crate::training::TaskKind::Classify)
         != (dataset.format == DatasetFormat::ClassificationFolders)
     {
@@ -1522,6 +1527,17 @@ fn train_inner(
         | ModelId::Yolo26XSem => {
             return Err(
                 "semantic segmentation models are inference-only; native training is not supported"
+                    .into(),
+            );
+        }
+        // Unreachable for the same reason: depth estimation is inference-only.
+        ModelId::Yolo26NDepth
+        | ModelId::Yolo26SDepth
+        | ModelId::Yolo26MDepth
+        | ModelId::Yolo26LDepth
+        | ModelId::Yolo26XDepth => {
+            return Err(
+                "depth estimation models are inference-only; native training is not supported"
                     .into(),
             );
         }
@@ -3214,6 +3230,15 @@ fn export_inner(
                 "semantic segmentation models are inference-only; native training is not supported"
                     .into(),
             ),
+            // Unreachable for the same reason: depth estimation is inference-only.
+            ModelId::Yolo26NDepth
+            | ModelId::Yolo26SDepth
+            | ModelId::Yolo26MDepth
+            | ModelId::Yolo26LDepth
+            | ModelId::Yolo26XDepth => Err(
+                "depth estimation models are inference-only; native training is not supported"
+                    .into(),
+            ),
         };
     let exported = exported?;
     let predictor = crate::Predictor::from_trained_artifact_on_device(
@@ -3249,6 +3274,7 @@ where
         crate::training::TaskKind::Detect => "detect",
         crate::training::TaskKind::Segment => "segment",
         crate::training::TaskKind::Semantic => "semantic",
+        crate::training::TaskKind::Depth => "depth",
         crate::training::TaskKind::Classify => "classify",
     };
     let mut store = burn_store::BurnpackStore::from_file(output)

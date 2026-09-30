@@ -20,6 +20,7 @@ pub(crate) fn reverse_rules(spec: ExportSpec) -> Vec<(String, String)> {
             segmentation_rules(spec, &mut rules);
         }
         ExportTask::Semantic => semantic_rules(&mut rules),
+        ExportTask::Depth => depth_rules(&mut rules),
     }
     rules.push((
         "^body\\.model_([0-9]+)\\.(.+)$".into(),
@@ -169,6 +170,61 @@ fn semantic_rules(rules: &mut Vec<(String, String)>) {
             "^head\\.classifier_1\\.(.+)$".into(),
             "model.17.classifier.1.$1".into(),
         ),
+    ]);
+}
+
+/// Inverse key map for the YOLO26-depth head (`model.23`).
+///
+/// The depth head fuses P3/P4/P5 through 1x1 projections, two executed refinement blocks,
+/// and the dense tower; the checkpoint's dead `refine.2` block has no inference counterpart
+/// and stays unmapped.
+fn depth_rules(rules: &mut Vec<(String, String)>) {
+    for (level, index) in [("proj_0", 0usize), ("proj_1", 1), ("proj_2", 2)] {
+        rules.push((
+            format!("^head\\.{level}\\.conv\\.(.+)$"),
+            format!("model.23.proj.{index}.conv.$1"),
+        ));
+        rules.push((
+            format!("^head\\.{level}\\.bn\\.(.+)$"),
+            format!("model.23.proj.{index}.bn.$1"),
+        ));
+    }
+    for (burn, upstream) in [
+        ("refine_0_0", "refine.0.0"),
+        ("refine_0_1", "refine.0.1"),
+        ("refine_1_0", "refine.1.0"),
+        ("refine_1_1", "refine.1.1"),
+    ] {
+        rules.push((
+            format!("^head\\.{burn}\\.conv\\.(.+)$"),
+            format!("model.23.{upstream}.conv.$1"),
+        ));
+        rules.push((
+            format!("^head\\.{burn}\\.bn\\.(.+)$"),
+            format!("model.23.{upstream}.bn.$1"),
+        ));
+    }
+    rules.extend([
+        (
+            "^head\\.head_0\\.conv\\.(.+)$".into(),
+            "model.23.head.0.conv.$1".into(),
+        ),
+        (
+            "^head\\.head_0\\.bn\\.(.+)$".into(),
+            "model.23.head.0.bn.$1".into(),
+        ),
+        ("^head\\.head_1\\.(.+)$".into(), "model.23.head.1.$1".into()),
+        (
+            "^head\\.head_2\\.conv\\.(.+)$".into(),
+            "model.23.head.2.conv.$1".into(),
+        ),
+        (
+            "^head\\.head_2\\.bn\\.(.+)$".into(),
+            "model.23.head.2.bn.$1".into(),
+        ),
+        ("^head\\.head_3\\.(.+)$".into(), "model.23.head.3.$1".into()),
+        ("^head\\.cal_a$".into(), "model.23.cal_a".into()),
+        ("^head\\.cal_b$".into(), "model.23.cal_b".into()),
     ]);
 }
 

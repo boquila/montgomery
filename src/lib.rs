@@ -4,7 +4,8 @@
 //! YOLOv3-Tiny-Ultralytics, YOLOv10 (n/s/m/b/l/x), YOLO26 (n/s/m/l/x), YOLO11 (n/s/m/l/x),
 //! YOLOv8 (n/s/m/l/x), and YOLO12 (n/s/m/l/x) inference paths, plus YOLO11-seg (n/s/m/l/x),
 //! YOLO26-seg (n/s/m/l/x), and YOLOv8-seg (n/s/m/l/x) instance segmentation, the
-//! YOLO26-sem (n/s/m/l/x) semantic segmentation, and the
+//! YOLO26-sem (n/s/m/l/x) semantic segmentation, the YOLO26-depth (n/s/m/l/x) monocular
+//! depth estimation, and the
 //! YOLO26-cls/YOLO11-cls/YOLOv8-cls (n/s/m/l/x) ImageNet-1k classification. Model inference and
 //! post-processing run from Rust â€” on the Flex CPU backend by default, or on the Wgpu GPU backend
 //! (Vulkan/DX12/Metal) when built with the `gpu` feature. No Python runtime or ONNX runtime is
@@ -50,9 +51,11 @@ use crate::models::yolo26::head::MAX_DETECTIONS as YOLO26_MAX_DETECTIONS;
 #[cfg(feature = "pretrained")]
 use crate::models::yolo26::{
     Yolo26ClsLConfig, Yolo26ClsMConfig, Yolo26ClsNConfig, Yolo26ClsSConfig, Yolo26ClsXConfig,
-    Yolo26LConfig, Yolo26MConfig, Yolo26NConfig, Yolo26SConfig, Yolo26SegLConfig, Yolo26SegMConfig,
-    Yolo26SegNConfig, Yolo26SegSConfig, Yolo26SegXConfig, Yolo26SemLConfig, Yolo26SemMConfig,
-    Yolo26SemNConfig, Yolo26SemSConfig, Yolo26SemXConfig, Yolo26XConfig,
+    Yolo26DepthLConfig, Yolo26DepthMConfig, Yolo26DepthNConfig, Yolo26DepthSConfig,
+    Yolo26DepthXConfig, Yolo26LConfig, Yolo26MConfig, Yolo26NConfig, Yolo26SConfig,
+    Yolo26SegLConfig, Yolo26SegMConfig, Yolo26SegNConfig, Yolo26SegSConfig, Yolo26SegXConfig,
+    Yolo26SemLConfig, Yolo26SemMConfig, Yolo26SemNConfig, Yolo26SemSConfig, Yolo26SemXConfig,
+    Yolo26XConfig,
 };
 use crate::models::yolov3_tiny::Yolov3Tiny;
 #[cfg(feature = "pretrained")]
@@ -86,6 +89,10 @@ pub const CLASSIFY_INPUT_SIZE: usize = 224;
 /// The square input size used by the YOLO26-sem semantic-segmentation models (Ultralytics'
 /// semantic default; the official Cityscapes checkpoints train at 1024 px).
 pub const SEMANTIC_INPUT_SIZE: usize = 1024;
+
+/// The square input size used by the YOLO26-depth monocular depth-estimation models
+/// (Ultralytics' depth default; the official checkpoints train at 768 px).
+pub const DEPTH_INPUT_SIZE: usize = 768;
 
 /// Number of ranked classes returned by [`Predictor::predict_classification`] (Ultralytics'
 /// `probs.top5` convention).
@@ -159,6 +166,11 @@ pub enum ModelId {
     Yolo26MSem,
     Yolo26LSem,
     Yolo26XSem,
+    Yolo26NDepth,
+    Yolo26SDepth,
+    Yolo26MDepth,
+    Yolo26LDepth,
+    Yolo26XDepth,
     Yolo26NCls,
     Yolo26SCls,
     Yolo26MCls,
@@ -168,7 +180,7 @@ pub enum ModelId {
 
 impl ModelId {
     /// Exhaustive catalog used by registries whose coverage must track every public model.
-    pub const ALL: [Self; 68] = [
+    pub const ALL: [Self; 73] = [
         Self::YoloxNano,
         Self::YoloxTiny,
         Self::YoloxS,
@@ -232,6 +244,11 @@ impl ModelId {
         Self::Yolo26MSem,
         Self::Yolo26LSem,
         Self::Yolo26XSem,
+        Self::Yolo26NDepth,
+        Self::Yolo26SDepth,
+        Self::Yolo26MDepth,
+        Self::Yolo26LDepth,
+        Self::Yolo26XDepth,
         Self::Yolo26NCls,
         Self::Yolo26SCls,
         Self::Yolo26MCls,
@@ -304,6 +321,11 @@ impl ModelId {
             Self::Yolo26MSem => "yolo26m-sem",
             Self::Yolo26LSem => "yolo26l-sem",
             Self::Yolo26XSem => "yolo26x-sem",
+            Self::Yolo26NDepth => "yolo26n-depth",
+            Self::Yolo26SDepth => "yolo26s-depth",
+            Self::Yolo26MDepth => "yolo26m-depth",
+            Self::Yolo26LDepth => "yolo26l-depth",
+            Self::Yolo26XDepth => "yolo26x-depth",
             Self::Yolo26NCls => "yolo26n-cls",
             Self::Yolo26SCls => "yolo26s-cls",
             Self::Yolo26MCls => "yolo26m-cls",
@@ -351,6 +373,11 @@ impl ModelId {
             | Self::Yolo26MSem
             | Self::Yolo26LSem
             | Self::Yolo26XSem => SEMANTIC_INPUT_SIZE,
+            Self::Yolo26NDepth
+            | Self::Yolo26SDepth
+            | Self::Yolo26MDepth
+            | Self::Yolo26LDepth
+            | Self::Yolo26XDepth => DEPTH_INPUT_SIZE,
             _ => INPUT_SIZE,
         }
     }
@@ -378,6 +405,11 @@ impl ModelId {
             | Self::Yolo26MSem
             | Self::Yolo26LSem
             | Self::Yolo26XSem => ModelTask::Semantic,
+            Self::Yolo26NDepth
+            | Self::Yolo26SDepth
+            | Self::Yolo26MDepth
+            | Self::Yolo26LDepth
+            | Self::Yolo26XDepth => ModelTask::Depth,
             Self::Yolo11NCls
             | Self::Yolo11SCls
             | Self::Yolo11MCls
@@ -401,13 +433,15 @@ impl ModelId {
 /// The kind of prediction produced by a model artifact.
 ///
 /// `Segmentation` is per-object instance segmentation (one boolean mask per detection);
-/// `Semantic` is dense scene segmentation (one class id per source-image pixel, no boxes).
+/// `Semantic` is dense scene segmentation (one class id per source-image pixel, no boxes);
+/// `Depth` is dense monocular depth estimation (one distance in meters per pixel, no boxes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ModelTask {
     Detection,
     Segmentation,
     Semantic,
+    Depth,
     Classification,
 }
 
@@ -485,6 +519,11 @@ impl FromStr for ModelId {
             "yolo26m-sem" | "yolo26m_sem" => Ok(Self::Yolo26MSem),
             "yolo26l-sem" | "yolo26l_sem" => Ok(Self::Yolo26LSem),
             "yolo26x-sem" | "yolo26x_sem" => Ok(Self::Yolo26XSem),
+            "yolo26n-depth" | "yolo26n_depth" => Ok(Self::Yolo26NDepth),
+            "yolo26s-depth" | "yolo26s_depth" => Ok(Self::Yolo26SDepth),
+            "yolo26m-depth" | "yolo26m_depth" => Ok(Self::Yolo26MDepth),
+            "yolo26l-depth" | "yolo26l_depth" => Ok(Self::Yolo26LDepth),
+            "yolo26x-depth" | "yolo26x_depth" => Ok(Self::Yolo26XDepth),
             "yolo26n-cls" | "yolo26n_cls" => Ok(Self::Yolo26NCls),
             "yolo26s-cls" | "yolo26s_cls" => Ok(Self::Yolo26SCls),
             "yolo26m-cls" | "yolo26m_cls" => Ok(Self::Yolo26MCls),
@@ -495,7 +534,7 @@ impl FromStr for ModelId {
                  yolov3-tinyu, yolov10n/s/m/b/l/x, yolo11n/s/m/l/x, yolo11n/s/m/l/x-seg, \
                  yolo11n/s/m/l/x-cls, yolov8n/s/m/l/x, yolov8n/s/m/l/x-seg, yolov8n/s/m/l/x-cls, \
                  yolo12n/s/m/l/x, yolo26n/s/m/l/x, yolo26n/s/m/l/x-seg, yolo26n/s/m/l/x-sem, \
-                 yolo26n/s/m/l/x-cls"
+                 yolo26n/s/m/l/x-depth, yolo26n/s/m/l/x-cls"
             )),
         }
     }
@@ -610,6 +649,48 @@ impl SemanticMask {
     }
 }
 
+/// A dense monocular depth map for one image, in the original source-image coordinate space.
+///
+/// Every source-image pixel carries exactly one distance: `data[y * width + x]` is the
+/// predicted depth of pixel `(x, y)` in meters. There are no boxes, classes, or confidences.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct DepthMap {
+    /// Map (and source image) width in pixels.
+    pub width: u32,
+    /// Map (and source image) height in pixels.
+    pub height: u32,
+    /// Row-major depth in meters over the source image.
+    pub data: Vec<f32>,
+}
+
+impl DepthMap {
+    /// Minimum, maximum, and mean depth in meters over the map.
+    pub fn stats(&self) -> DepthStats {
+        let mut min = f32::INFINITY;
+        let mut max = f32::NEG_INFINITY;
+        let mut sum = 0.0_f64;
+        for value in &self.data {
+            min = min.min(*value);
+            max = max.max(*value);
+            sum += f64::from(*value);
+        }
+        let count = self.data.len().max(1) as f64;
+        DepthStats {
+            min,
+            max,
+            mean: (sum / count) as f32,
+        }
+    }
+}
+
+/// Summary statistics for a [`DepthMap`], in meters.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct DepthStats {
+    pub min: f32,
+    pub max: f32,
+    pub mean: f32,
+}
+
 /// Results from [`Predictor::inference`], selected automatically from the loaded architecture.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -617,6 +698,7 @@ pub enum Prediction {
     Detections(Vec<Detection>),
     Segmentations(Vec<SegmentationDetection>),
     Semantics(SemanticMask),
+    Depth(DepthMap),
     Classifications(Vec<Classification>),
 }
 
@@ -642,6 +724,13 @@ impl Prediction {
         }
     }
 
+    pub fn depth(&self) -> Option<&DepthMap> {
+        match self {
+            Self::Depth(map) => Some(map),
+            _ => None,
+        }
+    }
+
     pub fn classifications(&self) -> Option<&[Classification]> {
         match self {
             Self::Classifications(items) => Some(items),
@@ -650,12 +739,14 @@ impl Prediction {
     }
 
     /// Item count for list-like results; for [`Prediction::Semantics`] this is the labeled
-    /// pixel count (a dense map has no object items, so it is empty only for a 0-area image).
+    /// pixel count and for [`Prediction::Depth`] the mapped pixel count (dense maps have no
+    /// object items, so they are empty only for a 0-area image).
     pub fn len(&self) -> usize {
         match self {
             Self::Detections(items) => items.len(),
             Self::Segmentations(items) => items.len(),
             Self::Semantics(mask) => mask.data.len(),
+            Self::Depth(map) => map.data.len(),
             Self::Classifications(items) => items.len(),
         }
     }
@@ -889,6 +980,11 @@ enum RuntimeModel {
     Yolo26SemM(Box<crate::models::yolo26::Yolo26SemM>),
     Yolo26SemL(Box<crate::models::yolo26::Yolo26SemL>),
     Yolo26SemX(Box<crate::models::yolo26::Yolo26SemX>),
+    Yolo26DepthN(Box<crate::models::yolo26::Yolo26DepthN>),
+    Yolo26DepthS(Box<crate::models::yolo26::Yolo26DepthS>),
+    Yolo26DepthM(Box<crate::models::yolo26::Yolo26DepthM>),
+    Yolo26DepthL(Box<crate::models::yolo26::Yolo26DepthL>),
+    Yolo26DepthX(Box<crate::models::yolo26::Yolo26DepthX>),
     Yolo26ClsN(Box<crate::models::yolo26::Yolo26ClsN>),
     Yolo26ClsS(Box<crate::models::yolo26::Yolo26ClsS>),
     Yolo26ClsM(Box<crate::models::yolo26::Yolo26ClsM>),
@@ -977,6 +1073,8 @@ fn catalog_class_names(model_id: ModelId) -> Vec<String> {
             .iter()
             .map(|name| (*name).to_owned())
             .collect()
+    } else if model_id.as_str().ends_with("-depth") {
+        vec!["depth".to_owned()]
     } else {
         COCO_CLASSES.iter().map(|name| (*name).to_owned()).collect()
     }
@@ -1181,6 +1279,26 @@ fn load_model_checkpoint(
         ModelId::Yolo26MSem => Box::new(load_variant!(Yolo26SemMConfig, RuntimeModel::Yolo26SemM)),
         ModelId::Yolo26LSem => Box::new(load_variant!(Yolo26SemLConfig, RuntimeModel::Yolo26SemL)),
         ModelId::Yolo26XSem => Box::new(load_variant!(Yolo26SemXConfig, RuntimeModel::Yolo26SemX)),
+        ModelId::Yolo26NDepth => Box::new(load_variant!(
+            Yolo26DepthNConfig,
+            RuntimeModel::Yolo26DepthN
+        )),
+        ModelId::Yolo26SDepth => Box::new(load_variant!(
+            Yolo26DepthSConfig,
+            RuntimeModel::Yolo26DepthS
+        )),
+        ModelId::Yolo26MDepth => Box::new(load_variant!(
+            Yolo26DepthMConfig,
+            RuntimeModel::Yolo26DepthM
+        )),
+        ModelId::Yolo26LDepth => Box::new(load_variant!(
+            Yolo26DepthLConfig,
+            RuntimeModel::Yolo26DepthL
+        )),
+        ModelId::Yolo26XDepth => Box::new(load_variant!(
+            Yolo26DepthXConfig,
+            RuntimeModel::Yolo26DepthX
+        )),
         ModelId::Yolo26NCls => Box::new(load_variant!(Yolo26ClsNConfig, RuntimeModel::Yolo26ClsN)),
         ModelId::Yolo26SCls => Box::new(load_variant!(Yolo26ClsSConfig, RuntimeModel::Yolo26ClsS)),
         ModelId::Yolo26MCls => Box::new(load_variant!(Yolo26ClsMConfig, RuntimeModel::Yolo26ClsM)),
@@ -1614,6 +1732,141 @@ fn source_semantic_mask(
         }
     }
     SemanticMask {
+        width: source_width,
+        height: source_height,
+        data,
+    }
+}
+
+/// Uniform depth-estimation entry point shared by the YOLO26-depth scale variants, so the
+/// runtime can dispatch to any of them without naming the concrete scale type.
+pub(crate) trait DepthEstimator {
+    fn estimate_depth(&self, input: Tensor<4>) -> crate::models::yolo26::depth::DepthOutput;
+}
+
+macro_rules! impl_depth_estimator {
+    ($family:ident: [$($model:ident),+ $(,)?]) => {
+        $(
+            impl DepthEstimator for crate::models::$family::$model {
+                fn estimate_depth(
+                    &self,
+                    input: Tensor<4>,
+                ) -> crate::models::yolo26::depth::DepthOutput {
+                    self.forward(input)
+                }
+            }
+        )+
+    };
+}
+
+impl_depth_estimator!(yolo26: [Yolo26DepthN, Yolo26DepthS, Yolo26DepthM, Yolo26DepthL, Yolo26DepthX]);
+
+impl<M: DepthEstimator> DepthEstimator for Box<M> {
+    fn estimate_depth(&self, input: Tensor<4>) -> crate::models::yolo26::depth::DepthOutput {
+        (**self).estimate_depth(input)
+    }
+}
+
+/// Host-synced depth map for one batch-1 image, in `[1, height, width]` order.
+pub(crate) struct DepthMapCpu {
+    pub width: usize,
+    pub height: usize,
+    pub data: Vec<f32>,
+}
+
+/// Run a depth model and synchronize its stride-4 depth map to the host.
+pub(crate) fn run_depth_estimation(model: &impl DepthEstimator, input: Tensor<4>) -> DepthMapCpu {
+    let output = model.estimate_depth(input);
+    let [batch, channels, height, width] = output.depth.dims();
+    assert_eq!(batch, 1, "batch-1 inference only");
+    assert_eq!(channels, 1, "single depth channel");
+    let data: Vec<f32> = output
+        .depth
+        .into_data()
+        .iter::<f32>()
+        .map(|value| value.elem::<f32>())
+        .collect();
+    DepthMapCpu {
+        width,
+        height,
+        data,
+    }
+}
+
+/// Map stride-4 depth to a source-image depth map in meters.
+///
+/// Mirrors Ultralytics' `DepthPredictor.postprocess`: bilinearly upsample the map to the
+/// letterboxed canvas (`align_corners = false`, the `scale_masks` default), crop the padding,
+/// and bilinearly resize to the source image. Unlike semantic segmentation there is no class
+/// reduction — floats pass through untouched.
+fn source_depth_map(
+    depth: &DepthMapCpu,
+    canvas_width: usize,
+    canvas_height: usize,
+    prepared: &LetterboxedImage,
+) -> DepthMap {
+    // Step 1: upsample the single plane to the canvas.
+    let canvas = bilinear_upsample_plane(
+        &depth.data,
+        depth.width,
+        depth.height,
+        canvas_width,
+        canvas_height,
+    );
+
+    // Step 2+3: resample the padded crop to source resolution, reusing the exact geometry
+    // the semantic path inverts (same letterbox, same placed-image window).
+    let (scale, pad_x, pad_y) = prepared.letterbox_geometry();
+    let (source_width, source_height) = prepared.source_dimensions();
+    let resized_width = (source_width as f32 * scale).round() as usize;
+    let resized_height = (source_height as f32 * scale).round() as usize;
+    let left = (pad_x as usize).min(canvas_width);
+    let top = (pad_y as usize).min(canvas_height);
+    let right = (left + resized_width).min(canvas_width);
+    let bottom = (top + resized_height).min(canvas_height);
+    let crop_width = right.saturating_sub(left).max(1);
+    let crop_height = bottom.saturating_sub(top).max(1);
+
+    let slope_x = crop_width as f32 / source_width.max(1) as f32;
+    let slope_y = crop_height as f32 / source_height.max(1) as f32;
+    let max_crop_x = crop_width as f32 - 1.0;
+    let max_crop_y = crop_height as f32 - 1.0;
+    let mut x0_table = Vec::with_capacity(source_width as usize);
+    let mut x1_table = Vec::with_capacity(source_width as usize);
+    let mut lambda_x_table = Vec::with_capacity(source_width as usize);
+    for x in 0..source_width {
+        let crop_x = ((x as f32 + 0.5) * slope_x - 0.5).clamp(0.0, max_crop_x);
+        let canvas_x = crop_x + left as f32;
+        let x0 = canvas_x.floor() as usize;
+        let x1 = (x0 + 1).min(canvas_width - 1);
+        x0_table.push(x0);
+        x1_table.push(x1);
+        lambda_x_table.push(canvas_x - x0 as f32);
+    }
+
+    let mut data = vec![0.0_f32; source_width as usize * source_height as usize];
+    for y in 0..source_height {
+        let crop_y = ((y as f32 + 0.5) * slope_y - 0.5).clamp(0.0, max_crop_y);
+        let canvas_y = crop_y + top as f32;
+        let y0 = canvas_y.floor() as usize;
+        let y1 = (y0 + 1).min(canvas_height - 1);
+        let lambda_y = canvas_y - y0 as f32;
+        let inv_lambda_y = 1.0 - lambda_y;
+        let row0 = y0 * canvas_width;
+        let row1 = y1 * canvas_width;
+        for (x, (&x0, (&x1, &lambda_x))) in x0_table
+            .iter()
+            .zip(x1_table.iter().zip(lambda_x_table.iter()))
+            .enumerate()
+        {
+            let inv_lambda_x = 1.0 - lambda_x;
+            let top_value = canvas[row0 + x0] * inv_lambda_x + canvas[row0 + x1] * lambda_x;
+            let bottom_value = canvas[row1 + x0] * inv_lambda_x + canvas[row1 + x1] * lambda_x;
+            data[y as usize * source_width as usize + x] =
+                top_value * inv_lambda_y + bottom_value * lambda_y;
+        }
+    }
+    DepthMap {
         width: source_width,
         height: source_height,
         data,
@@ -2268,6 +2521,7 @@ impl Predictor {
             ModelTask::Semantic => Ok(Prediction::Semantics(
                 self.predict_semantic(image.as_ref())?,
             )),
+            ModelTask::Depth => Ok(Prediction::Depth(self.predict_depth(image.as_ref())?)),
             ModelTask::Classification => Ok(Prediction::Classifications(
                 self.predict_classification(image.as_ref())?,
             )),
@@ -2481,9 +2735,14 @@ impl Predictor {
                 ))
             }
             // Classification models carry no spatial detections; the class probabilities are
-            // exposed through predict_classification. Semantic models likewise carry no boxes;
-            // their dense map is exposed through predict_semantic.
-            RuntimeModel::Yolo26SemN(_)
+            // exposed through predict_classification. Semantic and depth models likewise carry
+            // no boxes; their dense maps are exposed through predict_semantic/predict_depth.
+            RuntimeModel::Yolo26DepthN(_)
+            | RuntimeModel::Yolo26DepthS(_)
+            | RuntimeModel::Yolo26DepthM(_)
+            | RuntimeModel::Yolo26DepthL(_)
+            | RuntimeModel::Yolo26DepthX(_)
+            | RuntimeModel::Yolo26SemN(_)
             | RuntimeModel::Yolo26SemS(_)
             | RuntimeModel::Yolo26SemM(_)
             | RuntimeModel::Yolo26SemL(_)
@@ -2745,6 +3004,68 @@ impl Predictor {
         }
     }
 
+    /// Run monocular depth estimation on an already-decoded image.
+    ///
+    /// Returns the dense source-image depth map in meters. Requires a YOLO26 `-depth` model;
+    /// all other models should use their own predictor method. The input mirrors Ultralytics'
+    /// depth inference transform: stride-32 rectangular letterbox with RGB values scaled to
+    /// `[0, 1]`.
+    pub fn predict_depth(&self, image: &DynamicImage) -> Result<DepthMap> {
+        let mut prepared = self.prepare_depth(image)?;
+        let (canvas_width, canvas_height) = (
+            prepared.image().width() as usize,
+            prepared.image().height() as usize,
+        );
+        let input = image_to_tensor(prepared.take_image(), &self.device).unsqueeze::<4>() / 255.0;
+        let depth = match &self.model {
+            RuntimeModel::Yolo26DepthN(model) => run_depth_estimation(model, input),
+            RuntimeModel::Yolo26DepthS(model) => run_depth_estimation(model, input),
+            RuntimeModel::Yolo26DepthM(model) => run_depth_estimation(model, input),
+            RuntimeModel::Yolo26DepthL(model) => run_depth_estimation(model, input),
+            RuntimeModel::Yolo26DepthX(model) => run_depth_estimation(model, input),
+            _ => {
+                return Err(format!(
+                    "{} is not a depth-estimation model; dense depth maps are available \
+                     for yolo26n/s/m/l/x-depth",
+                    self.model_id
+                )
+                .into());
+            }
+        };
+        Ok(source_depth_map(
+            &depth,
+            canvas_width,
+            canvas_height,
+            &prepared,
+        ))
+    }
+
+    /// Decode an image from disk and run monocular depth estimation.
+    pub fn predict_depth_path(&self, path: impl AsRef<Path>) -> Result<(DynamicImage, DepthMap)> {
+        let image = image::open(path)?;
+        let map = self.predict_depth(&image)?;
+        Ok((image, map))
+    }
+
+    /// Letterbox an image the way the loaded depth model expects.
+    fn prepare_depth(&self, image: &DynamicImage) -> Result<LetterboxedImage> {
+        match &self.model {
+            RuntimeModel::Yolo26DepthN(_)
+            | RuntimeModel::Yolo26DepthS(_)
+            | RuntimeModel::Yolo26DepthM(_)
+            | RuntimeModel::Yolo26DepthL(_)
+            | RuntimeModel::Yolo26DepthX(_) => {
+                Ok(LetterboxedImage::ultralytics(image, self.input_size, 32))
+            }
+            _ => Err(format!(
+                "{} is not a depth-estimation model; dense depth maps are available \
+                 for yolo26n/s/m/l/x-depth",
+                self.model_id
+            )
+            .into()),
+        }
+    }
+
     /// Run image classification on an already-decoded image.
     ///
     /// Returns the top-5 classes by probability (Ultralytics' `probs.top5` convention), in
@@ -2994,6 +3315,11 @@ pub fn pack_weights_to(
                 ModelId::Yolo26MSem => pack_variant!(Yolo26SemMConfig),
                 ModelId::Yolo26LSem => pack_variant!(Yolo26SemLConfig),
                 ModelId::Yolo26XSem => pack_variant!(Yolo26SemXConfig),
+                ModelId::Yolo26NDepth => pack_variant!(Yolo26DepthNConfig),
+                ModelId::Yolo26SDepth => pack_variant!(Yolo26DepthSConfig),
+                ModelId::Yolo26MDepth => pack_variant!(Yolo26DepthMConfig),
+                ModelId::Yolo26LDepth => pack_variant!(Yolo26DepthLConfig),
+                ModelId::Yolo26XDepth => pack_variant!(Yolo26DepthXConfig),
                 ModelId::Yolo26NCls => pack_variant!(Yolo26ClsNConfig),
                 ModelId::Yolo26SCls => pack_variant!(Yolo26ClsSConfig),
                 ModelId::Yolo26MCls => pack_variant!(Yolo26ClsMConfig),
@@ -3238,6 +3564,32 @@ pub fn annotate_semantic(image: &DynamicImage, mask: &SemanticMask) -> DynamicIm
                     ((u16::from(pixel[2]) + u16::from(color[2])) / 2) as u8,
                 ]),
             );
+        }
+    }
+    DynamicImage::ImageRgb8(output)
+}
+
+/// Render a source-space depth map as a grayscale image.
+///
+/// Nearer pixels are brighter: the map's own minimum maps to white and its maximum to black
+/// (a flat map renders uniform white; non-finite pixels render black). The source image is
+/// not blended in — depth carries no class identity to overlay.
+pub fn annotate_depth(map: &DepthMap) -> DynamicImage {
+    let stats = map.stats();
+    let span = (stats.max - stats.min).max(f32::EPSILON);
+    let mut output = ImageBuffer::from_pixel(map.width, map.height, Rgb([0, 0, 0]));
+    for y in 0..map.height {
+        for x in 0..map.width {
+            let value = map.data[y as usize * map.width as usize + x as usize];
+            // Nearer (smaller) depths are brighter; clamp guards non-finite inputs.
+            let shade = if value.is_finite() {
+                ((1.0 - (value - stats.min) / span) * 255.0)
+                    .round()
+                    .clamp(0.0, 255.0) as u8
+            } else {
+                0
+            };
+            output.put_pixel(x, y, Rgb([shade, shade, shade]));
         }
     }
     DynamicImage::ImageRgb8(output)
@@ -3613,6 +3965,47 @@ mod tests {
         let mask = source_semantic_mask(&logits, 64, 64, &prepared);
         assert_eq!((mask.width, mask.height), (100, 60));
         assert!(mask.data.iter().all(|pixel| *pixel == 1));
+    }
+
+    #[test]
+    fn depth_postprocess_keeps_float_meters_through_identity_letterbox() {
+        // A 64 px square source letterboxes to itself (scale 1, no padding). A stride-4
+        // constant plane must survive the upsample round trip unchanged.
+        let source = DynamicImage::new_rgb8(64, 64);
+        let prepared = LetterboxedImage::ultralytics(&source, 64, 32);
+        let depth = DepthMapCpu {
+            width: 16,
+            height: 16,
+            data: vec![3.5; 256],
+        };
+        let map = source_depth_map(&depth, 64, 64, &prepared);
+        assert_eq!((map.width, map.height), (64, 64));
+        assert!(map.data.iter().all(|value| (*value - 3.5).abs() < 1e-5));
+        assert_eq!(map.stats().mean, 3.5);
+    }
+
+    #[test]
+    fn depth_postprocess_crops_padding_before_mapping_to_source() {
+        // Same padded geometry as the semantic crop test: 100x60 at 64 px input lands on a
+        // 64x64 canvas with 13 px top and bottom padding.
+        let source = DynamicImage::new_rgb8(100, 60);
+        let prepared = LetterboxedImage::ultralytics(&source, 64, 32);
+        let (scale, pad_x, pad_y) = prepared.letterbox_geometry();
+        assert_eq!((pad_x, pad_y), (0.0, 13.0));
+        assert!((scale - 0.64).abs() < 1e-6);
+
+        // A ramp across the logits plane must stay finite and ordered after the crop and
+        // downsample; padding must not leak into the map.
+        let depth = DepthMapCpu {
+            width: 16,
+            height: 16,
+            data: (0..256).map(|index| index as f32).collect(),
+        };
+        let map = source_depth_map(&depth, 64, 64, &prepared);
+        assert_eq!((map.width, map.height), (100, 60));
+        assert!(map.data.iter().all(|value| value.is_finite()));
+        let stats = map.stats();
+        assert!(stats.min >= 0.0 && stats.max <= 255.0 && stats.min < stats.max);
     }
 
     #[test]

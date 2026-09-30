@@ -4,7 +4,7 @@
   <img alt="Montgomery" src="/docs/logo.svg" width="58%">
 </picture>
 
-Native object detection, instance segmentation, semantic segmentation, and image classification in Rust with [Burn](https://burn.dev)
+Native object detection, instance segmentation, semantic segmentation, depth estimation, and image classification in Rust with [Burn](https://burn.dev)
 
 <h3>
 
@@ -23,7 +23,7 @@ Montgomery is an experimental Rust computer-vision stack:
 
 - Computer vision inference on CPU or GPU
 - WGPU training with validation, resumable checkpoints, and ready-to-use exports
-- Detection, instance segmentation, semantic segmentation, and classification
+- Detection, instance segmentation, semantic segmentation, depth estimation, and classification
 - Burnpack and ONNX export
 
 Normal inference needs no Python, PyTorch, or ONNX Runtime.
@@ -40,7 +40,7 @@ Normal inference needs no Python, PyTorch, or ONNX Runtime.
 | YOLOv10 | `n, s, m, b, l, x` | Detect |
 | YOLO11 | `n, s, m, l, x` | Detect, segment, classify |
 | YOLO12 | `n, s, m, l, x` | Detect |
-| YOLO26 | `n, s, m, l, x` | Detect, segment, semantic, classify |
+| YOLO26 | `n, s, m, l, x` | Detect, segment, semantic, depth, classify |
 
 ## Rust API
 
@@ -142,12 +142,13 @@ cargo check --no-default-features --lib
 
 See [docs/MODEL_BRINGUP.md](docs/MODEL_BRINGUP.md) for new model families.
 
-## All four tasks on one image
+## All five tasks on one image
 
 Same `docs/dog_bike_man.jpg` through the YOLO26n family: classification top-5,
-detection boxes, per-object instance masks, and the dense semantic map.
+detection boxes, per-object instance masks, the dense semantic map, and the depth map
+in meters.
 
-![Classification, detection, instance segmentation, and semantic segmentation of the same image with YOLO26n](docs/tasks-grid.png)
+![Source image plus classification, detection, instance segmentation, semantic segmentation, and depth estimation of the same image with YOLO26n](docs/tasks-grid.png)
 
 ## License
 
