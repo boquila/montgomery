@@ -436,8 +436,8 @@ fn renderers_preserve_source_geometry_and_public_result_schema() {
     assert_eq!(depth.stats().mean, 2.5);
     let rendered = annotate_depth(&depth).to_rgb8();
     assert_eq!(rendered.dimensions(), (10, 10));
-    // A flat map renders uniform white (min maps to white).
-    assert_eq!(*rendered.get_pixel(5, 5), Rgb([255, 255, 255]));
+    // A flat map renders uniform viridis yellow (min maps to t = 1).
+    assert_eq!(*rendered.get_pixel(5, 5), Rgb([253, 231, 37]));
     assert_eq!(
         *source.to_rgb8().get_pixel(5, 5),
         black,
