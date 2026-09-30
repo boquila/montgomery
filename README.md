@@ -28,7 +28,7 @@ Montgomery is an experimental Rust computer-vision stack:
 
 Normal inference needs no Python, PyTorch, or ONNX Runtime.
 
-![Same image through all four tasks with YOLO26n: classification top-5, detection boxes, instance masks, and the dense semantic map](docs/tasks-grid.png)
+![Instance segmentation produced by YOLO11n-seg](docs/dog_bike_man-segmentation.png)
 
 ## Supported models
 
@@ -141,6 +141,13 @@ cargo check --no-default-features --lib
 ```
 
 See [docs/MODEL_BRINGUP.md](docs/MODEL_BRINGUP.md) for new model families.
+
+## All four tasks on one image
+
+Same `docs/dog_bike_man.jpg` through the YOLO26n family: classification top-5,
+detection boxes, per-object instance masks, and the dense semantic map.
+
+![Classification, detection, instance segmentation, and semantic segmentation of the same image with YOLO26n](docs/tasks-grid.png)
 
 ## License
 
