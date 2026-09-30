@@ -37,6 +37,7 @@ pub enum LossFamily {
     Yolov10DualDfl,
     Yolo26DualDirect,
     Yolo26DualSegment,
+    Semantic,
     Classification,
 }
 
@@ -95,6 +96,15 @@ pub const fn recipe_for(model: ModelId) -> TrainingRecipe {
             levels: 3,
             reg_max: 1,
             end_to_end: true,
+        },
+        // Semantic models are inference-only: the native trainer rejects them before any
+        // loss is built, so this recipe is unreachable. It carries the family's real
+        // geometry (three backbone levels feeding a stride-8 head) for introspection.
+        Yolo26NSem | Yolo26SSem | Yolo26MSem | Yolo26LSem | Yolo26XSem => TrainingRecipe {
+            loss: LossFamily::Semantic,
+            levels: 3,
+            reg_max: 0,
+            end_to_end: false,
         },
         Yolo11NCls | Yolo11SCls | Yolo11MCls | Yolo11LCls | Yolo11XCls | Yolov8NCls
         | Yolov8SCls | Yolov8MCls | Yolov8LCls | Yolov8XCls | Yolo26NCls | Yolo26SCls

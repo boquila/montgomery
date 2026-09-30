@@ -4,7 +4,7 @@
   <img alt="Montgomery" src="/docs/logo.svg" width="58%">
 </picture>
 
-Native object detection, instance segmentation, and image classification in Rust with [Burn](https://burn.dev)
+Native object detection, instance segmentation, semantic segmentation, and image classification in Rust with [Burn](https://burn.dev)
 
 <h3>
 
@@ -23,12 +23,12 @@ Montgomery is an experimental Rust computer-vision stack:
 
 - Computer vision inference on CPU or GPU
 - WGPU training with validation, resumable checkpoints, and ready-to-use exports
-- Detection, instance segmentation, and classification
+- Detection, instance segmentation, semantic segmentation, and classification
 - Burnpack and ONNX export
 
 Normal inference needs no Python, PyTorch, or ONNX Runtime.
 
-![Instance segmentation produced by YOLO11n-seg](docs/dog_bike_man-segmentation.png)
+![Same image through all four tasks with YOLO26n: classification top-5, detection boxes, instance masks, and the dense semantic map](docs/tasks-grid.png)
 
 ## Supported models
 
@@ -40,7 +40,7 @@ Normal inference needs no Python, PyTorch, or ONNX Runtime.
 | YOLOv10 | `n, s, m, b, l, x` | Detect |
 | YOLO11 | `n, s, m, l, x` | Detect, segment, classify |
 | YOLO12 | `n, s, m, l, x` | Detect |
-| YOLO26 | `n, s, m, l, x` | Detect, segment, classify |
+| YOLO26 | `n, s, m, l, x` | Detect, segment, semantic, classify |
 
 ## Rust API
 

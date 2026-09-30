@@ -22,6 +22,7 @@ pub enum ExportFamily {
 pub enum ExportTask {
     Detect,
     Segment,
+    Semantic,
     Classify,
 }
 
@@ -114,6 +115,11 @@ const SEGMENT_OUTPUTS: &[OutputTensorSpec] = &[
         semantic: "stride-4 mask prototypes",
     },
 ];
+const SEMANTIC_OUTPUTS: &[OutputTensorSpec] = &[OutputTensorSpec {
+    name: "logits",
+    rank: 4,
+    semantic: "unnormalized per-pixel class logits at stride 8",
+}];
 const CLASSIFY_OUTPUTS: &[OutputTensorSpec] = &[
     OutputTensorSpec {
         name: "logits",
@@ -460,6 +466,36 @@ impl ExportSpec {
                 "x",
                 "yolo26x-seg.yaml",
             ),
+            Yolo26NSem => (
+                ExportFamily::Yolo26,
+                ExportTask::Semantic,
+                "n",
+                "yolo26n-sem.yaml",
+            ),
+            Yolo26SSem => (
+                ExportFamily::Yolo26,
+                ExportTask::Semantic,
+                "s",
+                "yolo26s-sem.yaml",
+            ),
+            Yolo26MSem => (
+                ExportFamily::Yolo26,
+                ExportTask::Semantic,
+                "m",
+                "yolo26m-sem.yaml",
+            ),
+            Yolo26LSem => (
+                ExportFamily::Yolo26,
+                ExportTask::Semantic,
+                "l",
+                "yolo26l-sem.yaml",
+            ),
+            Yolo26XSem => (
+                ExportFamily::Yolo26,
+                ExportTask::Semantic,
+                "x",
+                "yolo26x-sem.yaml",
+            ),
             Yolo26NCls => (
                 ExportFamily::Yolo26,
                 ExportTask::Classify,
@@ -496,10 +532,11 @@ impl ExportSpec {
         let outputs = match task {
             ExportTask::Detect => DETECT_OUTPUTS,
             ExportTask::Segment => SEGMENT_OUTPUTS,
+            ExportTask::Semantic => SEMANTIC_OUTPUTS,
             ExportTask::Classify => CLASSIFY_OUTPUTS,
         };
         let box_format = match (family, task) {
-            (_, ExportTask::Classify) => None,
+            (_, ExportTask::Classify) | (_, ExportTask::Semantic) => None,
             (ExportFamily::Yolo11 | ExportFamily::Yolov8 | ExportFamily::Yolo12, _) => {
                 Some(BoxFormat::Xywh)
             }
@@ -525,6 +562,8 @@ impl ExportSpec {
             stride: 32,
             num_classes: if task == ExportTask::Classify {
                 1000
+            } else if task == ExportTask::Semantic {
+                19
             } else {
                 80
             },

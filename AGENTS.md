@@ -13,7 +13,8 @@ For a new family, scale, or task, follow [docs/MODEL_BRINGUP.md](docs/MODEL_BRIN
 - `src/models/yolov3_tiny/`, `yolov8/`, `yolov10/`, `yolo11/`, `yolo12/`, `yolo26/`:
   experimental Ultralytics-family graphs and native Burnpack loaders.
 - YOLOv8, YOLO11, and YOLO26 also provide `-seg` variants; YOLOv8, YOLO11, and YOLO26 provide
-  `-cls` variants.
+  `-cls` variants. YOLO26 additionally provides inference-only `-sem` semantic-segmentation
+  variants (dense class maps, no boxes; see `src/models/yolo26/semantic.rs`).
 - `src/data/letterbox.rs`: inference preprocessing and reversible source-image geometry.
 - `src/data/augmentation/`: feature-gated, traceable detect/segment/classify augmentation pinned
   to Ultralytics `v8.4.117-2-g461196cf0`. Parity lives in `tests/augmentation_parity.rs`.
@@ -82,7 +83,8 @@ boundary, compare CPU and GPU JSON detections on the reference image.
 - Public detections are continuous, unnormalized source-image `XYXY` edges in pixels. They are not
   `XYWH`; `xmax == width` and `ymax == height` are valid.
 - YOLOX uses top-left letterboxing and raw RGB pixels. Ultralytics detection/segmentation models use
-  stride-aligned rectangular letterboxing and RGB values in `[0, 1]`.
+  stride-aligned rectangular letterboxing and RGB values in `[0, 1]`. Semantic models reuse that
+  letterbox at a 1024 px default input.
 - YOLOX batch norm uses eps `1e-3`, momentum `0.03`. Classification checkpoints use plain PyTorch
   defaults (eps `1e-5`, momentum `0.1`) through `BnFlavor::Pytorch`.
 - YOLOv10 and YOLO26 are NMS-free end-to-end heads with top-300 selection. YOLO26 is also DFL-free.
@@ -110,6 +112,11 @@ rescaling. Golden tensor tests are the authority for these quirks.
 - Classification uses the Ultralytics 224 px anti-aliased shortest-edge resize, centered crop, RGB
   `[0, 1]`, and a 1000-way softmax. End-to-end parity compares the top-5 set and probabilities,
   since near-tied class order is resize-rounding sensitive.
+- Semantic segmentation (`yolo26n/s/m/l/x-sem`, inference-only) reuses the stride-32
+  rectangular letterbox and RGB `[0, 1]` input, emits stride-8 logits from the P3-only
+  `SemanticSegment` tower, and returns a dense source-image class map (`SemanticMask`) via
+  bilinear upsample plus per-pixel argmax. `predict_semantic()` is the only entry point;
+  `predict()` exposes no boxes for these models. Training rejects `-sem` architectures.
 
 ## Augmentation and training
 

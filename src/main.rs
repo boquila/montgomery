@@ -26,7 +26,7 @@ use montgomery::training::runtime::{
 };
 use montgomery::{
     BenchmarkOptions, InferenceBenchmark, ModelId, ModelTask, PredictOptions, Predictor, annotate,
-    annotate_segmentation, pack_weights, pack_weights_to,
+    annotate_segmentation, annotate_semantic, pack_weights, pack_weights_to,
 };
 use serde::Serialize;
 
@@ -59,7 +59,8 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Run detection, instance segmentation, or classification on an image.
+    /// Run detection, instance segmentation, semantic segmentation, or classification on an
+    /// image.
     Predict(PredictArgs),
     /// Measure cold-start and steady-state inference speed without loading an image.
     Bench(BenchArgs),
@@ -337,7 +338,7 @@ struct PredictArgs {
 
     /// Render instance-mask outlines over the annotated image and report per-detection mask
     /// coverage. Requires a segmentation model (yolo11n/s/m/l/x-seg, yolov8n/s/m/l/x-seg, or
-    /// yolo26n/s/m/l/x-seg).
+    /// yolo26n/s/m/l/x-seg). No-op for semantic models, which always render their dense map.
     #[arg(long)]
     masks: bool,
 
@@ -392,6 +393,17 @@ fn default_output(input: &std::path::Path, masks: bool) -> PathBuf {
     // segmentation rendering must not default to a *-detections.png path.
     let suffix = if masks { "segmentation" } else { "detections" };
     input.with_file_name(format!("{stem}-{suffix}.png"))
+}
+
+/// Default annotated output for the semantic task: a class-color overlay rendered from the
+/// dense map, kept on its own `-semantic.png` path so it cannot be confused with the
+/// per-object `-segmentation.png` renderings.
+fn semantic_default_output(input: &std::path::Path) -> PathBuf {
+    let stem = input
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("prediction");
+    input.with_file_name(format!("{stem}-semantic.png"))
 }
 
 #[cfg(feature = "training")]
@@ -959,6 +971,15 @@ fn run_predict(
             report_segmentations(args, &image, &output, &detections)?;
             return Ok(());
         }
+        ModelTask::Semantic => {
+            let output = match &args.output {
+                Some(output) => output.clone(),
+                None => semantic_default_output(&args.source),
+            };
+            let (image, mask) = predictor.predict_semantic_path(&args.source)?;
+            report_semantic(args, &image, &output, predictor.class_names(), &mask)?;
+            return Ok(());
+        }
         ModelTask::Detection => {}
     }
     if args.masks {
@@ -1185,6 +1206,89 @@ fn report_segmentations(
     Ok(())
 }
 
+/// Print semantic-segmentation results (per-class coverage table or JSON) and save the
+/// class-color overlay image.
+///
+/// The JSON carries the source-space dimensions plus per-class pixel counts; the full class
+/// map itself is rendered into the overlay image rather than printed.
+fn report_semantic(
+    args: &PredictArgs,
+    image: &image::DynamicImage,
+    output: &std::path::Path,
+    class_names: &[String],
+    mask: &montgomery::SemanticMask,
+) -> montgomery::Result<()> {
+    let histogram = mask.class_histogram(class_names.len());
+    let total = mask.width as u64 * mask.height as u64;
+    if args.json {
+        #[derive(Serialize)]
+        struct JsonOutput {
+            task: &'static str,
+            width: u32,
+            height: u32,
+            coordinate_space: &'static str,
+            classes: Vec<JsonClassCoverage>,
+        }
+
+        #[derive(Serialize)]
+        struct JsonClassCoverage {
+            class_id: usize,
+            class_name: String,
+            pixels: u64,
+            fraction: f64,
+        }
+
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&JsonOutput {
+                task: "semantic",
+                width: mask.width,
+                height: mask.height,
+                coordinate_space: "source_image",
+                classes: class_names
+                    .iter()
+                    .enumerate()
+                    .map(|(class_id, class_name)| JsonClassCoverage {
+                        class_id,
+                        class_name: class_name.clone(),
+                        pixels: histogram[class_id],
+                        fraction: histogram[class_id] as f64 / total.max(1) as f64,
+                    })
+                    .collect(),
+            })?
+        );
+    } else {
+        println!(
+            "Semantic mask {}x{} ({} classes):",
+            mask.width,
+            mask.height,
+            class_names.len()
+        );
+        let mut order: Vec<usize> = (0..class_names.len()).collect();
+        order.sort_unstable_by(|&a, &b| histogram[b].cmp(&histogram[a]));
+        for class_id in order {
+            if histogram[class_id] == 0 {
+                continue;
+            }
+            println!(
+                "  {:<16} {:>9} px  {:>6.2}%",
+                class_names[class_id],
+                histogram[class_id],
+                histogram[class_id] as f64 / total.max(1) as f64 * 100.0
+            );
+        }
+    }
+
+    annotate_semantic(image, mask).save(output)?;
+    eprintln!(
+        "Saved semantic mask ({}x{}) to {}",
+        mask.width,
+        mask.height,
+        output.display()
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1198,6 +1302,10 @@ mod tests {
         assert_eq!(
             default_output(std::path::Path::new("photos/dog.jpg"), true),
             PathBuf::from("photos/dog-segmentation.png")
+        );
+        assert_eq!(
+            semantic_default_output(std::path::Path::new("photos/dog.jpg")),
+            PathBuf::from("photos/dog-semantic.png")
         );
     }
 

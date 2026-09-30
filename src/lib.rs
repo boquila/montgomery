@@ -3,7 +3,8 @@
 //! The stable path supports YOLOX (nano/tiny/s/m/l/x) trained on COCO, with experimental native
 //! YOLOv3-Tiny-Ultralytics, YOLOv10 (n/s/m/b/l/x), YOLO26 (n/s/m/l/x), YOLO11 (n/s/m/l/x),
 //! YOLOv8 (n/s/m/l/x), and YOLO12 (n/s/m/l/x) inference paths, plus YOLO11-seg (n/s/m/l/x),
-//! YOLO26-seg (n/s/m/l/x), and YOLOv8-seg (n/s/m/l/x) instance segmentation and the
+//! YOLO26-seg (n/s/m/l/x), and YOLOv8-seg (n/s/m/l/x) instance segmentation, the
+//! YOLO26-sem (n/s/m/l/x) semantic segmentation, and the
 //! YOLO26-cls/YOLO11-cls/YOLOv8-cls (n/s/m/l/x) ImageNet-1k classification. Model inference and
 //! post-processing run from Rust â€” on the Flex CPU backend by default, or on the Wgpu GPU backend
 //! (Vulkan/DX12/Metal) when built with the `gpu` feature. No Python runtime or ONNX runtime is
@@ -50,7 +51,8 @@ use crate::models::yolo26::head::MAX_DETECTIONS as YOLO26_MAX_DETECTIONS;
 use crate::models::yolo26::{
     Yolo26ClsLConfig, Yolo26ClsMConfig, Yolo26ClsNConfig, Yolo26ClsSConfig, Yolo26ClsXConfig,
     Yolo26LConfig, Yolo26MConfig, Yolo26NConfig, Yolo26SConfig, Yolo26SegLConfig, Yolo26SegMConfig,
-    Yolo26SegNConfig, Yolo26SegSConfig, Yolo26SegXConfig, Yolo26XConfig,
+    Yolo26SegNConfig, Yolo26SegSConfig, Yolo26SegXConfig, Yolo26SemLConfig, Yolo26SemMConfig,
+    Yolo26SemNConfig, Yolo26SemSConfig, Yolo26SemXConfig, Yolo26XConfig,
 };
 use crate::models::yolov3_tiny::Yolov3Tiny;
 #[cfg(feature = "pretrained")]
@@ -80,6 +82,10 @@ pub const INPUT_SIZE: usize = 640;
 /// The square input size used by the YOLO26-cls classification models (Ultralytics' classify
 /// default; the official checkpoints were trained at 224 px).
 pub const CLASSIFY_INPUT_SIZE: usize = 224;
+
+/// The square input size used by the YOLO26-sem semantic-segmentation models (Ultralytics'
+/// semantic default; the official Cityscapes checkpoints train at 1024 px).
+pub const SEMANTIC_INPUT_SIZE: usize = 1024;
 
 /// Number of ranked classes returned by [`Predictor::predict_classification`] (Ultralytics'
 /// `probs.top5` convention).
@@ -148,6 +154,11 @@ pub enum ModelId {
     Yolo26MSeg,
     Yolo26LSeg,
     Yolo26XSeg,
+    Yolo26NSem,
+    Yolo26SSem,
+    Yolo26MSem,
+    Yolo26LSem,
+    Yolo26XSem,
     Yolo26NCls,
     Yolo26SCls,
     Yolo26MCls,
@@ -157,7 +168,7 @@ pub enum ModelId {
 
 impl ModelId {
     /// Exhaustive catalog used by registries whose coverage must track every public model.
-    pub const ALL: [Self; 63] = [
+    pub const ALL: [Self; 68] = [
         Self::YoloxNano,
         Self::YoloxTiny,
         Self::YoloxS,
@@ -216,6 +227,11 @@ impl ModelId {
         Self::Yolo26MSeg,
         Self::Yolo26LSeg,
         Self::Yolo26XSeg,
+        Self::Yolo26NSem,
+        Self::Yolo26SSem,
+        Self::Yolo26MSem,
+        Self::Yolo26LSem,
+        Self::Yolo26XSem,
         Self::Yolo26NCls,
         Self::Yolo26SCls,
         Self::Yolo26MCls,
@@ -283,6 +299,11 @@ impl ModelId {
             Self::Yolo26MSeg => "yolo26m-seg",
             Self::Yolo26LSeg => "yolo26l-seg",
             Self::Yolo26XSeg => "yolo26x-seg",
+            Self::Yolo26NSem => "yolo26n-sem",
+            Self::Yolo26SSem => "yolo26s-sem",
+            Self::Yolo26MSem => "yolo26m-sem",
+            Self::Yolo26LSem => "yolo26l-sem",
+            Self::Yolo26XSem => "yolo26x-sem",
             Self::Yolo26NCls => "yolo26n-cls",
             Self::Yolo26SCls => "yolo26s-cls",
             Self::Yolo26MCls => "yolo26m-cls",
@@ -325,6 +346,11 @@ impl ModelId {
             | Self::Yolo26MCls
             | Self::Yolo26LCls
             | Self::Yolo26XCls => CLASSIFY_INPUT_SIZE,
+            Self::Yolo26NSem
+            | Self::Yolo26SSem
+            | Self::Yolo26MSem
+            | Self::Yolo26LSem
+            | Self::Yolo26XSem => SEMANTIC_INPUT_SIZE,
             _ => INPUT_SIZE,
         }
     }
@@ -347,6 +373,11 @@ impl ModelId {
             | Self::Yolo26MSeg
             | Self::Yolo26LSeg
             | Self::Yolo26XSeg => ModelTask::Segmentation,
+            Self::Yolo26NSem
+            | Self::Yolo26SSem
+            | Self::Yolo26MSem
+            | Self::Yolo26LSem
+            | Self::Yolo26XSem => ModelTask::Semantic,
             Self::Yolo11NCls
             | Self::Yolo11SCls
             | Self::Yolo11MCls
@@ -368,11 +399,15 @@ impl ModelId {
 }
 
 /// The kind of prediction produced by a model artifact.
+///
+/// `Segmentation` is per-object instance segmentation (one boolean mask per detection);
+/// `Semantic` is dense scene segmentation (one class id per source-image pixel, no boxes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ModelTask {
     Detection,
     Segmentation,
+    Semantic,
     Classification,
 }
 
@@ -445,6 +480,11 @@ impl FromStr for ModelId {
             "yolo26m-seg" | "yolo26m_seg" => Ok(Self::Yolo26MSeg),
             "yolo26l-seg" | "yolo26l_seg" => Ok(Self::Yolo26LSeg),
             "yolo26x-seg" | "yolo26x_seg" => Ok(Self::Yolo26XSeg),
+            "yolo26n-sem" | "yolo26n_sem" => Ok(Self::Yolo26NSem),
+            "yolo26s-sem" | "yolo26s_sem" => Ok(Self::Yolo26SSem),
+            "yolo26m-sem" | "yolo26m_sem" => Ok(Self::Yolo26MSem),
+            "yolo26l-sem" | "yolo26l_sem" => Ok(Self::Yolo26LSem),
+            "yolo26x-sem" | "yolo26x_sem" => Ok(Self::Yolo26XSem),
             "yolo26n-cls" | "yolo26n_cls" => Ok(Self::Yolo26NCls),
             "yolo26s-cls" | "yolo26s_cls" => Ok(Self::Yolo26SCls),
             "yolo26m-cls" | "yolo26m_cls" => Ok(Self::Yolo26MCls),
@@ -454,7 +494,8 @@ impl FromStr for ModelId {
                 "unknown model '{value}'; available models: yolox-nano/tiny/s/m/l/x, \
                  yolov3-tinyu, yolov10n/s/m/b/l/x, yolo11n/s/m/l/x, yolo11n/s/m/l/x-seg, \
                  yolo11n/s/m/l/x-cls, yolov8n/s/m/l/x, yolov8n/s/m/l/x-seg, yolov8n/s/m/l/x-cls, \
-                 yolo12n/s/m/l/x, yolo26n/s/m/l/x, yolo26n/s/m/l/x-seg, yolo26n/s/m/l/x-cls"
+                 yolo12n/s/m/l/x, yolo26n/s/m/l/x, yolo26n/s/m/l/x-seg, yolo26n/s/m/l/x-sem, \
+                 yolo26n/s/m/l/x-cls"
             )),
         }
     }
@@ -534,12 +575,48 @@ pub struct Classification {
     pub confidence: f32,
 }
 
+/// A dense semantic-segmentation map for one image, in the original source-image coordinate
+/// space.
+///
+/// Unlike [`InstanceMask`] (one boolean mask per detected object), every source-image pixel
+/// carries exactly one class id: `data[y * width + x]` is the predicted class of pixel
+/// `(x, y)`, argmaxed over the model's class table (Cityscapes-19 for the YOLO26-sem family).
+/// There are no boxes, confidences, or per-object structure.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SemanticMask {
+    /// Mask (and source image) width in pixels.
+    pub width: u32,
+    /// Mask (and source image) height in pixels.
+    pub height: u32,
+    /// Row-major class ids over the source image.
+    pub data: Vec<u32>,
+}
+
+impl SemanticMask {
+    /// Number of pixels predicted as `class_id`.
+    pub fn pixels_for_class(&self, class_id: u32) -> u64 {
+        self.data.iter().filter(|pixel| **pixel == class_id).count() as u64
+    }
+
+    /// Per-class pixel counts for classes `0..num_classes`, in class order.
+    pub fn class_histogram(&self, num_classes: usize) -> Vec<u64> {
+        let mut histogram = vec![0_u64; num_classes];
+        for pixel in &self.data {
+            if (*pixel as usize) < num_classes {
+                histogram[*pixel as usize] += 1;
+            }
+        }
+        histogram
+    }
+}
+
 /// Results from [`Predictor::inference`], selected automatically from the loaded architecture.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Prediction {
     Detections(Vec<Detection>),
     Segmentations(Vec<SegmentationDetection>),
+    Semantics(SemanticMask),
     Classifications(Vec<Classification>),
 }
 
@@ -558,6 +635,13 @@ impl Prediction {
         }
     }
 
+    pub fn semantics(&self) -> Option<&SemanticMask> {
+        match self {
+            Self::Semantics(mask) => Some(mask),
+            _ => None,
+        }
+    }
+
     pub fn classifications(&self) -> Option<&[Classification]> {
         match self {
             Self::Classifications(items) => Some(items),
@@ -565,10 +649,13 @@ impl Prediction {
         }
     }
 
+    /// Item count for list-like results; for [`Prediction::Semantics`] this is the labeled
+    /// pixel count (a dense map has no object items, so it is empty only for a 0-area image).
     pub fn len(&self) -> usize {
         match self {
             Self::Detections(items) => items.len(),
             Self::Segmentations(items) => items.len(),
+            Self::Semantics(mask) => mask.data.len(),
             Self::Classifications(items) => items.len(),
         }
     }
@@ -797,6 +884,11 @@ enum RuntimeModel {
     Yolo26SegM(Box<crate::models::yolo26::Yolo26SegM>),
     Yolo26SegL(Box<crate::models::yolo26::Yolo26SegL>),
     Yolo26SegX(Box<crate::models::yolo26::Yolo26SegX>),
+    Yolo26SemN(Box<crate::models::yolo26::Yolo26SemN>),
+    Yolo26SemS(Box<crate::models::yolo26::Yolo26SemS>),
+    Yolo26SemM(Box<crate::models::yolo26::Yolo26SemM>),
+    Yolo26SemL(Box<crate::models::yolo26::Yolo26SemL>),
+    Yolo26SemX(Box<crate::models::yolo26::Yolo26SemX>),
     Yolo26ClsN(Box<crate::models::yolo26::Yolo26ClsN>),
     Yolo26ClsS(Box<crate::models::yolo26::Yolo26ClsS>),
     Yolo26ClsM(Box<crate::models::yolo26::Yolo26ClsM>),
@@ -877,6 +969,11 @@ impl ModelId {
 fn catalog_class_names(model_id: ModelId) -> Vec<String> {
     if model_id.as_str().ends_with("-cls") {
         IMAGENET_CLASSES
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect()
+    } else if model_id.as_str().ends_with("-sem") {
+        CITYSCAPES_CLASSES
             .iter()
             .map(|name| (*name).to_owned())
             .collect()
@@ -1079,6 +1176,11 @@ fn load_model_checkpoint(
         ModelId::Yolo26MSeg => Box::new(load_variant!(Yolo26SegMConfig, RuntimeModel::Yolo26SegM)),
         ModelId::Yolo26LSeg => Box::new(load_variant!(Yolo26SegLConfig, RuntimeModel::Yolo26SegL)),
         ModelId::Yolo26XSeg => Box::new(load_variant!(Yolo26SegXConfig, RuntimeModel::Yolo26SegX)),
+        ModelId::Yolo26NSem => Box::new(load_variant!(Yolo26SemNConfig, RuntimeModel::Yolo26SemN)),
+        ModelId::Yolo26SSem => Box::new(load_variant!(Yolo26SemSConfig, RuntimeModel::Yolo26SemS)),
+        ModelId::Yolo26MSem => Box::new(load_variant!(Yolo26SemMConfig, RuntimeModel::Yolo26SemM)),
+        ModelId::Yolo26LSem => Box::new(load_variant!(Yolo26SemLConfig, RuntimeModel::Yolo26SemL)),
+        ModelId::Yolo26XSem => Box::new(load_variant!(Yolo26SemXConfig, RuntimeModel::Yolo26SemX)),
         ModelId::Yolo26NCls => Box::new(load_variant!(Yolo26ClsNConfig, RuntimeModel::Yolo26ClsN)),
         ModelId::Yolo26SCls => Box::new(load_variant!(Yolo26ClsSConfig, RuntimeModel::Yolo26ClsS)),
         ModelId::Yolo26MCls => Box::new(load_variant!(Yolo26ClsMConfig, RuntimeModel::Yolo26ClsM)),
@@ -1286,6 +1388,235 @@ impl_end_to_end_segmenter!(yolo26: [Yolo26SegN, Yolo26SegS, Yolo26SegM, Yolo26Se
 impl<M: EndToEndSegmenter> EndToEndSegmenter for Box<M> {
     fn segment(&self, input: Tensor<4>) -> crate::models::yolo26::segmentation::SegmentOutput {
         (**self).segment(input)
+    }
+}
+
+/// Uniform semantic-segmentation entry point shared by the YOLO26-sem scale variants, so the
+/// runtime can dispatch to any of them without naming the concrete scale type.
+pub(crate) trait SemanticSegmenter {
+    fn segment_semantic(&self, input: Tensor<4>)
+    -> crate::models::yolo26::semantic::SemanticOutput;
+}
+
+macro_rules! impl_semantic_segmenter {
+    ($family:ident: [$($model:ident),+ $(,)?]) => {
+        $(
+            impl SemanticSegmenter for crate::models::$family::$model {
+                fn segment_semantic(
+                    &self,
+                    input: Tensor<4>,
+                ) -> crate::models::yolo26::semantic::SemanticOutput {
+                    self.forward(input)
+                }
+            }
+        )+
+    };
+}
+
+impl_semantic_segmenter!(yolo26: [Yolo26SemN, Yolo26SemS, Yolo26SemM, Yolo26SemL, Yolo26SemX]);
+
+impl<M: SemanticSegmenter> SemanticSegmenter for Box<M> {
+    fn segment_semantic(
+        &self,
+        input: Tensor<4>,
+    ) -> crate::models::yolo26::semantic::SemanticOutput {
+        (**self).segment_semantic(input)
+    }
+}
+
+/// Host-synced semantic logits for one batch-1 image, in `[class, height, width]` order.
+pub(crate) struct SemanticLogitsCpu {
+    pub num_classes: usize,
+    pub width: usize,
+    pub height: usize,
+    pub data: Vec<f32>,
+}
+
+/// Run a semantic model and synchronize its stride-8 logits to the host.
+pub(crate) fn run_semantic_segmentation(
+    model: &impl SemanticSegmenter,
+    input: Tensor<4>,
+) -> SemanticLogitsCpu {
+    let output = model.segment_semantic(input);
+    let [batch, num_classes, height, width] = output.logits.dims();
+    assert_eq!(batch, 1, "batch-1 inference only");
+    let data: Vec<f32> = output
+        .logits
+        .into_data()
+        .iter::<f32>()
+        .map(|value| value.elem::<f32>())
+        .collect();
+    SemanticLogitsCpu {
+        num_classes,
+        width,
+        height,
+        data,
+    }
+}
+
+/// Bilinearly upsample one class plane with `align_corners = false` half-pixel centers.
+///
+/// Matches `F.interpolate(..., mode="bilinear", align_corners=False)`: sample coordinate
+/// `(dst + 0.5) * (src / dst) - 0.5`, clamped to the source grid.
+fn bilinear_upsample_plane(
+    plane: &[f32],
+    source_width: usize,
+    source_height: usize,
+    target_width: usize,
+    target_height: usize,
+) -> Vec<f32> {
+    debug_assert_eq!(plane.len(), source_width * source_height);
+    let scale_x = source_width as f32 / target_width.max(1) as f32;
+    let scale_y = source_height as f32 / target_height.max(1) as f32;
+    let max_x = source_width as f32 - 1.0;
+    let max_y = source_height as f32 - 1.0;
+
+    // Precompute the horizontal sampling tiles once; rows reuse the same pattern.
+    let mut x0_table = Vec::with_capacity(target_width);
+    let mut x1_table = Vec::with_capacity(target_width);
+    let mut lambda_x_table = Vec::with_capacity(target_width);
+    for x in 0..target_width {
+        let source_x = ((x as f32 + 0.5) * scale_x - 0.5).clamp(0.0, max_x);
+        let x0 = source_x.floor() as usize;
+        let x1 = (x0 + 1).min(source_width - 1);
+        x0_table.push(x0);
+        x1_table.push(x1);
+        lambda_x_table.push(source_x - x0 as f32);
+    }
+
+    let mut output = vec![0.0_f32; target_width * target_height];
+    for y in 0..target_height {
+        let source_y = ((y as f32 + 0.5) * scale_y - 0.5).clamp(0.0, max_y);
+        let y0 = source_y.floor() as usize;
+        let y1 = (y0 + 1).min(source_height - 1);
+        let lambda_y = source_y - y0 as f32;
+        let inv_lambda_y = 1.0 - lambda_y;
+        let row0 = y0 * source_width;
+        let row1 = y1 * source_width;
+        for (x, (&x0, (&x1, &lambda_x))) in x0_table
+            .iter()
+            .zip(x1_table.iter().zip(lambda_x_table.iter()))
+            .enumerate()
+        {
+            let inv_lambda_x = 1.0 - lambda_x;
+            let top = plane[row0 + x0] * inv_lambda_x + plane[row0 + x1] * lambda_x;
+            let bottom = plane[row1 + x0] * inv_lambda_x + plane[row1 + x1] * lambda_x;
+            output[y * target_width + x] = top * inv_lambda_y + bottom * lambda_y;
+        }
+    }
+    output
+}
+
+/// Map stride-8 semantic logits to a source-image class map.
+///
+/// Mirrors Ultralytics' `SemanticSegmentationPredictor.postprocess` step for step: bilinearly
+/// upsample the logits to the letterboxed canvas (`align_corners = false`), crop the
+/// letterbox padding, bilinearly resize the crop to the source image (Ultralytics'
+/// `scale_masks`), and take the per-pixel argmax. The crop inverts this run's retained
+/// letterbox geometry, so it stays consistent with the canvas the model actually saw.
+fn source_semantic_mask(
+    logits: &SemanticLogitsCpu,
+    canvas_width: usize,
+    canvas_height: usize,
+    prepared: &LetterboxedImage,
+) -> SemanticMask {
+    let (scale, pad_x, pad_y) = prepared.letterbox_geometry();
+    let (source_width, source_height) = prepared.source_dimensions();
+    let (logits_width, logits_height) = (logits.width, logits.height);
+    let num_classes = logits.num_classes;
+    debug_assert!(logits_width > 0 && logits_height > 0 && num_classes > 0);
+
+    // The placed-image window inside the canvas, recomputed exactly like the letterbox
+    // constructor: rounded resized dims at the centered padding offset.
+    let resized_width = (source_width as f32 * scale).round() as usize;
+    let resized_height = (source_height as f32 * scale).round() as usize;
+    let left = (pad_x as usize).min(canvas_width);
+    let top = (pad_y as usize).min(canvas_height);
+    let right = (left + resized_width).min(canvas_width);
+    let bottom = (top + resized_height).min(canvas_height);
+    let crop_width = right.saturating_sub(left).max(1);
+    let crop_height = bottom.saturating_sub(top).max(1);
+
+    // Step 1: upsample every class plane to the canvas. One transient float field per
+    // class; freed before return.
+    let plane = logits_width * logits_height;
+    let canvas_plane = canvas_width * canvas_height;
+    let mut canvas = vec![0.0_f32; num_classes * canvas_plane];
+    for class in 0..num_classes {
+        let upsampled = bilinear_upsample_plane(
+            &logits.data[class * plane..(class + 1) * plane],
+            logits_width,
+            logits_height,
+            canvas_width,
+            canvas_height,
+        );
+        canvas[class * canvas_plane..(class + 1) * canvas_plane].copy_from_slice(&upsampled);
+    }
+
+    // Steps 2+3: resample the crop to source resolution and argmax, fused per pixel so no
+    // second full-tensor materialization is needed.
+    let slope_x = crop_width as f32 / source_width.max(1) as f32;
+    let slope_y = crop_height as f32 / source_height.max(1) as f32;
+    let max_crop_x = crop_width as f32 - 1.0;
+    let max_crop_y = crop_height as f32 - 1.0;
+    // Precompute the horizontal sampling tiles once; rows reuse the same pattern.
+    let mut x0_table = Vec::with_capacity(source_width as usize);
+    let mut x1_table = Vec::with_capacity(source_width as usize);
+    let mut lambda_x_table = Vec::with_capacity(source_width as usize);
+    for x in 0..source_width {
+        let crop_x = ((x as f32 + 0.5) * slope_x - 0.5).clamp(0.0, max_crop_x);
+        let canvas_x = crop_x + left as f32;
+        let x0 = canvas_x.floor() as usize;
+        let x1 = (x0 + 1).min(canvas_width - 1);
+        x0_table.push(x0);
+        x1_table.push(x1);
+        lambda_x_table.push(canvas_x - x0 as f32);
+    }
+
+    let mut data = vec![0_u32; source_width as usize * source_height as usize];
+    for y in 0..source_height {
+        // Source -> crop affine with half-pixel centers, then shifted into canvas frame.
+        let crop_y = ((y as f32 + 0.5) * slope_y - 0.5).clamp(0.0, max_crop_y);
+        let canvas_y = crop_y + top as f32;
+        let y0 = canvas_y.floor() as usize;
+        let y1 = (y0 + 1).min(canvas_height - 1);
+        let lambda_y = canvas_y - y0 as f32;
+        let inv_lambda_y = 1.0 - lambda_y;
+        let row0 = y0 * canvas_width;
+        let row1 = y1 * canvas_width;
+        for (x, (&x0, (&x1, &lambda_x))) in x0_table
+            .iter()
+            .zip(x1_table.iter().zip(lambda_x_table.iter()))
+            .enumerate()
+        {
+            let inv_lambda_x = 1.0 - lambda_x;
+            let mut best_class = 0_u32;
+            let mut best_logit = f32::NEG_INFINITY;
+            for class in 0..num_classes {
+                let base = class * canvas_plane;
+                let top_value =
+                    canvas[base + row0 + x0] * inv_lambda_x + canvas[base + row0 + x1] * lambda_x;
+                let bottom_value =
+                    canvas[base + row1 + x0] * inv_lambda_x + canvas[base + row1 + x1] * lambda_x;
+                let logit = top_value * inv_lambda_y + bottom_value * lambda_y;
+                if logit > best_logit {
+                    best_logit = logit;
+                    best_class = class as u32;
+                }
+            }
+            // A single-class map thresholds at zero like Ultralytics' `gt(0)`; argmax over
+            // one class would always return zero.
+            data[y as usize * source_width as usize + x] = if num_classes == 1 {
+                u32::from(best_logit > 0.0)
+            } else {
+                best_class
+            };
+        }
+    }
+    SemanticMask {
+        width: source_width,
+        height: source_height,
+        data,
     }
 }
 
@@ -1934,6 +2265,9 @@ impl Predictor {
             ModelTask::Segmentation => Ok(Prediction::Segmentations(
                 self.predict_segmentation(image.as_ref())?,
             )),
+            ModelTask::Semantic => Ok(Prediction::Semantics(
+                self.predict_semantic(image.as_ref())?,
+            )),
             ModelTask::Classification => Ok(Prediction::Classifications(
                 self.predict_classification(image.as_ref())?,
             )),
@@ -2147,8 +2481,14 @@ impl Predictor {
                 ))
             }
             // Classification models carry no spatial detections; the class probabilities are
-            // exposed through predict_classification.
-            RuntimeModel::Yolo26ClsN(_)
+            // exposed through predict_classification. Semantic models likewise carry no boxes;
+            // their dense map is exposed through predict_semantic.
+            RuntimeModel::Yolo26SemN(_)
+            | RuntimeModel::Yolo26SemS(_)
+            | RuntimeModel::Yolo26SemM(_)
+            | RuntimeModel::Yolo26SemL(_)
+            | RuntimeModel::Yolo26SemX(_)
+            | RuntimeModel::Yolo26ClsN(_)
             | RuntimeModel::Yolo26ClsS(_)
             | RuntimeModel::Yolo26ClsM(_)
             | RuntimeModel::Yolo26ClsL(_)
@@ -2328,6 +2668,81 @@ impl Predictor {
         let image = image::open(path)?;
         let detections = self.predict_segmentation(&image)?;
         Ok((image, detections))
+    }
+
+    /// Run semantic segmentation on an already-decoded image.
+    ///
+    /// Returns the dense source-image class map (one class id per pixel, argmaxed over the
+    /// model's class table). Requires a YOLO26 `-sem` model; instance-segmentation models
+    /// should use [`Predictor::predict_segmentation`], detect models [`Predictor::predict`],
+    /// and classification models [`Predictor::predict_classification`]. The input mirrors
+    /// Ultralytics' semantic inference transform: stride-32 rectangular letterbox with RGB
+    /// values scaled to `[0, 1]`.
+    pub fn predict_semantic(&self, image: &DynamicImage) -> Result<SemanticMask> {
+        let mut prepared = self.prepare_semantic(image)?;
+        let (canvas_width, canvas_height) = (
+            prepared.image().width() as usize,
+            prepared.image().height() as usize,
+        );
+        let input = image_to_tensor(prepared.take_image(), &self.device).unsqueeze::<4>() / 255.0;
+        let logits = match &self.model {
+            RuntimeModel::Yolo26SemN(model) => run_semantic_segmentation(model, input),
+            RuntimeModel::Yolo26SemS(model) => run_semantic_segmentation(model, input),
+            RuntimeModel::Yolo26SemM(model) => run_semantic_segmentation(model, input),
+            RuntimeModel::Yolo26SemL(model) => run_semantic_segmentation(model, input),
+            RuntimeModel::Yolo26SemX(model) => run_semantic_segmentation(model, input),
+            _ => {
+                return Err(format!(
+                    "{} is not a semantic-segmentation model; dense class maps are available \
+                     for yolo26n/s/m/l/x-sem",
+                    self.model_id
+                )
+                .into());
+            }
+        };
+        if logits.num_classes != self.class_names.len() {
+            return Err(format!(
+                "semantic logits have {} classes but the artifact class table has {}",
+                logits.num_classes,
+                self.class_names.len()
+            )
+            .into());
+        }
+        Ok(source_semantic_mask(
+            &logits,
+            canvas_width,
+            canvas_height,
+            &prepared,
+        ))
+    }
+
+    /// Decode an image from disk and run semantic segmentation.
+    pub fn predict_semantic_path(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> Result<(DynamicImage, SemanticMask)> {
+        let image = image::open(path)?;
+        let mask = self.predict_semantic(&image)?;
+        Ok((image, mask))
+    }
+
+    /// Letterbox an image the way the loaded semantic model expects.
+    fn prepare_semantic(&self, image: &DynamicImage) -> Result<LetterboxedImage> {
+        match &self.model {
+            RuntimeModel::Yolo26SemN(_)
+            | RuntimeModel::Yolo26SemS(_)
+            | RuntimeModel::Yolo26SemM(_)
+            | RuntimeModel::Yolo26SemL(_)
+            | RuntimeModel::Yolo26SemX(_) => {
+                Ok(LetterboxedImage::ultralytics(image, self.input_size, 32))
+            }
+            _ => Err(format!(
+                "{} is not a semantic-segmentation model; dense class maps are available \
+                 for yolo26n/s/m/l/x-sem",
+                self.model_id
+            )
+            .into()),
+        }
     }
 
     /// Run image classification on an already-decoded image.
@@ -2574,6 +2989,11 @@ pub fn pack_weights_to(
                 ModelId::Yolo26MSeg => pack_variant!(Yolo26SegMConfig),
                 ModelId::Yolo26LSeg => pack_variant!(Yolo26SegLConfig),
                 ModelId::Yolo26XSeg => pack_variant!(Yolo26SegXConfig),
+                ModelId::Yolo26NSem => pack_variant!(Yolo26SemNConfig),
+                ModelId::Yolo26SSem => pack_variant!(Yolo26SemSConfig),
+                ModelId::Yolo26MSem => pack_variant!(Yolo26SemMConfig),
+                ModelId::Yolo26LSem => pack_variant!(Yolo26SemLConfig),
+                ModelId::Yolo26XSem => pack_variant!(Yolo26SemXConfig),
                 ModelId::Yolo26NCls => pack_variant!(Yolo26ClsNConfig),
                 ModelId::Yolo26SCls => pack_variant!(Yolo26ClsSConfig),
                 ModelId::Yolo26MCls => pack_variant!(Yolo26ClsMConfig),
@@ -2794,6 +3214,35 @@ pub fn annotate_segmentation(
     DynamicImage::ImageRgb8(output)
 }
 
+/// Draw a translucent per-class overlay of a source-space semantic mask on a copy of the
+/// image.
+///
+/// Every mask pixel is blended 50/50 with its class color over the overlapping source-image
+/// region, so the scene stays visible under the dense map. Pixels outside the overlap (only
+/// possible when the mask and image dimensions disagree) are left untouched.
+pub fn annotate_semantic(image: &DynamicImage, mask: &SemanticMask) -> DynamicImage {
+    let mut output = image.to_rgb8();
+    let width = mask.width.min(output.width());
+    let height = mask.height.min(output.height());
+    for y in 0..height {
+        for x in 0..width {
+            let class_id = mask.data[y as usize * mask.width as usize + x as usize];
+            let color = class_color(class_id as usize);
+            let pixel = output.get_pixel(x, y);
+            output.put_pixel(
+                x,
+                y,
+                Rgb([
+                    ((u16::from(pixel[0]) + u16::from(color[0])) / 2) as u8,
+                    ((u16::from(pixel[1]) + u16::from(color[1])) / 2) as u8,
+                    ((u16::from(pixel[2]) + u16::from(color[2])) / 2) as u8,
+                ]),
+            );
+        }
+    }
+    DynamicImage::ImageRgb8(output)
+}
+
 /// Stroke the boundary pixels of a source-space boolean mask.
 fn draw_mask_outline(
     image: &mut ImageBuffer<Rgb<u8>, Vec<u8>>,
@@ -2978,6 +3427,32 @@ fn draw_rect(
     }
 }
 
+/// Class names in the Cityscapes-19 order used by the YOLO26-sem checkpoints.
+///
+/// Taken from Ultralytics' `cityscapes.yaml` (AGPL-3.0): the training label ids 0-18 map to
+/// these names in order, with the source-dataset `ignore_label` pixels excluded from the loss.
+pub const CITYSCAPES_CLASSES: [&str; 19] = [
+    "road",
+    "sidewalk",
+    "building",
+    "wall",
+    "fence",
+    "pole",
+    "traffic light",
+    "traffic sign",
+    "vegetation",
+    "terrain",
+    "sky",
+    "person",
+    "rider",
+    "car",
+    "truck",
+    "bus",
+    "train",
+    "motorcycle",
+    "bicycle",
+];
+
 /// Class names in the standard COCO-80 order used by the pretrained weights.
 pub const COCO_CLASSES: [&str; 80] = [
     "person",
@@ -3071,6 +3546,73 @@ mod tests {
         let samples = [1.0, 2.0, 3.0, 4.0, 5.0];
         assert_eq!(benchmark_percentile(&samples, 0.50), 3.0);
         assert_eq!(benchmark_percentile(&samples, 0.95), 5.0);
+    }
+
+    #[test]
+    fn semantic_postprocess_argmaxes_upsampled_logits_through_identity_letterbox() {
+        // A 64 px square source letterboxes to itself (scale 1, no padding), so the mask is
+        // the argmax of the 8x-upsampled logits at source resolution.
+        let source = DynamicImage::new_rgb8(64, 64);
+        let prepared = LetterboxedImage::ultralytics(&source, 64, 32);
+        assert_eq!(prepared.image().width(), 64);
+        assert_eq!(prepared.image().height(), 64);
+
+        // Uniform logits: every pixel takes the strongest class.
+        let logits = SemanticLogitsCpu {
+            num_classes: 3,
+            width: 8,
+            height: 8,
+            data: [0.0_f32; 64]
+                .into_iter()
+                .chain([1.0; 64])
+                .chain([5.0; 64])
+                .collect(),
+        };
+        let mask = source_semantic_mask(&logits, 64, 64, &prepared);
+        assert_eq!((mask.width, mask.height), (64, 64));
+        assert!(mask.data.iter().all(|pixel| *pixel == 2));
+        assert_eq!(mask.pixels_for_class(2), 64 * 64);
+        assert_eq!(mask.class_histogram(3), vec![0, 0, 64 * 64]);
+
+        // A single strong spike still wins its own neighborhood after bilinear spreading.
+        let mut spike = vec![0.0_f32; 3 * 64];
+        spike[2 * 64 + 3 * 8 + 3] = 100.0;
+        let logits = SemanticLogitsCpu {
+            num_classes: 3,
+            width: 8,
+            height: 8,
+            data: spike,
+        };
+        let mask = source_semantic_mask(&logits, 64, 64, &prepared);
+        // Logits cell (3, 3) covers canvas pixels 24..32 in both axes; the center must win.
+        assert_eq!(mask.data[28 * 64 + 28], 2);
+        // Far corners stay with class 0 (all-zero tie breaks to the first maximum).
+        assert_eq!(mask.data[0], 0);
+        assert_eq!(mask.data[63 * 64 + 63], 0);
+    }
+
+    #[test]
+    fn semantic_postprocess_crops_padding_before_mapping_to_source() {
+        // A 100x60 source at 64 px input letterboxes to a 64x64 canvas with 13 px top and
+        // bottom padding (scale 0.64, resized 64x38), exercising the crop + downsample path.
+        let source = DynamicImage::new_rgb8(100, 60);
+        let prepared = LetterboxedImage::ultralytics(&source, 64, 32);
+        assert_eq!(prepared.image().width(), 64);
+        assert_eq!(prepared.image().height(), 64);
+        let (scale, pad_x, pad_y) = prepared.letterbox_geometry();
+        assert_eq!((pad_x, pad_y), (0.0, 13.0));
+        assert!((scale - 0.64).abs() < 1e-6);
+
+        // Uniform logits: padding must not leak into the map; every source pixel wins.
+        let logits = SemanticLogitsCpu {
+            num_classes: 2,
+            width: 8,
+            height: 8,
+            data: [0.0_f32; 64].into_iter().chain([5.0; 64]).collect(),
+        };
+        let mask = source_semantic_mask(&logits, 64, 64, &prepared);
+        assert_eq!((mask.width, mask.height), (100, 60));
+        assert!(mask.data.iter().all(|pixel| *pixel == 1));
     }
 
     #[test]

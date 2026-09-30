@@ -25,6 +25,10 @@ class UltralyticsPortable(torch.nn.Module):
             probabilities, logits = result
             return logits, probabilities
 
+        if self.task == "semantic":
+            # Eval-mode SemanticSegment returns raw stride-8 logits [B, nc, H/8, W/8].
+            return result
+
         head = self.model.model[-1]
         if self.task == "segment":
             (decoded, prototypes), raw = result
@@ -79,4 +83,6 @@ def output_names(task: str, profile: str, family: str) -> list[str]:
         return ["boxes", "scores"]
     if task == "segment":
         return ["boxes", "scores", "coefficients", "prototypes"]
+    if task == "semantic":
+        return ["logits"]
     return ["logits", "probabilities"]

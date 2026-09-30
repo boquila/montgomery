@@ -19,6 +19,7 @@ pub(crate) fn reverse_rules(spec: ExportSpec) -> Vec<(String, String)> {
             detection_rules(spec, "head\\.detect", &mut rules);
             segmentation_rules(spec, &mut rules);
         }
+        ExportTask::Semantic => semantic_rules(&mut rules),
     }
     rules.push((
         "^body\\.model_([0-9]+)\\.(.+)$".into(),
@@ -147,6 +148,28 @@ fn segmentation_rules(spec: ExportSpec, rules: &mut Vec<(String, String)>) {
             format!("model.{head}.proto.{upstream}.$1"),
         ));
     }
+}
+
+/// Inverse key map for the YOLO26-sem head (`model.17.classifier`).
+///
+/// The semantic head is a two-layer tower on P3: `classifier.0` is Ultralytics' `Conv`
+/// (conv + batch norm) and `classifier.1` the biased 1x1 class projection. The training-only
+/// `aux_head` has no inference counterpart and stays unmapped.
+fn semantic_rules(rules: &mut Vec<(String, String)>) {
+    rules.extend([
+        (
+            "^head\\.classifier_0\\.conv\\.(.+)$".into(),
+            "model.17.classifier.0.conv.$1".into(),
+        ),
+        (
+            "^head\\.classifier_0\\.bn\\.(.+)$".into(),
+            "model.17.classifier.0.bn.$1".into(),
+        ),
+        (
+            "^head\\.classifier_1\\.(.+)$".into(),
+            "model.17.classifier.1.$1".into(),
+        ),
+    ]);
 }
 
 fn yolox_rules() -> Vec<(String, String)> {
