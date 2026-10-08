@@ -161,4 +161,4 @@ in meters.
 
 ## License
 
-Montgomery is [AGPL-3.0](LICENSE).
+Montgomery is [AGPL-3.0](LICENSE)
