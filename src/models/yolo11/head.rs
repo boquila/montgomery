@@ -186,8 +186,8 @@ impl Yolo11HeadConfig {
     ///
     /// `Detect` derives the box tower width as `max(16, ch[0] / 4, reg_max * 4)` and the light
     /// classification tower width as `max(ch[0], min(nc, 100))`; with `reg_max = 16` and
-    /// `nc = 80` the box width is 64 except at x scale (ch[0] = 384) where it is 96, and the
-    /// classification width is 80 at n scale (ch[0] = 64) and ch[0] elsewhere.
+    /// `nc = 80` the box width is 64 except at x scale (`ch[0] = 384`) where it is 96, and the
+    /// classification width is 80 at n scale (`ch[0] = 64`) and `ch[0]` elsewhere.
     pub fn new(p3_channels: usize, p4_channels: usize, p5_channels: usize) -> Self {
         let box_channels = (16).max(p3_channels / 4).max(4 * REG_MAX);
         let cls_channels = p3_channels.max(DEFAULT_NUM_CLASSES.min(100));
@@ -238,27 +238,4 @@ fn make_anchors(levels: [(usize, usize, f32); 3], device: &Device) -> (Tensor<2>
         Tensor::from_data(TensorData::new(anchors, [total, 2]), device),
         Tensor::from_data(TensorData::new(strides, [total, 1]), device),
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::models::yolo11::body::Yolo11BodyNConfig;
-
-    #[test]
-    fn decodes_three_feature_levels_to_xywh_and_scores() {
-        let worker = std::thread::Builder::new()
-            .stack_size(64 * 1024 * 1024)
-            .spawn(|| {
-                let device = Default::default();
-                let body = Yolo11BodyNConfig.init(&device);
-                let head = Yolo11HeadConfig::new(64, 128, 256).init(&device);
-                let input = Tensor::zeros([1, 3, 64, 64], &device);
-                let output = head.forward(body.forward(input));
-                assert_eq!(output.boxes.dims(), [1, 84, 4]);
-                assert_eq!(output.scores.dims(), [1, 84, DEFAULT_NUM_CLASSES]);
-            })
-            .expect("shape-test worker should start");
-        worker.join().expect("shape-test worker should not panic");
-    }
 }

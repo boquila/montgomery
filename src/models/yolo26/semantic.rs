@@ -11,8 +11,8 @@
 //! which classifies the P3/8 feature map with a two-layer tower
 //! (`Conv(c3, c3, 3)` + biased `1x1` projection to `nc`). The auxiliary P4 head
 //! (`aux_head`, deep supervision) exists in the released checkpoints but is training-only and
-//! is therefore absent from the inference graph — its keys are ignored on import, exactly like
-//! the one-to-many branches of the detect family.
+//! is therefore absent from the inference graph — its keys are ignored on import, like the
+//! one-to-many branches of default (non-training) detect builds.
 //!
 //! Inference returns raw logits at stride 8 (`[batch, nc, H/8, W/8]`); the runtime upsamples
 //! them to the letterboxed canvas with `align_corners = false` bilinear interpolation, inverts
@@ -485,12 +485,15 @@ impl Yolo26SemanticBodyXConfig {
 mod tests {
     use super::*;
 
+    // Random-initialising N to X takes tens of seconds at opt-level 0, and
+    // tests/integration.rs already runs N. CI runs this with `-- --ignored every_scale`.
     #[test]
+    #[ignore = "slow: builds every semantic scale"]
     fn semantic_models_decode_stride_8_logits_for_every_scale() {
         let worker = std::thread::Builder::new()
             .stack_size(64 * 1024 * 1024)
             .spawn(|| {
-                let device = Default::default();
+                let device = Device::flex();
                 let input = Tensor::zeros([1, 3, 64, 64], &device);
                 // A 64 px input yields 8x8 logits with the 19 Cityscapes classes by default.
                 let output = Yolo26SemNConfig.init(&device).forward(input.clone());
@@ -503,6 +506,17 @@ mod tests {
                 assert_eq!(output.logits.dims(), [1, NUM_CLASSES, 8, 8]);
                 let output = Yolo26SemXConfig.init(&device).forward(input);
                 assert_eq!(output.logits.dims(), [1, NUM_CLASSES, 8, 8]);
+            })
+            .expect("shape-test worker should start");
+        worker.join().expect("shape-test worker should not panic");
+    }
+
+    #[test]
+    fn semantic_class_count_only_resizes_the_projection() {
+        let worker = std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let device = Device::flex();
                 // Custom class counts (e.g. ADE20K's 150) only resize the projection.
                 let output = Yolo26SemNConfig
                     .init_with_classes(150, &device)
@@ -613,7 +627,7 @@ mod parity_tests {
                 let worker = std::thread::Builder::new()
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
-                        let device = Default::default();
+                        let device = Device::flex();
                         let mut model = <$config>::default().init(&device);
                         model.load_pytorch_weights(checkpoint).unwrap();
                         let output = model.forward(Tensor::zeros([1, 3, 64, 64], &device));
@@ -649,7 +663,7 @@ mod parity_tests {
                 let worker = std::thread::Builder::new()
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
-                        let device = Default::default();
+                        let device = Device::flex();
                         let mut model = <$config>::default().init(&device);
                         model.load_burnpack_weights(checkpoint).unwrap();
                         let features = model.body.forward(load_reference_image($id, &device));
@@ -679,7 +693,8 @@ mod parity_tests {
         ($fn_name:ident, $config:ty, $id:literal) => {
             /// Measure single-image batch-1 inference latency with the packed native artifact on
             /// the Flex CPU backend. Run with
-            /// `cargo test --release <id> -- --ignored --nocapture` after the weight-prep loop.
+            /// `cargo test --release <id> -- --ignored --nocapture --test-threads 1` after the
+            /// weight-prep loop.
             #[test]
             #[ignore]
             fn $fn_name() {
@@ -695,7 +710,7 @@ mod parity_tests {
                 let worker = std::thread::Builder::new()
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
-                        let device = Default::default();
+                        let device = Device::flex();
                         let mut model = <$config>::default().init(&device);
                         model.load_burnpack_weights(checkpoint).unwrap();
                         let input = Tensor::<4>::zeros([1, 3, 640, 640], &device);

@@ -97,7 +97,7 @@ fn resize_fir(
     ImageBuffer::from_raw(width, height, destination.into_vec()).expect("fir destination buffer")
 }
 
-/// An image fitted into a square model input without changing its aspect ratio.
+/// An image fitted into the model input canvas without changing its aspect ratio.
 pub(crate) struct LetterboxedImage {
     image: DynamicImage,
     scale: f32,
@@ -186,7 +186,7 @@ impl LetterboxedImage {
         std::mem::replace(&mut self.image, DynamicImage::new_rgb8(0, 0))
     }
 
-    /// The letterbox scale (source pixels per model-input pixel) and centered padding.
+    /// The letterbox scale (model-input pixels per source pixel) and padding offsets.
     pub(crate) fn letterbox_geometry(&self) -> (f32, f32, f32) {
         (self.scale, self.pad_x as f32, self.pad_y as f32)
     }

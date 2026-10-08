@@ -87,7 +87,15 @@ pub fn apply_selective_weight_decay<M: Module>(model: M, learning_rate: f64, pen
     impl ModuleMapper for Decay {
         fn map_float<const D: usize>(&mut self, param: Param<Tensor<D>>) -> Param<Tensor<D>> {
             let (id, value, mapper) = param.consume();
-            let value = if D >= 2 { value * self.factor } else { value };
+            let value = if D >= 2 {
+                // Scaling a tracked leaf yields a graph node, which receives no parameter
+                // gradient on the next backward pass. Restart the lineage so the decayed weight
+                // stays a trainable leaf.
+                let tracked = value.is_require_grad();
+                (value * self.factor).detach().set_require_grad(tracked)
+            } else {
+                value
+            };
             Param::from_mapped_value(id, value, mapper)
         }
     }
@@ -204,7 +212,7 @@ mod tests {
 
     #[test]
     fn selective_decay_changes_weight_but_not_bias() {
-        let device = Default::default();
+        let device = burn::tensor::Device::flex();
         let model = LinearConfig::new(2, 2).with_bias(true).init(&device);
         let zeros = Tensor::<2>::zeros([1, 2], &device);
         let ones = Tensor::<2>::ones([1, 2], &device);
@@ -218,8 +226,60 @@ mod tests {
     }
 
     #[test]
+    fn sgd_with_external_decay_keeps_training_weights() {
+        use burn::{
+            nn::Linear,
+            optim::{GradientsParams, SgdConfig, momentum::MomentumConfig},
+        };
+
+        let device = Device::flex().autodiff();
+        let mut model = LinearConfig::new(2, 2).with_bias(true).init(&device);
+        let mut optimizer = SgdConfig::new()
+            .with_momentum(Some(
+                MomentumConfig::new()
+                    .with_momentum(0.9)
+                    .with_dampening(0.0)
+                    .with_nesterov(true),
+            ))
+            .init();
+        let input = Tensor::<2>::from_floats([[1.0, -2.0], [0.5, 3.0]], &device);
+        let (learning_rate, penalty) = (0.01, 0.5);
+        let factor = (1.0 - learning_rate * penalty) as f32;
+        let weight = |model: &Linear| {
+            model
+                .weight
+                .val()
+                .into_data()
+                .try_into_vec::<f32>()
+                .unwrap()
+        };
+        for step in 0..4 {
+            let before = weight(&model);
+            let loss = model.forward(input.clone()).powi_scalar(2).sum();
+            let gradients = GradientsParams::from_grads(loss.backward(), &model);
+            model = optimizer.step(learning_rate, model, gradients);
+            model = apply_selective_weight_decay(model, learning_rate, penalty);
+            assert!(
+                model.weight.val().is_require_grad(),
+                "step {step}: decayed weight is no longer a gradient leaf"
+            );
+            // Decay alone rescales the weight, so only a departure from `before * factor` shows
+            // that the optimizer still received a weight gradient.
+            let update = before
+                .iter()
+                .zip(weight(&model))
+                .map(|(before, after)| (after - before * factor).abs())
+                .fold(0.0, f32::max);
+            assert!(
+                update > 1e-5,
+                "step {step}: weight decayed without an update"
+            );
+        }
+    }
+
+    #[test]
     fn selective_adamw_decays_matrices_but_not_vectors() {
-        let device = Default::default();
+        let device = burn::tensor::Device::flex();
         let optimizer = SelectiveAdamW {
             weight_decay: 0.5,
             beta_1: 0.9,

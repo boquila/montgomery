@@ -1,5 +1,5 @@
 use burn::{
-    module::{AutodiffModule, Module},
+    module::Module,
     nn::{
         BatchNorm, BatchNormConfig,
         conv::{Conv2d, Conv2dConfig},
@@ -31,7 +31,7 @@ impl Spike {
 }
 
 /// Hardware-gated phase-0 smoke test. It compiles on every training build and can be run on the
-/// selected adapter with `cargo test wgpu_autodiff_capability -- --ignored`.
+/// selected adapter with `cargo test --features training wgpu_autodiff_capability -- --ignored`.
 #[test]
 #[ignore = "requires a local WGPU adapter"]
 fn wgpu_autodiff_capability() {
@@ -44,9 +44,11 @@ fn wgpu_autodiff_capability() {
     let mut optimizer = SgdConfig::new().init();
     let model = optimizer.step(1e-3, model, grads);
 
-    // `valid` converts to the inner WGPU graph, so this forward cannot mutate BN running state.
+    // `valid` disables BatchNorm's training flag and gives the copy its own running state, so this
+    // forward cannot mutate the trained model's BN statistics.
     let valid = model.valid();
-    let input = Tensor::zeros([1, 3, 16, 16], &device);
+    assert!(!valid.bn.training.is_enabled());
+    let input = Tensor::zeros([1, 3, 16, 16], &device.inner());
     let output = valid.forward(input).into_data();
     assert!(output.as_slice::<f32>().unwrap()[0].is_finite());
     assert!(!optimizer.to_record().is_empty());
@@ -54,7 +56,7 @@ fn wgpu_autodiff_capability() {
 
 #[test]
 fn validation_backend_does_not_mutate_batch_norm_state() {
-    let device = Device::default().autodiff();
+    let device = Device::flex().autodiff();
     let model = Spike::init(&device);
     let input = Tensor::random([2, 3, 16, 16], Distribution::Default, &device);
     let _ = model.forward(input).into_data();

@@ -183,7 +183,7 @@ mod tests {
         let worker = std::thread::Builder::new()
             .stack_size(64 * 1024 * 1024)
             .spawn(move || {
-                let device = Default::default();
+                let device = Device::flex();
                 let mut model = Yolov3TinyConfig.init(&device);
                 model.load_pytorch_weights(checkpoint).unwrap();
                 let output = model.forward(Tensor::zeros([1, 3, 64, 64], &device));
@@ -209,7 +209,7 @@ mod tests {
         let worker = std::thread::Builder::new()
             .stack_size(64 * 1024 * 1024)
             .spawn(move || {
-                let device = Default::default();
+                let device = Device::flex();
                 let mut model = Yolov3TinyConfig.init(&device);
                 model.load_burnpack_weights(checkpoint).unwrap();
                 let image = image::open("target/yolov3-tinyu-preprocessed-reference.png")

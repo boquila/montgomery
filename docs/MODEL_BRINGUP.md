@@ -74,8 +74,9 @@ existing templates. Hard rules:
 
 - **Field names are the checkpoint keys.** After remapping, `model.22.m.0.1.attn.qkv.conv.weight`
   must land on `body.model_22.m.0.1.attn.qkv.conv.weight`. Burn serializes tuple fields as `0`/`1`
-  and `Vec<(A, B)>` as `m.<i>.<j>` — use that; do **not** use enums (they prepend variant names and
-  break key matching). Duplicate a small struct rather than inventing a clever generic.
+  and `Vec<(A, B)>` as `m.<i>.<j>` — use that; do **not** use enums (they insert variant names into
+  Burn paths, which match only through stores that skip enum variants). Duplicate a small struct
+  rather than inventing a clever generic.
 - `Conv` = conv(bias=False) + BN(eps 1e-3, momentum 0.03) + SiLU unless the source says otherwise
   (YOLO26's SPPF `cv1` has no activation). Head output convs keep bias.
 - Body fields are `model_<index>` for graph layers, `forward` returns P3/P4/P5 (or the model's
@@ -85,13 +86,14 @@ existing templates. Hard rules:
   softmax/DFL projection when `reg_max > 1` (v10), direct left-top/right-bottom distances when
   `reg_max == 1` (v26); end-to-end heads decode XYXY.
 - `model.rs` gates weight loading behind `#[cfg(feature = "pretrained")]`: `load_pytorch_weights`
-  with regex remaps (body layers in one rule, head towers one rule per path segment pattern; only
-  the inference branch of the head is mapped — the one2many branch is intentionally dropped),
+  with regex remaps (body layers in one rule, head towers one rule per path segment pattern; default
+  builds map only the inference branch of the head — `--features training` also maps one2many into
+  `o2m_*` fields),
   `load_burnpack_weights`/`save_burnpack_weights` with the `HalfPrecisionAdapter` and
   `montgomery.*` metadata, plus the ignored checkpoint-import and golden-tensor tests (2e-4
   tolerance, fixture JSON per step 5).
 - `weights.rs`: `artifact_format(<id>)` returning `<id>-v1` and artifact filename helpers returning
-  `<id>.bpk`; keep dataset, upstream version, format version, hashes, and licensing in metadata.
+  `<id>.bpk`; keep dataset, upstream version, format version, precision, and licensing in metadata.
 - Keep the graph independent of CLI, filesystem, rendering, and image decoding.
 
 ## 4. Wire into the crate
@@ -102,8 +104,9 @@ existing templates. Hard rules:
   - `RuntimeModel` variant;
   - `.bpk`-only `from_checkpoint` arm inside a 64 MB-stack worker thread;
   - the model preprocessing profile and appropriate shared runtime dispatch trait;
-  - `pack_weights` arm;
-  - the model-name, input-size, and packer-extension tests.
+  - `pack_weights` arm.
+- `tests/integration.rs`: the `ModelId::ALL` count and the model-name, input-size, and
+  packer-extension checks that run over it.
 - `src/main.rs`: keep `--architecture` for catalog identifiers and `--model` for `.bpk` paths.
 
 ## 5. Conversion tooling
@@ -118,34 +121,42 @@ existing templates. Hard rules:
 
 ```console
 cargo fmt --check
-cargo test
 cargo clippy --all-targets -- -D warnings
-cargo check --no-default-features --lib
+cargo test
 ```
+
+If the family has training support, also run:
+
+```console
+cargo clippy --features training --all-targets -- -D warnings
+cargo test --features training --lib
+```
+
+New shape tests use `Device::flex()` and N-scale inputs. CI runs the full matrix.
 
 Then the parity loop (checkpoint and fixtures live under `target/`):
 
 ```console
-uv run --project tools tools\export_checkpoint_state.py target/<id>.pt target/<id>-state.pt
-montgomery pack-weights --architecture <id> --state target/<id>-state.pt
-uv run --project tools tools\export_<id>_fixtures.py target/<id>.pt docs/dog_bike_man.jpg target
-cargo test <id> -- --ignored
+uv run --project tools tools/export_checkpoint_state.py target/<id>.pt target/<id>-state.pt
+montgomery pack-weights --architecture <id> --state target/<id>-state.pt --output target/<id>.bpk
+uv run --project tools tools/export_<id>_fixtures.py target/<id>.pt docs/dog_bike_man.jpg target
+cargo test <id> -- --ignored --skip latency
 ```
 
 Both ignored tests must pass: `imports_official_checkpoint_and_runs_forward` (keys + remaps
-correct) and `matches_ultralytics_golden_tensors` (graph numerics correct at 2e-4). If keys mismatch
-the remapper silently skips them and the model runs with default weights — the golden test is what
+correct) and `matches_ultralytics_golden_tensors` (graph numerics correct at 2e-4). A module field
+with no matching key fails the import, but unmatched checkpoint keys are ignored and a remap that
+lands a tensor on the wrong field of the same shape loads silently — the golden test is what
 catches this, so never skip it.
 
 Finally compare end-to-end against Ultralytics on `docs/dog_bike_man.jpg` (`conf=0.25`, same
 image, CPU): expect the same detections with confidences within ~0.1% and boxes within ~1 source
-pixel (f16 artifact rounding accounts for the residual). Record the artifact bytes/SHA-256 in
-`weights.rs`.
+pixel (f16 artifact rounding accounts for the residual).
 
 ## 7. Document
 
-- `README.md`: row in the Models table (family name in the Model column, variant in the Variants
-  column), row in the artifacts table, adjust the weight-prep snippet if a new bridge step exists.
+- `README.md`: row in the Supported models table (family name in the Model column, variants in the
+  Variants column, tasks in the Tasks column).
 - Repository `AGENTS.md`: update the compact repository map or invariants only when the new model
   changes them.
 - `README.md`: provenance and licensing for redistributed checkpoints and derived artifacts.
@@ -182,12 +193,12 @@ YOLO26-cls bring-up (n/s/m/l/x) is the classification template.
    NMS, and mask assembly stay in the runtime.
 5. **Weights path** is unchanged: `tools/export_checkpoint_state.py` is model-agnostic (it dumps
    whatever `state_dict()` holds), so only the Rust key remaps need the new head rules (one per
-   path-segment pattern), plus `ModelId` arms, packer arms, and verified artifact bytes/SHA-256.
+   path-segment pattern), plus `ModelId` arms and packer arms.
 6. **Fixtures and parity**: extend the family's fixture exporter for the task (the seg fixture adds
    `protos` and `mask_coeffs` tensors at the same 2e-4 tolerance), and add an end-to-end fixture
    tool (`tools/export_yolo11_seg_e2e.py`) that records the official prediction — boxes plus masks
    resampled onto the source-image grid with the same letterbox mapping the runtime uses — so the
-   ignored Rust test can compare per-detection mask IoU (target >= 0.95).
+   ignored Rust test can compare per-detection mask IoU (>= 0.95; masks under 2000 px use 0.85).
 7. **Public API**: a new result type (`SegmentationDetection` with `InstanceMask`), a new predictor
    method that does not disturb `predict()`, letterbox geometry shared with the boxes, and CLI
    wiring (`--model <id>-seg.bpk`, `--masks`) that leaves detect-model behavior untouched.
@@ -198,7 +209,7 @@ table is ImageNet-1k (`src/data/imagenet.rs`), the dispatch trait is `EndToEndCl
 predictor method is `predict_classification` (top-5 `Classification` values), and the checkpoint
 batch norms use plain PyTorch defaults (`BnFlavor::Pytorch`) — see the repository `AGENTS.md`
 invariants. The end-to-end classification comparison compares the top-5 class set plus per-class
-probabilities (3e-2), not rank order: flat softmax distributions swap adjacent ranks under the +-1 rounding
+probabilities (4.5e-2), not rank order: flat softmax distributions swap adjacent ranks under the +-1 rounding
 difference between PIL and the Rust resize.
 
 ## Pitfall checklist
@@ -209,12 +220,14 @@ difference between PIL and the Rust resize.
 - Checkpoint key drift between the training-time release and current source (C2PSA `m.0`), and
   attribute drift the same way: a pickled `Conv.act` may still be SiLU where the current source
   passes `act=False` (YOLO11's SPPF `cv1`).
-- Enum modules break key matching; tuples/Vecs serialize as `0/1`/index segments.
-- One2many head keys are silently dropped — that is desired; missing one2one keys are not.
-- BN epsilon is 1e-3 (Ultralytics initialization), not PyTorch's 1e-5 — **except for YOLOX**, which
-  uses plain `nn.BatchNorm2d` defaults (eps 1e-5, momentum 0.1). Using the Ultralytics values there
-  passed every existing test yet silently degraded detections for months; only the golden tensor
-  comparison against the official sources exposed it.
+- Enum modules insert variant names into Burn paths (matched only by stores that skip enum
+  variants); tuples/Vecs serialize as `0/1`/index segments.
+- One2many head keys are silently dropped in inference builds (training builds map them into
+  `o2m_*`) — that is desired; missing one2one keys are not.
+- BN epsilon is 1e-3 (Ultralytics initialization; the official YOLOX constructor sets the same), not
+  PyTorch's 1e-5 — **except for classification checkpoints**, which carry plain `nn.BatchNorm2d`
+  defaults (eps 1e-5, momentum 0.1) through `BnFlavor::Pytorch`. A wrong epsilon passes every shape
+  and import test; only the golden tensor comparison against the official sources exposes it.
 - End-to-end heads: no NMS anywhere; top-k + confidence filter only.
 - Golden statistics (mean/rms/min/max + 128 evenly spaced samples) cannot see a single-anchor
   deviation: one f16-flipped DFL distribution shifts one box edge by a couple of pixels while every

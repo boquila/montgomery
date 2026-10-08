@@ -234,7 +234,7 @@ mod tests {
         let worker = std::thread::Builder::new()
             .stack_size(64 * 1024 * 1024)
             .spawn(|| {
-                let device = Default::default();
+                let device = Device::flex();
                 let head = Yolov8SegHeadConfig::new(64, 128, 256, 64).init(&device);
                 let body_features = Yolov8Features {
                     p3: Tensor::zeros([1, 64, 8, 8], &device),

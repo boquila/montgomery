@@ -18,7 +18,8 @@ For a new family, scale, or task, follow [docs/MODEL_BRINGUP.md](docs/MODEL_BRIN
   monocular depth-estimation variants (dense meters, no boxes; see `src/models/yolo26/depth.rs`).
 - `src/data/letterbox.rs`: inference preprocessing and reversible source-image geometry.
 - `src/data/augmentation/`: feature-gated, traceable detect/segment/classify augmentation pinned
-  to Ultralytics `v8.4.117-2-g461196cf0`. Parity lives in `tests/augmentation_parity.rs`.
+  to Ultralytics `v8.4.117-2-g461196cf0`. Parity lives in the `augmentation` module of
+  `tests/integration.rs`.
 - `src/training/`: WGPU-only native training, validation, checkpointing, and reporting.
 - `src/lib.rs`: `ModelId`, `Predictor`, result types, postprocessing, masks, and weight packing.
 - `src/main.rs`: CLI dispatch.
@@ -34,7 +35,7 @@ user-facing text.
 Run Python tools from the repository root with the tools project selected:
 
 ```console
-uv run --project tools tools/export_checkpoint_state.py yolo26n.pt target/yolo26n-state.pt
+uv run --project tools tools/export_checkpoint_state.py target/yolo26n.pt target/yolo26n-state.pt
 ```
 
 Stable YOLOX and Ultralytics-family models both run from native Burnpacks:
@@ -52,28 +53,43 @@ Python/PyTorch is conversion- and development-time only; normal inference is Rus
 
 ## Verification
 
-CI installs the current stable Rust toolchain on every run. Before handing off changes, run the
-exact CI sequence below. Do not substitute `cargo check` for Clippy, filter the training tests, or
-omit `cargo build`:
+Keep local checks light; CI runs the full set on every pull request. Don't run the whole CI matrix
+locally unless the user asks. Before handing off a change, run:
 
 ```console
 cargo fmt --check
-cargo build
-cargo test
 cargo clippy --all-targets -- -D warnings
-cargo test --features training
-cargo clippy --features training --all-targets -- -D warnings
-cargo clippy --no-default-features --lib -- -D warnings
+cargo test
 ```
 
-When external checkpoints and fixtures are available:
+Add the training checks only when the change touches `src/training/`, `src/data/augmentation/`, or
+code under `cfg(feature = "training")`. Drop `--lib` when it touches the training CLI:
 
 ```console
-cargo test -- --ignored
+cargo clippy --features training --all-targets -- -D warnings
+cargo test --features training --lib
 ```
 
-Training is opt-in at runtime, but its full test and Clippy commands above are mandatory before
-handing off any change because Linux CI always runs them.
+Run `cargo clippy --no-default-features --lib -- -D warnings` only when the change touches feature
+gates, optional dependencies, or `src/lib.rs` re-exports.
+
+CI installs the current stable Rust toolchain on every run. A Linux lint job runs formatting, all
+three Clippy passes, and `cargo doc` with warnings as errors. `cargo test` runs on Linux, Windows,
+and macOS; Windows and macOS also run `cargo clippy --all-features`, which matches the release
+build. Linux runs the ignored `every_scale` tests, `cargo test --features training`, and the WGPU
+training smoke test on a software Vulkan driver.
+
+Tests pin their device with `Device::flex()`. Don't use `Default::default()` or
+`Device::default()` for a test device: with the `gpu` or `training` feature it resolves to WGPU,
+which compiles and autotunes kernels in every test process. Keep default tests at N scale with
+small inputs. Mark tests that build several large graphs `#[ignore]` and give them a CI step.
+
+Checkpoint-backed parity tests are ignored too. When external checkpoints and fixtures are
+available:
+
+```console
+cargo test -- --ignored --skip latency
+```
 
 Real training, hardware smoke tests, and latency measurements must use `--release`. Single-image
 latency tests must use `--test-threads 1` to avoid CPU contention. When touching a runtime/backend

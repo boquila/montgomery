@@ -21,19 +21,10 @@ pub struct Conv {
     conv: Conv2d,
     bn: BatchNorm,
     act: bool,
-    #[cfg(feature = "training")]
-    depthwise_training_stencil: bool,
 }
 
 impl Conv {
     pub fn forward(&self, input: Tensor<4>) -> Tensor<4> {
-        #[cfg(feature = "training")]
-        let x = if self.depthwise_training_stencil && input.is_require_grad() {
-            crate::models::training_ops::depthwise_3x3_stride_1(input, self.conv.weight.val())
-        } else {
-            self.conv.forward(input)
-        };
-        #[cfg(not(feature = "training"))]
         let x = self.conv.forward(input);
         let x = self.bn.forward(x);
         if self.act { silu(x) } else { x }
@@ -105,11 +96,6 @@ impl ConvConfig {
             conv,
             bn,
             act: self.act,
-            #[cfg(feature = "training")]
-            depthwise_training_stencil: self.groups == self.in_channels
-                && self.groups == self.out_channels
-                && self.kernel_size == 3
-                && self.stride == 1,
         }
     }
 }
@@ -352,7 +338,7 @@ impl C3k2C3kConfig {
 /// The feature map is split into `area` horizontal strips; attention runs inside each strip and
 /// the outputs are stitched back together. The official YOLOv8-era checkpoints keep a conv bias
 /// on the 7x7 positional-encoding convolution even though the current source constructs it
-/// bias-free â€” the checkpoint's inference graph wins.
+/// bias-free — the checkpoint's inference graph wins.
 #[derive(Module, Debug)]
 pub struct AAttn {
     qkv: Conv,
@@ -637,8 +623,7 @@ pub fn upsample_nearest_2x(input: Tensor<4>) -> Tensor<4> {
     let [_, _, height, width] = input.dims();
     interpolate(
         input,
-        [height * 2, width * 2],
-        InterpolateOptions::new(InterpolateMode::Nearest),
+        InterpolateOptions::new(InterpolateMode::Nearest).with_output_size([height * 2, width * 2]),
     )
 }
 
@@ -651,7 +636,7 @@ mod tests {
         let worker = std::thread::Builder::new()
             .stack_size(32 * 1024 * 1024)
             .spawn(|| {
-                let device = Default::default();
+                let device = Device::flex();
                 let c3k2: C3k2 = C3k2Config::new(32, 64, 1, 0.25, true).init(&device);
                 let out = c3k2.forward(Tensor::zeros([1, 32, 40, 40], &device));
                 assert_eq!(out.dims(), [1, 64, 40, 40]);

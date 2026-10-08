@@ -102,7 +102,7 @@ pub fn bilinear_upsample_2x(input: Tensor<4>) -> Tensor<4> {
     ])
 }
 
-/// Cropped prototype-mask BCE used by YOLO11/YOLO26 segmentation.
+/// Cropped prototype-mask BCE used by YOLOv8/YOLO11/YOLO26 segmentation.
 pub fn instance_mask_loss(
     coefficients: Tensor<3>,
     prototypes: Tensor<4>,
@@ -276,19 +276,19 @@ mod tests {
 
     #[test]
     fn manual_bilinear_upsample_matches_half_pixel_geometry() {
-        let device = Default::default();
+        let device = burn::tensor::Device::flex();
         let input = Tensor::<4>::from_floats([[[[1.0, 2.0], [3.0, 4.0]]]], &device);
         let actual = bilinear_upsample_2x(input).into_data();
         let expected = [
             1.0, 1.25, 1.75, 2.0, 1.5, 1.75, 2.25, 2.5, 2.5, 2.75, 3.25, 3.5, 3.0, 3.25, 3.75, 4.0,
         ];
-        assert_eq!(actual.shape.dims::<4>(), [1, 1, 4, 4]);
+        assert_eq!(actual.shape().dims::<4>(), [1, 1, 4, 4]);
         assert_eq!(actual.as_slice::<f32>().unwrap(), expected);
     }
 
     #[test]
     fn single_class_semantic_target_uses_coverage_without_one_hot() {
-        let device = Default::default();
+        let device = burn::tensor::Device::flex();
         let logits = Tensor::<4>::zeros([1, 1, 2, 2], &device);
         let class_map = Tensor::<3, Int>::from_ints([[[0, 0], [0, 0]]], &device);
         let coverage = Tensor::<3, Bool>::from_bool([[[true, false], [false, true]]], &device);
@@ -303,7 +303,7 @@ mod tests {
 
     #[test]
     fn dual_semantic_loss_reuses_value_but_detaches_one_to_one() {
-        let device = burn::tensor::Device::default().autodiff();
+        let device = burn::tensor::Device::flex().autodiff();
         let logits =
             Tensor::<4>::from_floats([[[[0.5, -0.25], [1.0, -2.0]]]], &device).require_grad();
         let class_map = Tensor::<3, Int>::from_ints([[[0, 0], [0, 0]]], &device);
@@ -342,7 +342,7 @@ mod tests {
 
     #[test]
     fn batched_instance_masks_match_scalar_reference_and_backpropagate() {
-        let device = burn::tensor::Device::default().autodiff();
+        let device = burn::tensor::Device::flex().autodiff();
         let coefficients_data = vec![
             0.1, 0.2, 0.3, // batch 0, prototype channel 0
             0.4, 0.5, 0.6, // batch 0, prototype channel 1

@@ -44,9 +44,9 @@ def _construct(manifest: dict, root: Path) -> torch.nn.Module:
         model = DepthModel(cfg=cfg, ch=3, nc=classes, verbose=False)
     else:
         model = DetectionModel(cfg=cfg, ch=3, nc=classes, verbose=False)
-    # Released v8/v11 checkpoints predate the source refactor that changed SPPF.cv1 to act=False.
-    # The native Burn graph intentionally follows the pickled checkpoint module, so the adapter
-    # must restore that parameter-free SiLU before parity/export.
+    # Released v8/v10/v11 checkpoints predate the source refactor that changed SPPF.cv1 to
+    # act=False. The native Burn graph intentionally follows the pickled checkpoint module, so
+    # the adapter must restore that parameter-free SiLU before parity/export.
     if manifest["family"] in {"yolov8", "yolov10", "yolo11"} and task != "classify":
         model.model[9].cv1.act = torch.nn.SiLU(inplace=True)
     return model

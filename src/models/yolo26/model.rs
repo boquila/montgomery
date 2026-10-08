@@ -159,8 +159,8 @@ fn pytorch_store(path: impl Into<PathBuf>) -> PytorchStore {
 
 /// Native Burn YOLO26n model.
 ///
-/// The inference path decodes the end-to-end one-to-one head to source-space candidates. Training
-/// builds expose both official raw branches with detached body inputs for one-to-one.
+/// The inference path decodes the end-to-end one-to-one head to model-input-space candidates.
+/// Training builds expose both official raw branches with detached body inputs for one-to-one.
 #[derive(Module, Debug)]
 pub struct Yolo26N {
     body: Yolo26BodySmall,
@@ -672,7 +672,7 @@ mod tests {
                 let worker = std::thread::Builder::new()
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
-                        let device = Default::default();
+                        let device = Device::flex();
                         let mut model = <$config>::default().init(&device);
                         model.load_pytorch_weights(checkpoint).unwrap();
                         let output = model.forward(Tensor::zeros([1, 3, 64, 64], &device));
@@ -706,7 +706,7 @@ mod tests {
                 let worker = std::thread::Builder::new()
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
-                        let device = Default::default();
+                        let device = Device::flex();
                         let mut model = <$config>::default().init(&device);
                         model.load_burnpack_weights(checkpoint).unwrap();
                         let input = load_reference_image($id, &device);
@@ -723,7 +723,8 @@ mod tests {
         ($fn_name:ident, $config:ty, $id:literal) => {
             /// Measure single-image batch-1 inference latency (forward, decode, and result sync)
             /// with the packed native artifact on the Flex CPU backend. Run with
-            /// `cargo test --release <id> -- --ignored --nocapture` after the weight-prep loop.
+            /// `cargo test --release <id> -- --ignored --nocapture --test-threads 1` after the
+            /// weight-prep loop.
             #[test]
             #[ignore]
             fn $fn_name() {
@@ -739,7 +740,7 @@ mod tests {
                 let worker = std::thread::Builder::new()
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
-                        let device = Default::default();
+                        let device = Device::flex();
                         let mut model = <$config>::default().init(&device);
                         model.load_burnpack_weights(checkpoint).unwrap();
                         let input = Tensor::<4>::zeros([1, 3, 640, 640], &device);

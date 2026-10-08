@@ -414,7 +414,7 @@ fn validate_options(
         return Err("argument validation: fp16 publication is disabled until its GPU parity gate is implemented; export fp32".into());
     }
     if options.checkpoint_state != CheckpointState::Ema {
-        return Err("argument validation: raw-model selection is disabled until native multi-state training checkpoints are supported; current inputs are already resolved inference states".into());
+        return Err("argument validation: raw-model selection is disabled until export accepts native multi-state training checkpoints; current .bpk inputs are already resolved inference states".into());
     }
     if options.dynamic_batch || options.dynamic_spatial {
         return Err("argument validation: dynamic axes are disabled until their multi-shape parity gates are implemented".into());

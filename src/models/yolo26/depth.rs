@@ -15,9 +15,9 @@
 //! Two checkpoint quirks are load-bearing. First, the released checkpoints carry a third
 //! refinement block (`model.23.refine.2`) that the official forward never executes (only the
 //! P4- and P3-level refinements run); it is dead weight and therefore absent from the
-//! inference graph, exactly like the one-to-many branches of the detect family. Second, the
-//! calibration buffers are non-identity in the released checkpoints (e.g. `cal_b = -0.1938`
-//! for n) and must be imported, not assumed.
+//! inference graph, like the one-to-many branches of default (non-training) detect builds.
+//! Second, the calibration buffers are non-identity in the released checkpoints (e.g.
+//! `cal_b = -0.1938` for n) and must be imported, not assumed.
 //!
 //! Inference returns calibrated positive depth at stride 4 (`[batch, 1, H/4, W/4]`); the
 //! runtime upsamples it to the letterboxed canvas, inverts the letterbox geometry, and keeps
@@ -56,8 +56,9 @@ fn bilinear_upsample_align_corners_2x(input: Tensor<4>) -> Tensor<4> {
     let [_, _, height, width] = input.dims();
     interpolate(
         input,
-        [height * 2, width * 2],
-        InterpolateOptions::new(InterpolateMode::Bilinear).with_align_corners(true),
+        InterpolateOptions::new(InterpolateMode::Bilinear)
+            .with_align_corners(true)
+            .with_output_size([height * 2, width * 2]),
     )
 }
 
@@ -366,12 +367,15 @@ depth_model!(
 mod tests {
     use super::*;
 
+    // Random-initialising N to X takes tens of seconds at opt-level 0, and
+    // tests/integration.rs already runs N. CI runs this with `-- --ignored every_scale`.
     #[test]
+    #[ignore = "slow: builds every depth scale"]
     fn depth_models_decode_stride_4_depth_for_every_scale() {
         let worker = std::thread::Builder::new()
             .stack_size(64 * 1024 * 1024)
             .spawn(|| {
-                let device = Default::default();
+                let device = Device::flex();
                 let input = Tensor::zeros([1, 3, 64, 64], &device);
                 // A 64 px input yields a single-channel 16x16 map; depth is positive by
                 // construction (exp of the clamped tower output, scaled by calibration).
@@ -489,7 +493,7 @@ mod parity_tests {
                 let worker = std::thread::Builder::new()
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
-                        let device = Default::default();
+                        let device = Device::flex();
                         let mut model = <$config>::default().init(&device);
                         model.load_pytorch_weights(checkpoint).unwrap();
                         let output = model.forward(Tensor::zeros([1, 3, 64, 64], &device));
@@ -525,7 +529,7 @@ mod parity_tests {
                 let worker = std::thread::Builder::new()
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
-                        let device = Default::default();
+                        let device = Device::flex();
                         let mut model = <$config>::default().init(&device);
                         model.load_burnpack_weights(checkpoint).unwrap();
                         let features = model.body.forward(load_reference_image($id, &device));
@@ -553,7 +557,8 @@ mod parity_tests {
         ($fn_name:ident, $config:ty, $id:literal) => {
             /// Measure single-image batch-1 inference latency with the packed native artifact on
             /// the Flex CPU backend. Run with
-            /// `cargo test --release <id> -- --ignored --nocapture` after the weight-prep loop.
+            /// `cargo test --release <id> -- --ignored --nocapture --test-threads 1` after the
+            /// weight-prep loop.
             #[test]
             #[ignore]
             fn $fn_name() {
@@ -569,7 +574,7 @@ mod parity_tests {
                 let worker = std::thread::Builder::new()
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
-                        let device = Default::default();
+                        let device = Device::flex();
                         let mut model = <$config>::default().init(&device);
                         model.load_burnpack_weights(checkpoint).unwrap();
                         let input = Tensor::<4>::zeros([1, 3, 768, 768], &device);

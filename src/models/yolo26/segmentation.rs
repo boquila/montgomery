@@ -9,7 +9,7 @@
 //! conv/upsample/conv/proto projection at stride 4.
 //!
 //! Because YOLO26 is end-to-end (`end2end = True`), the head output rows are already top-300
-//! selected with the raw mask coefficients gathered along â€” the runtime applies the same
+//! selected with the raw mask coefficients gathered along — the runtime applies the same
 //! score filter and no NMS, then assembles masks exactly like `ops.process_mask(upsample=True)`.
 
 use burn::{
@@ -359,7 +359,7 @@ impl Yolo26SegHeadConfig {
 
 /// Build the PyTorch-state store shared by every YOLO26-seg scale variant.
 ///
-/// The body is layers 0-22 (identical to the detect checkpoint), the head is model.23, and the
+/// The body is layers 0-22 (identical to the detect checkpoint) and the head is model.23.
 /// Training builds additionally remap the one-to-many detection/mask towers and `proto.semseg`.
 #[cfg(feature = "pretrained")]
 fn pytorch_store(path: impl Into<std::path::PathBuf>) -> PytorchStore {
@@ -832,7 +832,7 @@ mod parity_tests {
                 let worker = std::thread::Builder::new()
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
-                        let device = Default::default();
+                        let device = Device::flex();
                         let mut model = <$config>::default().init(&device);
                         model.load_pytorch_weights(checkpoint).unwrap();
                         let output = model.forward(Tensor::zeros([1, 3, 64, 64], &device));
@@ -871,7 +871,7 @@ mod parity_tests {
                 let worker = std::thread::Builder::new()
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
-                        let device = Default::default();
+                        let device = Device::flex();
                         let mut model = <$config>::default().init(&device);
                         model.load_burnpack_weights(checkpoint).unwrap();
                         let features = model.body.forward(load_reference_image($id, &device));
@@ -923,7 +923,8 @@ mod parity_tests {
         ($fn_name:ident, $config:ty, $id:literal) => {
             /// Measure single-image batch-1 inference latency with the packed native artifact on
             /// the Flex CPU backend. Run with
-            /// `cargo test --release <id> -- --ignored --nocapture` after the weight-prep loop.
+            /// `cargo test --release <id> -- --ignored --nocapture --test-threads 1` after the
+            /// weight-prep loop.
             #[test]
             #[ignore]
             fn $fn_name() {
@@ -939,7 +940,7 @@ mod parity_tests {
                 let worker = std::thread::Builder::new()
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
-                        let device = Default::default();
+                        let device = Device::flex();
                         let mut model = <$config>::default().init(&device);
                         model.load_burnpack_weights(checkpoint).unwrap();
                         let input = Tensor::<4>::zeros([1, 3, 640, 640], &device);

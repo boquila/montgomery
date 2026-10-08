@@ -2,6 +2,9 @@ name: CI
 
 on:
   pull_request:
+  # Runs on main keep a warm Cargo cache that new pull requests start from.
+  push:
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -15,20 +18,10 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  rust:
-    name: Rust (${{ matrix.name }})
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: Linux
-            os: ubuntu-latest
-          - name: Windows
-            os: windows-latest
-          - name: macOS
-            os: macos-latest
-    runs-on: ${{ matrix.os }}
-
+  # Formatting and lints don't depend on the OS, so they run once on Linux.
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -44,26 +37,78 @@ jobs:
       - name: Check formatting
         run: cargo fmt --check
 
-      - name: Build
-        run: cargo build
-
-      - name: Test
-        run: cargo test
-
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
 
-      - name: Install software Vulkan driver
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers
-
-      - name: Test training feature
-        if: runner.os == 'Linux'
-        run: cargo test --features training
-
       - name: Clippy training feature
-        if: runner.os == 'Linux'
         run: cargo clippy --features training --all-targets -- -D warnings
 
       - name: Check minimal library
         run: cargo clippy --no-default-features --lib -- -D warnings
+
+      - name: Check docs
+        run: cargo doc --no-deps --features training
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  test:
+    name: Test (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-latest
+          - name: Windows
+            os: windows-latest
+          - name: macOS
+            os: macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Test
+        run: cargo test
+
+      # The release workflow builds every feature on every OS, so catch Windows and macOS GPU and
+      # training breakage here instead of at release time.
+      - name: Clippy all features
+        if: runner.os != 'Linux'
+        run: cargo clippy --all-features --all-targets -- -D warnings
+
+      - name: Test every model scale
+        if: runner.os == 'Linux'
+        run: cargo test --lib every_scale -- --ignored
+
+  # Tests pin their device to the Flex CPU backend. Only the WGPU smoke test needs the Vulkan driver.
+  training:
+    name: Test training feature
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Test training feature
+        run: cargo test --features training
+
+      - name: Install software Vulkan driver
+        run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers
+
+      # One small forward, backward, and optimizer step on a real WGPU adapter.
+      - name: WGPU training smoke test
+        run: cargo test --features training --lib wgpu_autodiff_capability -- --ignored

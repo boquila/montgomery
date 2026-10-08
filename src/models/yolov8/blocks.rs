@@ -323,8 +323,7 @@ pub fn upsample_nearest_2x(input: Tensor<4>) -> Tensor<4> {
     let [_, _, height, width] = input.dims();
     interpolate(
         input,
-        [height * 2, width * 2],
-        InterpolateOptions::new(InterpolateMode::Nearest),
+        InterpolateOptions::new(InterpolateMode::Nearest).with_output_size([height * 2, width * 2]),
     )
 }
 
@@ -337,7 +336,7 @@ mod tests {
         let worker = std::thread::Builder::new()
             .stack_size(32 * 1024 * 1024)
             .spawn(|| {
-                let device = Default::default();
+                let device = Device::flex();
                 let c2f: C2f = C2fConfig::new(32, 64, 1, true).init(&device);
                 let out = c2f.forward(Tensor::zeros([1, 32, 40, 40], &device));
                 assert_eq!(out.dims(), [1, 64, 40, 40]);

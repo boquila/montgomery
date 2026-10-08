@@ -264,8 +264,9 @@ fn classifies_a_hot_dog() {
         "hot_dog"
     );
 
-    // Task entry points reject foreign architectures with a task-specific error.
-    let image = image::open("tests/assets/hot-dog.jpg").unwrap();
+    // Task entry points reject foreign architectures with a task-specific error before any
+    // preprocessing, so a tiny blank image avoids decoding the 12 MP JPEG twice.
+    let image = image::DynamicImage::new_rgb8(32, 32);
     let error = model
         .predict_semantic(&image)
         .expect_err("classification model must reject semantic prediction")

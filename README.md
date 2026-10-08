@@ -83,7 +83,7 @@ montgomery train --model yolo26n.bpk --data dataset.yaml --epochs 100
 montgomery train --model yolo26n.bpk --data dataset.yaml --batch -1 --epochs 100
 
 # Exact continuation (model and dataset come from the training checkpoint)
-montgomery train --resume runs/train/checkpoints/last
+montgomery train --resume runs/detect/train-<timestamp>-<pid>/checkpoints/last
 ```
 
 Exactly one initialization mode is required: `--architecture` means scratch, `--model` requires a
@@ -131,14 +131,23 @@ git clone https://github.com/boquila/montgomery.git && cd montgomery
 cargo test
 ```
 
-The same checks used by CI are:
+Before you open a pull request, run the quick checks:
 
 ```console
 cargo fmt --check
-cargo test
 cargo clippy --all-targets -- -D warnings
-cargo check --no-default-features --lib
+cargo test
 ```
+
+Changes to training or augmentation also need these:
+
+```console
+cargo clippy --features training --all-targets -- -D warnings
+cargo test --features training --lib
+```
+
+CI runs the full set, including the minimal-library Clippy pass and the slow every-scale model
+tests.
 
 See [docs/MODEL_BRINGUP.md](docs/MODEL_BRINGUP.md) for new model families.
 

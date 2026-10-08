@@ -7,7 +7,7 @@
 //! YOLO26-sem (n/s/m/l/x) semantic segmentation, the YOLO26-depth (n/s/m/l/x) monocular
 //! depth estimation, and the
 //! YOLO26-cls/YOLO11-cls/YOLOv8-cls (n/s/m/l/x) ImageNet-1k classification. Model inference and
-//! post-processing run from Rust â€” on the Flex CPU backend by default, or on the Wgpu GPU backend
+//! post-processing run from Rust, on the Flex CPU backend by default, or on the Wgpu GPU backend
 //! (Vulkan/DX12/Metal) when built with the `gpu` feature. No Python runtime or ONNX runtime is
 //! involved.
 
@@ -79,11 +79,12 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "pretrained")]
 use sha2::{Digest, Sha256};
 
-/// The square input size used by the currently supported pretrained models.
+/// The default square input size for the detection and instance-segmentation models, except
+/// YOLOX nano/tiny, which use 416 px.
 pub const INPUT_SIZE: usize = 640;
 
-/// The square input size used by the YOLO26-cls classification models (Ultralytics' classify
-/// default; the official checkpoints were trained at 224 px).
+/// The square input size used by the YOLOv8/YOLO11/YOLO26-cls classification models
+/// (Ultralytics' classify default; the official checkpoints were trained at 224 px).
 pub const CLASSIFY_INPUT_SIZE: usize = 224;
 
 /// The square input size used by the YOLO26-sem semantic-segmentation models (Ultralytics'
@@ -606,7 +607,8 @@ pub struct SegmentationDetection {
 /// One image-classification result for the classification models.
 ///
 /// `confidence` is the softmax probability of `class_id` in the model's class table (ImageNet-1k
-/// for the YOLO26-cls family). The predictor returns the strongest classes in descending order.
+/// for the YOLOv8/YOLO11/YOLO26-cls families). The predictor returns the strongest classes in
+/// descending order.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Classification {
     pub class_id: usize,
@@ -856,7 +858,8 @@ impl<'a> From<&'a Vec<u8>> for ImageSource<'a> {
     }
 }
 
-/// Thresholds used during class-aware non-maximum suppression.
+/// Prediction thresholds: `confidence` filters detection and segmentation candidates for every
+/// family, and `iou` applies only to class-aware non-maximum suppression.
 #[derive(Debug, Clone, Copy)]
 pub struct PredictOptions {
     pub confidence: f32,
@@ -992,11 +995,12 @@ enum RuntimeModel {
     Yolo26ClsX(Box<crate::models::yolo26::Yolo26ClsX>),
 }
 
-/// A ready-to-run object detector over a Burn backend.
+/// A ready-to-run detection, segmentation, depth, or classification model on a Burn device.
 ///
-/// The backend is a type parameter: [`Flex`] on CPU, or `Wgpu` for GPU inference (Vulkan/DX12 on
-/// Windows and Linux, Metal on macOS) when built with the `gpu` feature. Constructors resolve the
-/// backend's default device; the `_on_device` variants accept an explicit device.
+/// Constructors without a device argument run on the Flex CPU backend in every build. The
+/// `_on_device` variants accept an explicit device, such as the one from `default_wgpu_device()`
+/// for GPU inference (Vulkan/DX12 on Windows and Linux, Metal on macOS) when built with the `gpu`
+/// feature.
 pub struct Predictor {
     model_id: ModelId,
     model: RuntimeModel,
@@ -1172,15 +1176,15 @@ fn require_burnpack_path(path: &Path) -> Result<()> {
 
 pub type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 
-/// Construct the requested model inside a large-stack worker and load either its native Burnpack
-/// artifact or an upstream tensor state accepted by that family.
-///
-/// Deep module construction overflows the small default main-thread stack on Windows in debug
-/// builds, so the graph is built in the worker thread.
 /// A model construction-and-load closure handed to the large-stack loader worker.
 #[cfg(feature = "pretrained")]
 type ModelLoader = Box<dyn FnOnce(&Device) -> Result<RuntimeModel> + Send>;
 
+/// Construct the requested model inside a large-stack worker and load its native Burnpack
+/// artifact.
+///
+/// Deep module construction overflows the small default main-thread stack on Windows in debug
+/// builds, so the graph is built in the worker thread.
 #[cfg(feature = "pretrained")]
 fn load_model_checkpoint(
     model_id: ModelId,
@@ -1351,8 +1355,9 @@ macro_rules! impl_end_to_end_detector {
 impl_end_to_end_detector!(yolov10: [Yolov10N, Yolov10S, Yolov10M, Yolov10B, Yolov10L, Yolov10X]);
 impl_end_to_end_detector!(yolo26: [Yolo26N, Yolo26S, Yolo26M, Yolo26L, Yolo26X]);
 
-/// Uniform classification entry point shared by every YOLO26-cls and YOLO11-cls scale variant, so
-/// the runtime can dispatch to any of them without naming the concrete scale type.
+/// Uniform classification entry point shared by every YOLOv8-cls, YOLO11-cls, and YOLO26-cls
+/// scale variant, so the runtime can dispatch to any of them without naming the concrete scale
+/// type.
 trait EndToEndClassifier {
     fn classify(
         &self,
@@ -1453,8 +1458,9 @@ fn run_classic_detections(
     nms(boxes, scores, iou_threshold, confidence_threshold)
 }
 
-/// Uniform classic instance-segmentation entry point shared by the YOLO11-seg scale variants, so
-/// the runtime can dispatch to any of them without naming the concrete scale type.
+/// Uniform classic instance-segmentation entry point shared by the YOLO11-seg and YOLOv8-seg
+/// scale variants, so the runtime can dispatch to any of them without naming the concrete scale
+/// type.
 pub(crate) trait ClassicSegmenter {
     fn segment(&self, input: Tensor<4>) -> crate::models::yolo11::SegmentOutput;
 }
@@ -1877,7 +1883,7 @@ fn source_depth_map(
 ///
 /// The YOLO26-seg head output mirrors Ultralytics' end2end postprocess: the top
 /// `max_detections` anchors by best-class score are kept, then the top `max_detections`
-/// (anchor, class) pairs among them, and finally the confidence filter is applied â€” no
+/// (anchor, class) pairs among them, and finally the confidence filter is applied, with no
 /// non-maximum suppression. The surviving anchors' raw mask coefficients ride along in
 /// [`SegmentationOutputCpu`] for the shared mask assembly.
 pub(crate) fn run_end_to_end_segmentations(
@@ -1988,16 +1994,16 @@ pub(crate) fn run_end_to_end_segmentations(
     }
 }
 
-/// One NMS-surviving segmentation candidate: a box plus the anchor index its 32 mask
-/// coefficients live at.
+/// One surviving segmentation candidate (after NMS or end-to-end top-k): a box plus the anchor
+/// index its 32 mask coefficients live at.
 pub(crate) struct SegmentationCandidate {
     pub(crate) bbox: BoundingBox,
     pub(crate) class_id: usize,
     pub(crate) anchor: usize,
 }
 
-/// CPU-side result of the segmentation decode: NMS survivors plus everything the mask assembly
-/// needs (prototypes and per-anchor coefficients), already synced from the backend.
+/// CPU-side result of the segmentation decode: NMS or top-k survivors plus everything the mask
+/// assembly needs (prototypes and per-anchor coefficients), already synced from the backend.
 pub(crate) struct SegmentationOutputCpu {
     pub(crate) candidates: Vec<SegmentationCandidate>,
     /// Prototype masks, row-major `[channels, proto_height, proto_width]`.
@@ -2244,9 +2250,9 @@ pub(crate) fn canvas_instance_mask(
 /// Sample a canvas-frame boolean mask onto the full source-image grid.
 ///
 /// Every source pixel `(x, y)` samples the canvas mask at the nearest canvas pixel to
-/// `(x * scale + pad_x, y * scale + pad_y)` â€” the exact inverse of the letterbox geometry that
-/// [`LetterboxedImage::to_source_box`] applies to box edges. Pixels outside the canvas (possible
-/// only through rounding at the borders) stay uncovered.
+/// `(x * scale + pad_x, y * scale + pad_y)`, the exact inverse of the letterbox geometry that
+/// [`LetterboxedImage::to_source_box`] applies to box edges. Samples outside the canvas (possible
+/// only through rounding at the borders) clamp to the nearest edge pixel.
 fn source_instance_mask(
     canvas_mask: &[bool],
     canvas_width: usize,
@@ -2306,7 +2312,7 @@ impl Predictor {
     /// Load an artifact with explicit prediction thresholds.
     #[cfg(feature = "pretrained")]
     pub fn with_options(checkpoint: impl Into<PathBuf>, options: PredictOptions) -> Result<Self> {
-        Self::with_options_on_device(checkpoint, Device::default(), options)
+        Self::with_options_on_device(checkpoint, Device::flex(), options)
     }
 
     /// Load an artifact on an explicit device using default prediction thresholds.
@@ -2364,14 +2370,14 @@ impl Predictor {
         })
     }
 
-    /// Load a model from a native Burnpack artifact on the backend's default device.
+    /// Load a model from a native Burnpack artifact on the Flex CPU backend.
     #[cfg(feature = "pretrained")]
     pub fn from_checkpoint(
         model_id: ModelId,
         checkpoint: impl Into<PathBuf>,
         options: PredictOptions,
     ) -> Result<Self> {
-        Self::from_checkpoint_on_device(model_id, checkpoint, Device::default(), options)
+        Self::from_checkpoint_on_device(model_id, checkpoint, Device::flex(), options)
     }
 
     /// Load a native Burnpack artifact on an explicit device.
@@ -2408,7 +2414,7 @@ impl Predictor {
         checkpoint: impl Into<PathBuf>,
         options: PredictOptions,
     ) -> Result<Self> {
-        Self::from_trained_artifact_on_device(model_id, checkpoint, Device::default(), options)
+        Self::from_trained_artifact_on_device(model_id, checkpoint, Device::flex(), options)
     }
 
     /// Explicit-device variant of [`Predictor::from_trained_artifact`].
@@ -2585,7 +2591,7 @@ impl Predictor {
                 self.options.confidence,
             ),
             RuntimeModel::Yolo11N(model) => {
-                // YOLO11 is the first NMS-based Ultralytics detect family here: its classic DFL
+                // YOLO11 is an NMS-based Ultralytics detect family: its classic DFL
                 // head output (center-size boxes plus per-class sigmoid scores) is decoded by the
                 // head and suppressed by the generic class-aware NMS helper, mirroring
                 // Ultralytics' non_max_suppression at conf 0.25 / IoU 0.45.
@@ -3181,10 +3187,7 @@ impl Predictor {
     }
 }
 
-/// Convert an imported tensor-only checkpoint state into Montgomery's versioned native Burnpack
-/// format. All families use states generated by `tools/export_checkpoint_state.py`. The output is
-/// `<model>.bpk` in the current directory and stores half-precision tensors. Existing files are
-/// never overwritten.
+/// Location, size, and SHA-256 digest of an artifact written by [`pack_weights`].
 #[cfg(feature = "pretrained")]
 #[derive(Debug)]
 pub struct PackedWeights {
@@ -3193,6 +3196,10 @@ pub struct PackedWeights {
     pub sha256: String,
 }
 
+/// Convert an imported tensor-only checkpoint state into Montgomery's versioned native Burnpack
+/// format. All families use states generated by `tools/export_checkpoint_state.py`. The output is
+/// `<model>.bpk` in the current directory and stores half-precision tensors. Existing files are
+/// never overwritten.
 #[cfg(feature = "pretrained")]
 pub fn pack_weights(model_id: ModelId, input: impl Into<PathBuf>) -> Result<PackedWeights> {
     let output = model_id.artifact_filename();
@@ -3236,7 +3243,7 @@ pub fn pack_weights_to(
         .name("montgomery-weight-packer".into())
         .stack_size(64 * 1024 * 1024)
         .spawn(move || {
-            let device = Default::default();
+            let device = Device::flex();
             macro_rules! pack_variant {
                 ($config:ty) => {{
                     let mut model = <$config>::default().init(&device);
@@ -3461,24 +3468,26 @@ pub(crate) fn end2end_topk_detections(
     batches
 }
 
-/// Resolve the default wgpu device, reporting the graphics adapter and API actually chosen.
+/// Resolve the default wgpu device and describe the adapter behind it.
 ///
-/// The first call initializes the wgpu runtime (adapter selection, shader compiler setup) and the
-/// returned description names the physical adapter, the graphics backend (Vulkan, DX12, Metal,
-/// OpenGL, or WebGPU), and the driver. Every later operation on the same device reuses that
-/// runtime.
+/// The first call opens the device, which runs wgpu adapter selection and device creation, so
+/// callers that time this function measure runtime start-up. The description is the adapter name
+/// and kernel compile target reported by the runtime, or the device selector's `Debug` string if
+/// the runtime reports no identity. Every call returns the same device and description.
 #[cfg(feature = "gpu")]
 pub fn default_wgpu_device() -> (burn::tensor::Device, String) {
     use burn::tensor::{Device, DeviceKind};
     use std::sync::OnceLock;
 
-    // The wgpu runtime registers one compute client per device per process; re-initializing an
-    // already-registered device panics, so resolve the default device exactly once and share it.
+    // Open and name the adapter once per process; later calls reuse the cached pair.
     static DEVICE: OnceLock<(Device, String)> = OnceLock::new();
     DEVICE
         .get_or_init(|| {
             let device = Device::wgpu(DeviceKind::DefaultDevice);
-            let description = format!("{device:?}");
+            let description = device.identity().map_or_else(
+                || format!("{device:?}"),
+                |identity| format!("{} ({})", identity.name, identity.fingerprint),
+            );
             (device, description)
         })
         .clone()
@@ -3582,7 +3591,7 @@ pub fn annotate_depth(map: &DepthMap) -> DynamicImage {
     for y in 0..map.height {
         for x in 0..map.width {
             let value = map.data[y as usize * map.width as usize + x as usize];
-            // Nearer (smaller) depths lean yellow; clamp guards non-finite inputs.
+            // Nearer (smaller) depths lean yellow; non-finite inputs render black.
             let color = if value.is_finite() {
                 viridis(1.0 - (value - stats.min) / span)
             } else {
@@ -4065,7 +4074,7 @@ mod tests {
         let worker = std::thread::Builder::new()
             .stack_size(64 * 1024 * 1024)
             .spawn(|| {
-                let device = Device::default();
+                let device = Device::flex();
                 let mut official = Yolox::yolox_nano(COCO_CLASSES.len(), &device);
                 official
                     .load_pytorch_weights("target/checkpoints/yolox_nano.pth")
@@ -4162,7 +4171,8 @@ mod tests {
     /// Compare the seg runtime end to end against the official Ultralytics prediction on the
     /// reference image, including per-detection mask IoU in source-image space. Run the
     /// generator first:
-    /// `python tools/export_yolo11_seg_e2e.py target/<id>.pt docs/dog_bike_man.jpg target --model <id>`
+    /// `uv run --project tools tools/export_yolo11_seg_e2e.py target/<id>.pt docs/dog_bike_man.jpg
+    /// target --model <id>`
     #[cfg(feature = "pretrained")]
     macro_rules! seg_e2e_test {
         ($fn_name:ident, $model_id:expr, $id:literal) => {

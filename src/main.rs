@@ -248,7 +248,7 @@ struct ExportArgs {
     /// Final ONNX path (defaults to <model>.onnx). A missing suffix is added explicitly.
     #[arg(long)]
     output: Option<PathBuf>,
-    /// Square size or H,W. Detect/segment dimensions must be divisible by 32.
+    /// Square size or H,W. Classification is fixed at 224; other tasks need multiples of 32.
     #[arg(long)]
     imgsz: Option<String>,
     /// Fixed batch size (dynamic batch is gated separately).
@@ -324,7 +324,8 @@ struct PredictArgs {
     device: DeviceSelection,
 
     /// Annotated output image (defaults to <input-stem>-detections.png, or
-    /// <input-stem>-segmentation.png with --masks).
+    /// <input-stem>-segmentation.png with --masks, <input-stem>-semantic.png for semantic models,
+    /// or <input-stem>-depth.png for depth models). Classification writes no image.
     #[arg(short, long)]
     output: Option<PathBuf>,
 
@@ -338,11 +339,12 @@ struct PredictArgs {
 
     /// Render instance-mask outlines over the annotated image and report per-detection mask
     /// coverage. Requires a segmentation model (yolo11n/s/m/l/x-seg, yolov8n/s/m/l/x-seg, or
-    /// yolo26n/s/m/l/x-seg). No-op for semantic models, which always render their dense map.
+    /// yolo26n/s/m/l/x-seg). No-op for semantic and depth models, which always render their
+    /// dense map, and for classification models, which render no image.
     #[arg(long)]
     masks: bool,
 
-    /// Print detections as JSON instead of a compact table.
+    /// Print results as JSON instead of a compact table.
     #[arg(long)]
     json: bool,
 }
@@ -406,8 +408,8 @@ fn semantic_default_output(input: &std::path::Path) -> PathBuf {
     input.with_file_name(format!("{stem}-semantic.png"))
 }
 
-/// Default rendered output for the depth task: a grayscale visualization of the dense map
-/// in meters (nearer is brighter), kept on its own `-depth.png` path.
+/// Default rendered output for the depth task: a viridis visualization of the dense map
+/// in meters (nearer is yellow), kept on its own `-depth.png` path.
 fn depth_default_output(input: &std::path::Path) -> PathBuf {
     let stem = input
         .file_stem()
@@ -830,7 +832,7 @@ fn predict(args: PredictArgs) -> montgomery::Result<()> {
         iou: args.iou,
     };
     match args.device {
-        DeviceSelection::Cpu => run_predict(&args, options, Device::default()),
+        DeviceSelection::Cpu => run_predict(&args, options, Device::flex()),
         #[cfg(feature = "gpu")]
         DeviceSelection::Gpu => {
             let (device, adapter) = montgomery::default_wgpu_device();
@@ -853,7 +855,7 @@ fn bench(args: BenchArgs) -> montgomery::Result<()> {
     let device_started = Instant::now();
     match args.device {
         DeviceSelection::Cpu => {
-            let device = Device::default();
+            let device = Device::flex();
             run_bench(
                 &args,
                 device,
@@ -1308,7 +1310,7 @@ fn report_semantic(
     Ok(())
 }
 
-/// Print depth-estimation results (range summary table or JSON) and save the grayscale
+/// Print depth-estimation results (range summary table or JSON) and save the viridis
 /// visualization.
 ///
 /// The JSON carries the source-space dimensions plus the map statistics in meters; the full

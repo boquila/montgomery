@@ -430,7 +430,7 @@ mod formatted_tests {
             })
             .collect();
         let batch = formatted
-            .into_device(metadata, &Default::default())
+            .into_device(metadata, &burn::tensor::Device::flex())
             .unwrap();
 
         assert_eq!(batch.targets.len(), 2);

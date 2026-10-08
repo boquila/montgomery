@@ -152,7 +152,7 @@ mod tests {
     fn tensor_bce_matches_scalar_reference() {
         use burn::tensor::Tensor;
 
-        let device = Default::default();
+        let device = burn::tensor::Device::flex();
         let logits = [-100.0, -2.0, 0.0, 2.0, 100.0];
         let targets = [0.0, 1.0, 0.0, 1.0, 1.0];
         let actual = bce_with_logits_tensor(

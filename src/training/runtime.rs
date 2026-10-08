@@ -1008,6 +1008,8 @@ fn train_inner(
         );
     }
     let (device, adapter) = crate::default_wgpu_device();
+    // Validation runs the EMA through `valid()`, so its batches skip the autodiff wrapper.
+    let validation_device = device.clone();
     let device = device.autodiff();
     device.seed(config.seed);
     eprintln!("Training adapter: {adapter}");
@@ -1089,7 +1091,7 @@ fn train_inner(
                             &config,
                             &dataset,
                             &dataset.val_images,
-                            &device,
+                            &validation_device,
                             0,
                             false,
                         )?,
@@ -1150,7 +1152,7 @@ fn train_inner(
                                 &config,
                                 &dataset,
                                 &dataset.val_images,
-                                &device,
+                                &validation_device,
                             )?),
                             model_id,
                             &config.validation,
@@ -1161,7 +1163,7 @@ fn train_inner(
                             DetectionBatchSource::new(
                                 &config,
                                 &dataset.val_images,
-                                &device,
+                                &validation_device,
                                 0,
                                 VisionSampleLoader::new(
                                     &dataset,
@@ -1229,7 +1231,7 @@ fn train_inner(
                         SegmentationBatchSource::new(
                             &config,
                             &dataset.val_images,
-                            &device,
+                            &validation_device,
                             0,
                             VisionSampleLoader::new(
                                 &dataset,
@@ -1777,7 +1779,7 @@ where
     S: EpochBatchSource<M::Batch>,
 {
     let (mut optimizer, external_weight_decay) = optimizer;
-    let mut ema_model = model.clone();
+    let mut ema_model = crate::training::ema::init_model(&model);
     let mut ema_state = crate::training::ema::EmaState::new(0.9999)?;
     ema_state.updates = trainer.state.ema_updates;
     if let Some(path) = options.resume {
@@ -1854,7 +1856,7 @@ where
 {
     let (mut optimizer, external_weight_decay) = optimizer;
     let profile_training = std::env::var_os("MONTGOMERY_PROFILE_TRAINING").is_some();
-    let mut ema_model = model.clone();
+    let mut ema_model = crate::training::ema::init_model(&model);
     let mut ema_state = crate::training::ema::EmaState::new(0.9999)?;
     ema_state.updates = trainer.state.ema_updates;
     if let Some(path) = options.resume {
@@ -1950,9 +1952,9 @@ where
             let model_record = model.clone().into_record();
             let ema_record = ema_model.clone().into_record();
             let optimizer_record = optimizer.to_record();
-            // Burn records download each tensor before bincode can serialize it. Model, EMA, and
-            // optimizer records are independent immutable snapshots, so issuing their downloads
-            // in parallel avoids three fully serialized GPU-to-host readback passes.
+            // `into_record` and `to_record` already read every tensor back to the host. Model,
+            // EMA, and optimizer records are independent snapshots, so their Burnpack encoding
+            // runs in parallel.
             let (model_bytes, ema_bytes, optimizer_bytes) =
                 std::thread::scope(|scope| -> Result<_, Box<dyn Error + Send + Sync>> {
                     let model = scope.spawn(move || encode_record(model_record));
@@ -2610,7 +2612,7 @@ where
     {
         let logits_data = model.classification_logits(batch.images).into_data();
         let classes_data = batch.classes.into_data();
-        let [batch_size, class_count] = logits_data.shape.dims::<2>();
+        let [batch_size, class_count] = logits_data.shape().dims::<2>();
         let values = logits_data.as_slice::<f32>()?;
         let labels = classes_data
             .as_slice::<i32>()?
@@ -2889,7 +2891,7 @@ macro_rules! classic_segmentation_forward {
             ) -> crate::SegmentationOutputCpu {
                 crate::run_classic_segmentations(
                     self,
-                    image * 255.0,
+                    image,
                     validation.iou,
                     validation.confidence,
                 )
@@ -2921,7 +2923,7 @@ macro_rules! end_to_end_segmentation_forward {
             ) -> crate::SegmentationOutputCpu {
                 crate::run_end_to_end_segmentations(
                     self,
-                    image * 255.0,
+                    image,
                     validation.max_detections,
                     validation.confidence,
                 )
@@ -3353,7 +3355,7 @@ mod tests {
 
     #[test]
     fn changed_class_transfer_preserves_only_fresh_classifier_projection() {
-        let device = Default::default();
+        let device = burn::tensor::Device::flex();
         let official = transfer_model(5, &device);
         let target = transfer_model(2, &device);
         let classifier_before = target.head.linear.weight.val().into_data();

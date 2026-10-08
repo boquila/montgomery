@@ -187,26 +187,3 @@ fn make_anchors(levels: [(usize, usize, f32); 2], device: &Device) -> (Tensor<2>
         Tensor::from_data(TensorData::new(strides, [total, 1]), device),
     )
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::models::yolov3_tiny::body::Yolov3TinyBodyConfig;
-
-    #[test]
-    fn decodes_two_feature_levels_to_xyxy_and_scores() {
-        let worker = std::thread::Builder::new()
-            .stack_size(48 * 1024 * 1024)
-            .spawn(|| {
-                let device = Default::default();
-                let body = Yolov3TinyBodyConfig.init(&device);
-                let head = DetectHeadConfig::default().init(&device);
-                let input = Tensor::zeros([1, 3, 64, 64], &device);
-                let output = head.forward(body.forward(input));
-                assert_eq!(output.boxes.dims(), [1, 20, 4]);
-                assert_eq!(output.scores.dims(), [1, 20, DEFAULT_NUM_CLASSES]);
-            })
-            .expect("shape-test worker should start");
-        worker.join().expect("shape-test worker should not panic");
-    }
-}

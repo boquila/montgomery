@@ -6,7 +6,7 @@ use std::{
 };
 
 use burn::{
-    module::AutodiffModule,
+    module::Module,
     optim::{GradientsAccumulator, GradientsParams, ModuleOptimizer},
     tensor::{Tensor, Transaction},
 };
@@ -33,7 +33,7 @@ fn diagnostic_chunk_full(events: &[StepEvent]) -> bool {
 }
 
 /// Family-specific model adapter used by the explicit native loop.
-pub trait TrainableTask: AutodiffModule {
+pub trait TrainableTask: Module {
     type Batch;
 
     fn forward_loss(&self, batch: &Self::Batch, context: LossContext)
@@ -77,8 +77,8 @@ pub struct EpochSummary {
     pub optimizer_steps: usize,
 }
 
-/// Stateful run owner. Concrete model dispatch happens once, then [`train_epoch`] remains fully
-/// monomorphized over the task, backend and optimizer.
+/// Stateful run owner. Concrete model dispatch happens once, then
+/// [`train_epoch`](Self::train_epoch) remains fully monomorphized over the task and batch source.
 pub struct Trainer {
     pub config: TrainingConfig,
     pub state: TrainingState,
@@ -528,7 +528,7 @@ mod tests {
 
     #[test]
     fn deferred_non_finite_total_fails_at_optimizer_boundary() {
-        let device = burn::tensor::Device::default().autodiff();
+        let device = burn::tensor::Device::flex().autodiff();
         let mut deferred = vec![DeferredDiagnostic {
             event_index: 0,
             batch_index: 7,
