@@ -92,8 +92,6 @@ macro_rules! classify_model {
     };
 }
 
-#[cfg(feature = "training")]
-pub(crate) mod training_ops;
 pub mod yolo11;
 pub mod yolo12;
 pub mod yolo26;

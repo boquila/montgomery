@@ -1,6 +1,6 @@
 """Export official Ultralytics segmentation results as end-to-end parity fixtures.
 
-Runs the official ``<model>.pt`` checkpoint on the reference image with Ultralytics' default
+Runs the official ``<model>.pt`` checkpoint on the reference image with Montgomery's default
 predict settings (conf 0.25, IoU 0.45, CPU) and writes:
 
 - ``target/<model>-e2e-expected.json``: boxes, confidences, and classes in source-image pixels.

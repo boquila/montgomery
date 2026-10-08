@@ -22,19 +22,10 @@ pub struct Conv {
     conv: Conv2d,
     bn: BatchNorm,
     act: bool,
-    #[cfg(feature = "training")]
-    depthwise_training_stencil: bool,
 }
 
 impl Conv {
     pub fn forward(&self, input: Tensor<4>) -> Tensor<4> {
-        #[cfg(feature = "training")]
-        let x = if self.depthwise_training_stencil && input.is_require_grad() {
-            crate::models::training_ops::depthwise_3x3_stride_1(input, self.conv.weight.val())
-        } else {
-            self.conv.forward(input)
-        };
-        #[cfg(not(feature = "training"))]
         let x = self.conv.forward(input);
         let x = self.bn.forward(x);
         if self.act { silu(x) } else { x }
@@ -101,11 +92,6 @@ impl ConvConfig {
             conv,
             bn,
             act: self.act,
-            #[cfg(feature = "training")]
-            depthwise_training_stencil: self.groups == self.in_channels
-                && self.groups == self.out_channels
-                && self.kernel_size == 3
-                && self.stride == 1,
         }
     }
 }
@@ -235,7 +221,7 @@ type CibDwTower = (Conv, Conv, Conv, Conv, Conv);
 
 /// Ultralytics `CIB` (Compact Inverted Block) with the plain depth-wise center (`lk=False`).
 ///
-/// This is the variant the s/m/b/l/x checkpoints build; only YOLOv10n/s pass `lk=True`.
+/// This is the variant the m/b/l/x checkpoints build; only YOLOv10n/s pass `lk=True`.
 #[derive(Module, Debug)]
 pub struct CibDw {
     cv1: CibDwTower,
@@ -408,7 +394,7 @@ impl C2fCibConfig {
 }
 
 /// Ultralytics `C2fCIB` with the plain depth-wise CIB chain (`lk=False`), used by the
-/// s/m/b/l/x-scale bodies.
+/// m/b/l/x-scale bodies.
 #[derive(Module, Debug)]
 pub struct C2fCibDw {
     cv1: Conv,
@@ -688,8 +674,7 @@ pub(super) fn upsample_nearest_2x(input: Tensor<4>) -> Tensor<4> {
     let [_, _, height, width] = input.dims();
     interpolate(
         input,
-        [height * 2, width * 2],
-        InterpolateOptions::new(InterpolateMode::Nearest),
+        InterpolateOptions::new(InterpolateMode::Nearest).with_output_size([height * 2, width * 2]),
     )
 }
 
@@ -702,7 +687,7 @@ mod tests {
         let worker = std::thread::Builder::new()
             .stack_size(32 * 1024 * 1024)
             .spawn(|| {
-                let device = Default::default();
+                let device = Device::flex();
                 let c2f: C2f = C2fConfig::new(64, 64, 2, true).init(&device);
                 let out = c2f.forward(Tensor::zeros([1, 64, 40, 40], &device));
                 assert_eq!(out.dims(), [1, 64, 40, 40]);

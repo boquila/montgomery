@@ -12,7 +12,7 @@ pub struct BoundingBox {
 }
 
 /// Non-maximum suppression (NMS) filters overlapping bounding boxes that have an intersection-over-
-/// union (IoU) greater or equal than the specified `iou_threshold` with previously selected boxes.
+/// union (IoU) greater than the specified `iou_threshold` with previously selected boxes.
 ///
 /// Boxes are filtered based on `score_threshold` and ranked based on their score. As such, lower
 /// scoring boxes are removed when overlapping with another (higher scoring) box.

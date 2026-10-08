@@ -4,7 +4,7 @@
   <img alt="Montgomery" src="/docs/logo.svg" width="58%">
 </picture>
 
-Native object detection, instance segmentation, and image classification in Rust with [Burn](https://burn.dev)
+Native object detection, instance segmentation, semantic segmentation, depth estimation, and image classification in Rust with [Burn](https://burn.dev)
 
 <h3>
 
@@ -23,7 +23,7 @@ Montgomery is an experimental Rust computer-vision stack:
 
 - Computer vision inference on CPU or GPU
 - WGPU training with validation, resumable checkpoints, and ready-to-use exports
-- Detection, instance segmentation, and classification
+- Detection, instance segmentation, semantic segmentation, depth estimation, and classification
 - Burnpack and ONNX export
 
 Normal inference needs no Python, PyTorch, or ONNX Runtime.
@@ -40,7 +40,7 @@ Normal inference needs no Python, PyTorch, or ONNX Runtime.
 | YOLOv10 | `n, s, m, b, l, x` | Detect |
 | YOLO11 | `n, s, m, l, x` | Detect, segment, classify |
 | YOLO12 | `n, s, m, l, x` | Detect |
-| YOLO26 | `n, s, m, l, x` | Detect, segment, classify |
+| YOLO26 | `n, s, m, l, x` | Detect, segment, semantic, depth, classify |
 
 ## Rust API
 
@@ -83,7 +83,7 @@ montgomery train --model yolo26n.bpk --data dataset.yaml --epochs 100
 montgomery train --model yolo26n.bpk --data dataset.yaml --batch -1 --epochs 100
 
 # Exact continuation (model and dataset come from the training checkpoint)
-montgomery train --resume runs/train/checkpoints/last
+montgomery train --resume runs/detect/train-<timestamp>-<pid>/checkpoints/last
 ```
 
 Exactly one initialization mode is required: `--architecture` means scratch, `--model` requires a
@@ -131,16 +131,33 @@ git clone https://github.com/boquila/montgomery.git && cd montgomery
 cargo test
 ```
 
-The same checks used by CI are:
+Before you open a pull request, run the quick checks:
 
 ```console
 cargo fmt --check
-cargo test
 cargo clippy --all-targets -- -D warnings
-cargo check --no-default-features --lib
+cargo test
 ```
 
+Changes to training or augmentation also need these:
+
+```console
+cargo clippy --features training --all-targets -- -D warnings
+cargo test --features training --lib
+```
+
+CI runs the full set, including the minimal-library Clippy pass and the slow every-scale model
+tests.
+
 See [docs/MODEL_BRINGUP.md](docs/MODEL_BRINGUP.md) for new model families.
+
+## All five tasks on one image
+
+Same `docs/dog_bike_man.jpg` through the YOLO26n family: classification top-5,
+detection boxes, per-object instance masks, the dense semantic map, and the depth map
+in meters.
+
+![Source image plus classification, detection, instance segmentation, semantic segmentation, and depth estimation of the same image with YOLO26n](docs/tasks-grid.png)
 
 ## License
 

@@ -129,8 +129,8 @@ impl Yolov3TinyBody {
         let [_, _, height, width] = x.dims();
         let x = interpolate(
             x,
-            [height * 2, width * 2],
-            InterpolateOptions::new(InterpolateMode::Nearest),
+            InterpolateOptions::new(InterpolateMode::Nearest)
+                .with_output_size([height * 2, width * 2]),
         );
         let x = Tensor::cat(vec![x, route_p4], 1);
         let p4 = self.model_19.forward(x);
@@ -177,7 +177,7 @@ mod tests {
         let worker = std::thread::Builder::new()
             .stack_size(32 * 1024 * 1024)
             .spawn(|| {
-                let device = Default::default();
+                let device = Device::flex();
                 let body: Yolov3TinyBody = Yolov3TinyBodyConfig.init(&device);
                 let input = Tensor::zeros([1, 3, 64, 64], &device);
                 let output = body.forward(input);

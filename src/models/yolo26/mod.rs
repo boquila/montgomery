@@ -1,4 +1,7 @@
-//! Native Burn implementation of the Ultralytics YOLO26 detector family (n/s/m/l/x).
+//! Native Burn implementation of the Ultralytics YOLO26 detector family (n/s/m/l/x),
+//! with sibling `-seg` instance-segmentation, `-sem` semantic-segmentation, `-depth`
+//! monocular depth-estimation, and `-cls` classification families sharing the same
+//! backbone/neck vocabulary.
 //!
 //! [`body`] implements the complete backbone/neck for every scale and produces the P3/P4/P5
 //! tensors consumed by the Ultralytics Detect head. YOLO26 is DFL-free (`reg_max = 1`) and
@@ -10,14 +13,21 @@
 pub mod blocks;
 pub mod body;
 pub mod classification;
+pub mod depth;
 pub mod head;
 pub mod model;
 pub mod segmentation;
+pub mod semantic;
 pub mod weights;
 
 pub use classification::{
     Yolo26ClsL, Yolo26ClsLConfig, Yolo26ClsM, Yolo26ClsMConfig, Yolo26ClsN, Yolo26ClsNConfig,
     Yolo26ClsS, Yolo26ClsSConfig, Yolo26ClsX, Yolo26ClsXConfig,
+};
+pub use depth::{
+    DECODER_WIDTH as DEPTH_DECODER_WIDTH, DepthHead, DepthHeadConfig, DepthOutput, Yolo26DepthL,
+    Yolo26DepthLConfig, Yolo26DepthM, Yolo26DepthMConfig, Yolo26DepthN, Yolo26DepthNConfig,
+    Yolo26DepthS, Yolo26DepthSConfig, Yolo26DepthX, Yolo26DepthXConfig,
 };
 pub use model::{
     Yolo26L, Yolo26LConfig, Yolo26M, Yolo26MConfig, Yolo26N, Yolo26NConfig, Yolo26S, Yolo26SConfig,
@@ -26,4 +36,10 @@ pub use model::{
 pub use segmentation::{
     Yolo26SegL, Yolo26SegLConfig, Yolo26SegM, Yolo26SegMConfig, Yolo26SegN, Yolo26SegNConfig,
     Yolo26SegS, Yolo26SegSConfig, Yolo26SegX, Yolo26SegXConfig,
+};
+pub use semantic::{
+    NUM_CLASSES as SEMANTIC_NUM_CLASSES, SemanticHead, SemanticHeadConfig, SemanticOutput,
+    Yolo26SemL, Yolo26SemLConfig, Yolo26SemM, Yolo26SemMConfig, Yolo26SemN, Yolo26SemNConfig,
+    Yolo26SemS, Yolo26SemSConfig, Yolo26SemX, Yolo26SemXConfig, Yolo26SemanticBodyLarge,
+    Yolo26SemanticBodySmall, Yolo26SemanticFeatures,
 };

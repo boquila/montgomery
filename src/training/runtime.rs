@@ -948,6 +948,17 @@ fn train_inner(
             request.image_size.map(|side| [side, side]),
         )?
     };
+    if spec.task == crate::training::TaskKind::Semantic {
+        return Err(
+            "semantic segmentation models are inference-only; native training is not supported"
+                .into(),
+        );
+    }
+    if spec.task == crate::training::TaskKind::Depth {
+        return Err(
+            "depth estimation models are inference-only; native training is not supported".into(),
+        );
+    }
     if (spec.task == crate::training::TaskKind::Classify)
         != (dataset.format == DatasetFormat::ClassificationFolders)
     {
@@ -997,6 +1008,8 @@ fn train_inner(
         );
     }
     let (device, adapter) = crate::default_wgpu_device();
+    // Validation runs the EMA through `valid()`, so its batches skip the autodiff wrapper.
+    let validation_device = device.clone();
     let device = device.autodiff();
     device.seed(config.seed);
     eprintln!("Training adapter: {adapter}");
@@ -1078,7 +1091,7 @@ fn train_inner(
                             &config,
                             &dataset,
                             &dataset.val_images,
-                            &device,
+                            &validation_device,
                             0,
                             false,
                         )?,
@@ -1139,7 +1152,7 @@ fn train_inner(
                                 &config,
                                 &dataset,
                                 &dataset.val_images,
-                                &device,
+                                &validation_device,
                             )?),
                             model_id,
                             &config.validation,
@@ -1150,7 +1163,7 @@ fn train_inner(
                             DetectionBatchSource::new(
                                 &config,
                                 &dataset.val_images,
-                                &device,
+                                &validation_device,
                                 0,
                                 VisionSampleLoader::new(
                                     &dataset,
@@ -1218,7 +1231,7 @@ fn train_inner(
                         SegmentationBatchSource::new(
                             &config,
                             &dataset.val_images,
-                            &device,
+                            &validation_device,
                             0,
                             VisionSampleLoader::new(
                                 &dataset,
@@ -1507,6 +1520,29 @@ fn train_inner(
             crate::models::yolo26::Yolo26SegXConfig.init(&device),
             ReplacedProjection::Yolo26Segment
         ),
+        // Unreachable: train_inner rejects semantic models before dispatch. The arms exist
+        // so an accidental removal of that gate fails closed instead of training a wrong loss.
+        ModelId::Yolo26NSem
+        | ModelId::Yolo26SSem
+        | ModelId::Yolo26MSem
+        | ModelId::Yolo26LSem
+        | ModelId::Yolo26XSem => {
+            return Err(
+                "semantic segmentation models are inference-only; native training is not supported"
+                    .into(),
+            );
+        }
+        // Unreachable for the same reason: depth estimation is inference-only.
+        ModelId::Yolo26NDepth
+        | ModelId::Yolo26SDepth
+        | ModelId::Yolo26MDepth
+        | ModelId::Yolo26LDepth
+        | ModelId::Yolo26XDepth => {
+            return Err(
+                "depth estimation models are inference-only; native training is not supported"
+                    .into(),
+            );
+        }
     }?;
     if !request.dry_run && !probe_only && request.export_artifacts {
         export_run_artifacts(&run)?;
@@ -1743,7 +1779,7 @@ where
     S: EpochBatchSource<M::Batch>,
 {
     let (mut optimizer, external_weight_decay) = optimizer;
-    let mut ema_model = model.clone();
+    let mut ema_model = crate::training::ema::init_model(&model);
     let mut ema_state = crate::training::ema::EmaState::new(0.9999)?;
     ema_state.updates = trainer.state.ema_updates;
     if let Some(path) = options.resume {
@@ -1820,7 +1856,7 @@ where
 {
     let (mut optimizer, external_weight_decay) = optimizer;
     let profile_training = std::env::var_os("MONTGOMERY_PROFILE_TRAINING").is_some();
-    let mut ema_model = model.clone();
+    let mut ema_model = crate::training::ema::init_model(&model);
     let mut ema_state = crate::training::ema::EmaState::new(0.9999)?;
     ema_state.updates = trainer.state.ema_updates;
     if let Some(path) = options.resume {
@@ -1916,9 +1952,9 @@ where
             let model_record = model.clone().into_record();
             let ema_record = ema_model.clone().into_record();
             let optimizer_record = optimizer.to_record();
-            // Burn records download each tensor before bincode can serialize it. Model, EMA, and
-            // optimizer records are independent immutable snapshots, so issuing their downloads
-            // in parallel avoids three fully serialized GPU-to-host readback passes.
+            // `into_record` and `to_record` already read every tensor back to the host. Model,
+            // EMA, and optimizer records are independent snapshots, so their Burnpack encoding
+            // runs in parallel.
             let (model_bytes, ema_bytes, optimizer_bytes) =
                 std::thread::scope(|scope| -> Result<_, Box<dyn Error + Send + Sync>> {
                     let model = scope.spawn(move || encode_record(model_record));
@@ -2576,7 +2612,7 @@ where
     {
         let logits_data = model.classification_logits(batch.images).into_data();
         let classes_data = batch.classes.into_data();
-        let [batch_size, class_count] = logits_data.shape.dims::<2>();
+        let [batch_size, class_count] = logits_data.shape().dims::<2>();
         let values = logits_data.as_slice::<f32>()?;
         let labels = classes_data
             .as_slice::<i32>()?
@@ -2855,7 +2891,7 @@ macro_rules! classic_segmentation_forward {
             ) -> crate::SegmentationOutputCpu {
                 crate::run_classic_segmentations(
                     self,
-                    image * 255.0,
+                    image,
                     validation.iou,
                     validation.confidence,
                 )
@@ -2887,7 +2923,7 @@ macro_rules! end_to_end_segmentation_forward {
             ) -> crate::SegmentationOutputCpu {
                 crate::run_end_to_end_segmentations(
                     self,
-                    image * 255.0,
+                    image,
                     validation.max_detections,
                     validation.confidence,
                 )
@@ -3186,6 +3222,25 @@ fn export_inner(
             ModelId::Yolo26MSeg => save!(crate::models::yolo26::Yolo26SegMConfig),
             ModelId::Yolo26LSeg => save!(crate::models::yolo26::Yolo26SegLConfig),
             ModelId::Yolo26XSeg => save!(crate::models::yolo26::Yolo26SegXConfig),
+            // Unreachable: semantic checkpoints can never exist because native training
+            // rejects semantic models. Kept explicit so the match fails closed.
+            ModelId::Yolo26NSem
+            | ModelId::Yolo26SSem
+            | ModelId::Yolo26MSem
+            | ModelId::Yolo26LSem
+            | ModelId::Yolo26XSem => Err(
+                "semantic segmentation models are inference-only; native training is not supported"
+                    .into(),
+            ),
+            // Unreachable for the same reason: depth estimation is inference-only.
+            ModelId::Yolo26NDepth
+            | ModelId::Yolo26SDepth
+            | ModelId::Yolo26MDepth
+            | ModelId::Yolo26LDepth
+            | ModelId::Yolo26XDepth => Err(
+                "depth estimation models are inference-only; native training is not supported"
+                    .into(),
+            ),
         };
     let exported = exported?;
     let predictor = crate::Predictor::from_trained_artifact_on_device(
@@ -3220,6 +3275,8 @@ where
     let task = match spec.task {
         crate::training::TaskKind::Detect => "detect",
         crate::training::TaskKind::Segment => "segment",
+        crate::training::TaskKind::Semantic => "semantic",
+        crate::training::TaskKind::Depth => "depth",
         crate::training::TaskKind::Classify => "classify",
     };
     let mut store = burn_store::BurnpackStore::from_file(output)
@@ -3298,7 +3355,7 @@ mod tests {
 
     #[test]
     fn changed_class_transfer_preserves_only_fresh_classifier_projection() {
-        let device = Default::default();
+        let device = burn::tensor::Device::flex();
         let official = transfer_model(5, &device);
         let target = transfer_model(2, &device);
         let classifier_before = target.head.linear.weight.val().into_data();

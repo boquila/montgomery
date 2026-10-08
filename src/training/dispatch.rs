@@ -37,6 +37,8 @@ pub enum LossFamily {
     Yolov10DualDfl,
     Yolo26DualDirect,
     Yolo26DualSegment,
+    Semantic,
+    Depth,
     Classification,
 }
 
@@ -96,6 +98,25 @@ pub const fn recipe_for(model: ModelId) -> TrainingRecipe {
             reg_max: 1,
             end_to_end: true,
         },
+        // Semantic models are inference-only: the native trainer rejects them before any
+        // loss is built, so this recipe is unreachable. It carries the family's real
+        // geometry (three backbone levels feeding a stride-8 head) for introspection.
+        Yolo26NSem | Yolo26SSem | Yolo26MSem | Yolo26LSem | Yolo26XSem => TrainingRecipe {
+            loss: LossFamily::Semantic,
+            levels: 3,
+            reg_max: 0,
+            end_to_end: false,
+        },
+        // Depth models are inference-only for the same reason (three backbone levels
+        // feeding a stride-4 head).
+        Yolo26NDepth | Yolo26SDepth | Yolo26MDepth | Yolo26LDepth | Yolo26XDepth => {
+            TrainingRecipe {
+                loss: LossFamily::Depth,
+                levels: 3,
+                reg_max: 0,
+                end_to_end: false,
+            }
+        }
         Yolo11NCls | Yolo11SCls | Yolo11MCls | Yolo11LCls | Yolo11XCls | Yolov8NCls
         | Yolov8SCls | Yolov8MCls | Yolov8LCls | Yolov8XCls | Yolo26NCls | Yolo26SCls
         | Yolo26MCls | Yolo26LCls | Yolo26XCls => TrainingRecipe {
@@ -462,7 +483,7 @@ mod tests {
         use crate::training::geometry::BoxXyxy;
         use burn::tensor::Tensor;
 
-        let device = Default::default();
+        let device = burn::tensor::Device::flex();
         let batch = DetectionBatch {
             images: Tensor::zeros([1, 3, 8, 8], &device),
             targets: vec![vec![TalGroundTruth {
@@ -507,7 +528,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(64 * 1024 * 1024)
             .spawn(|| {
-                let device = burn::tensor::Device::default().autodiff();
+                let device = burn::tensor::Device::flex().autodiff();
                 let model = crate::models::yolo26::Yolo26NConfig.init(&device);
                 let mut paths = Paths {
                     body: Vec::new(),
@@ -516,7 +537,7 @@ mod tests {
                 model.visit(&mut paths);
                 assert!(!paths.body.is_empty());
 
-                let input = Tensor::ones([1, 3, 64, 64], &device);
+                let input = Tensor::ones([1, 3, 32, 32], &device);
                 let output = model.forward_train_dual(input.clone());
                 let mut gradients =
                     (output.one_to_one.boxes.mean() + output.one_to_one.scores.mean()).backward();

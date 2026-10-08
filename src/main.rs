@@ -26,7 +26,7 @@ use montgomery::training::runtime::{
 };
 use montgomery::{
     BenchmarkOptions, InferenceBenchmark, ModelId, ModelTask, PredictOptions, Predictor, annotate,
-    annotate_segmentation, pack_weights, pack_weights_to,
+    annotate_depth, annotate_segmentation, annotate_semantic, pack_weights, pack_weights_to,
 };
 use serde::Serialize;
 
@@ -59,7 +59,8 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Run detection, instance segmentation, or classification on an image.
+    /// Run detection, instance segmentation, semantic segmentation, depth estimation, or
+    /// classification on an image.
     Predict(PredictArgs),
     /// Measure cold-start and steady-state inference speed without loading an image.
     Bench(BenchArgs),
@@ -247,7 +248,7 @@ struct ExportArgs {
     /// Final ONNX path (defaults to <model>.onnx). A missing suffix is added explicitly.
     #[arg(long)]
     output: Option<PathBuf>,
-    /// Square size or H,W. Detect/segment dimensions must be divisible by 32.
+    /// Square size or H,W. Classification is fixed at 224; other tasks need multiples of 32.
     #[arg(long)]
     imgsz: Option<String>,
     /// Fixed batch size (dynamic batch is gated separately).
@@ -323,7 +324,8 @@ struct PredictArgs {
     device: DeviceSelection,
 
     /// Annotated output image (defaults to <input-stem>-detections.png, or
-    /// <input-stem>-segmentation.png with --masks).
+    /// <input-stem>-segmentation.png with --masks, <input-stem>-semantic.png for semantic models,
+    /// or <input-stem>-depth.png for depth models). Classification writes no image.
     #[arg(short, long)]
     output: Option<PathBuf>,
 
@@ -337,11 +339,12 @@ struct PredictArgs {
 
     /// Render instance-mask outlines over the annotated image and report per-detection mask
     /// coverage. Requires a segmentation model (yolo11n/s/m/l/x-seg, yolov8n/s/m/l/x-seg, or
-    /// yolo26n/s/m/l/x-seg).
+    /// yolo26n/s/m/l/x-seg). No-op for semantic and depth models, which always render their
+    /// dense map, and for classification models, which render no image.
     #[arg(long)]
     masks: bool,
 
-    /// Print detections as JSON instead of a compact table.
+    /// Print results as JSON instead of a compact table.
     #[arg(long)]
     json: bool,
 }
@@ -392,6 +395,27 @@ fn default_output(input: &std::path::Path, masks: bool) -> PathBuf {
     // segmentation rendering must not default to a *-detections.png path.
     let suffix = if masks { "segmentation" } else { "detections" };
     input.with_file_name(format!("{stem}-{suffix}.png"))
+}
+
+/// Default annotated output for the semantic task: a class-color overlay rendered from the
+/// dense map, kept on its own `-semantic.png` path so it cannot be confused with the
+/// per-object `-segmentation.png` renderings.
+fn semantic_default_output(input: &std::path::Path) -> PathBuf {
+    let stem = input
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("prediction");
+    input.with_file_name(format!("{stem}-semantic.png"))
+}
+
+/// Default rendered output for the depth task: a viridis visualization of the dense map
+/// in meters (nearer is yellow), kept on its own `-depth.png` path.
+fn depth_default_output(input: &std::path::Path) -> PathBuf {
+    let stem = input
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("prediction");
+    input.with_file_name(format!("{stem}-depth.png"))
 }
 
 #[cfg(feature = "training")]
@@ -808,7 +832,7 @@ fn predict(args: PredictArgs) -> montgomery::Result<()> {
         iou: args.iou,
     };
     match args.device {
-        DeviceSelection::Cpu => run_predict(&args, options, Device::default()),
+        DeviceSelection::Cpu => run_predict(&args, options, Device::flex()),
         #[cfg(feature = "gpu")]
         DeviceSelection::Gpu => {
             let (device, adapter) = montgomery::default_wgpu_device();
@@ -831,7 +855,7 @@ fn bench(args: BenchArgs) -> montgomery::Result<()> {
     let device_started = Instant::now();
     match args.device {
         DeviceSelection::Cpu => {
-            let device = Device::default();
+            let device = Device::flex();
             run_bench(
                 &args,
                 device,
@@ -957,6 +981,24 @@ fn run_predict(
         ModelTask::Segmentation => {
             let (image, detections) = predictor.predict_segmentation_path(&args.source)?;
             report_segmentations(args, &image, &output, &detections)?;
+            return Ok(());
+        }
+        ModelTask::Semantic => {
+            let output = match &args.output {
+                Some(output) => output.clone(),
+                None => semantic_default_output(&args.source),
+            };
+            let (image, mask) = predictor.predict_semantic_path(&args.source)?;
+            report_semantic(args, &image, &output, predictor.class_names(), &mask)?;
+            return Ok(());
+        }
+        ModelTask::Depth => {
+            let output = match &args.output {
+                Some(output) => output.clone(),
+                None => depth_default_output(&args.source),
+            };
+            let (image, map) = predictor.predict_depth_path(&args.source)?;
+            report_depth(args, &image, &output, &map)?;
             return Ok(());
         }
         ModelTask::Detection => {}
@@ -1185,6 +1227,145 @@ fn report_segmentations(
     Ok(())
 }
 
+/// Print semantic-segmentation results (per-class coverage table or JSON) and save the
+/// class-color overlay image.
+///
+/// The JSON carries the source-space dimensions plus per-class pixel counts; the full class
+/// map itself is rendered into the overlay image rather than printed.
+fn report_semantic(
+    args: &PredictArgs,
+    image: &image::DynamicImage,
+    output: &std::path::Path,
+    class_names: &[String],
+    mask: &montgomery::SemanticMask,
+) -> montgomery::Result<()> {
+    let histogram = mask.class_histogram(class_names.len());
+    let total = mask.width as u64 * mask.height as u64;
+    if args.json {
+        #[derive(Serialize)]
+        struct JsonOutput {
+            task: &'static str,
+            width: u32,
+            height: u32,
+            coordinate_space: &'static str,
+            classes: Vec<JsonClassCoverage>,
+        }
+
+        #[derive(Serialize)]
+        struct JsonClassCoverage {
+            class_id: usize,
+            class_name: String,
+            pixels: u64,
+            fraction: f64,
+        }
+
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&JsonOutput {
+                task: "semantic",
+                width: mask.width,
+                height: mask.height,
+                coordinate_space: "source_image",
+                classes: class_names
+                    .iter()
+                    .enumerate()
+                    .map(|(class_id, class_name)| JsonClassCoverage {
+                        class_id,
+                        class_name: class_name.clone(),
+                        pixels: histogram[class_id],
+                        fraction: histogram[class_id] as f64 / total.max(1) as f64,
+                    })
+                    .collect(),
+            })?
+        );
+    } else {
+        println!(
+            "Semantic mask {}x{} ({} classes):",
+            mask.width,
+            mask.height,
+            class_names.len()
+        );
+        let mut order: Vec<usize> = (0..class_names.len()).collect();
+        order.sort_unstable_by(|&a, &b| histogram[b].cmp(&histogram[a]));
+        for class_id in order {
+            if histogram[class_id] == 0 {
+                continue;
+            }
+            println!(
+                "  {:<16} {:>9} px  {:>6.2}%",
+                class_names[class_id],
+                histogram[class_id],
+                histogram[class_id] as f64 / total.max(1) as f64 * 100.0
+            );
+        }
+    }
+
+    annotate_semantic(image, mask).save(output)?;
+    eprintln!(
+        "Saved semantic mask ({}x{}) to {}",
+        mask.width,
+        mask.height,
+        output.display()
+    );
+    Ok(())
+}
+
+/// Print depth-estimation results (range summary table or JSON) and save the viridis
+/// visualization.
+///
+/// The JSON carries the source-space dimensions plus the map statistics in meters; the full
+/// float map itself is rendered into the output image rather than printed.
+fn report_depth(
+    args: &PredictArgs,
+    image: &image::DynamicImage,
+    output: &std::path::Path,
+    map: &montgomery::DepthMap,
+) -> montgomery::Result<()> {
+    let _ = image;
+    let stats = map.stats();
+    if args.json {
+        #[derive(Serialize)]
+        struct JsonOutput {
+            task: &'static str,
+            width: u32,
+            height: u32,
+            coordinate_space: &'static str,
+            units: &'static str,
+            min_meters: f32,
+            max_meters: f32,
+            mean_meters: f32,
+        }
+
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&JsonOutput {
+                task: "depth",
+                width: map.width,
+                height: map.height,
+                coordinate_space: "source_image",
+                units: "meters",
+                min_meters: stats.min,
+                max_meters: stats.max,
+                mean_meters: stats.mean,
+            })?
+        );
+    } else {
+        println!(
+            "Depth map {}x{} (meters): min {:.2}, max {:.2}, mean {:.2}",
+            map.width, map.height, stats.min, stats.max, stats.mean
+        );
+    }
+
+    annotate_depth(map).save(output)?;
+    eprintln!(
+        "Saved depth map ({}x{}) to {}",
+        map.width,
+        map.height,
+        output.display()
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1198,6 +1379,14 @@ mod tests {
         assert_eq!(
             default_output(std::path::Path::new("photos/dog.jpg"), true),
             PathBuf::from("photos/dog-segmentation.png")
+        );
+        assert_eq!(
+            semantic_default_output(std::path::Path::new("photos/dog.jpg")),
+            PathBuf::from("photos/dog-semantic.png")
+        );
+        assert_eq!(
+            depth_default_output(std::path::Path::new("photos/dog.jpg")),
+            PathBuf::from("photos/dog-depth.png")
         );
     }
 

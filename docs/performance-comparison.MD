@@ -32,7 +32,7 @@ clear: Montgomery uses dramatically less host RAM, but more VRAM for vision trai
 | Checkpoints | One full resumable checkpoint per epoch |
 | Reported time | External wall-clock median of 3 runs; segmentation uses 2 |
 
-Montgomery is the current Burn `0.22.0-pre.3` implementation using WGPU/Vulkan. Ultralytics is
+Montgomery numbers were measured on Burn `0.22.0-pre.3` using WGPU/Vulkan. Ultralytics is
 8.4.117 using PyTorch 2.11/CUDA. Each gets an untimed warm-up run, and timed order alternates.
 Lower time, RAM, and VRAM numbers are better.
 

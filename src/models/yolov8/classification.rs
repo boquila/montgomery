@@ -334,7 +334,7 @@ mod tests {
                 let worker = std::thread::Builder::new()
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
-                        let device = Default::default();
+                        let device = Device::flex();
                         let mut model = <$config>::default().init(&device);
                         model.load_pytorch_weights(checkpoint).unwrap();
                         let output = model.forward(Tensor::zeros([1, 3, 64, 64], &device));
@@ -373,7 +373,7 @@ mod tests {
                 let worker = std::thread::Builder::new()
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
-                        let device = Default::default();
+                        let device = Device::flex();
                         let mut model = <$config>::default().init(&device);
                         model.load_burnpack_weights(checkpoint).unwrap();
                         let input = load_reference_image($id, &device);
@@ -402,7 +402,8 @@ mod tests {
         ($fn_name:ident, $config:ty, $id:literal) => {
             /// Measure single-image batch-1 inference latency with the packed native artifact on
             /// the Flex CPU backend at the family's 224 px classify input. Run with
-            /// `cargo test --release <id> -- --ignored --nocapture` after the weight-prep loop.
+            /// `cargo test --release <id> -- --ignored --nocapture --test-threads 1` after the
+            /// weight-prep loop.
             #[test]
             #[ignore]
             fn $fn_name() {
@@ -418,7 +419,7 @@ mod tests {
                 let worker = std::thread::Builder::new()
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
-                        let device = Default::default();
+                        let device = Device::flex();
                         let mut model = <$config>::default().init(&device);
                         model.load_burnpack_weights(checkpoint).unwrap();
                         let input = Tensor::<4>::zeros([1, 3, 224, 224], &device);
@@ -452,7 +453,8 @@ mod tests {
 
     /// Compare the classification runtime end to end against the official Ultralytics prediction
     /// on the reference image (top-5 classes and probabilities). Run the generator first:
-    /// `python tools/export_yolov8_cls_fixtures.py target/<id>.pt docs/dog_bike_man.jpg target --model <id>`
+    /// `uv run --project tools tools/export_yolov8_cls_fixtures.py target/<id>.pt
+    /// docs/dog_bike_man.jpg target --model <id>`
     macro_rules! cls_e2e_test {
         ($fn_name:ident, $config:ty, $id:literal) => {
             #[test]

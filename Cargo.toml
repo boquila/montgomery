@@ -16,13 +16,14 @@ pretrained = ["dep:burn-store", "dep:burn-pack", "dep:ciborium", "dep:sha2"]
 # Offline ONNX production is a Rust-to-SafeTensors-to-Python bridge. The feature adds no runtime
 # dependency to ONNX consumers; it only exposes the exporter and its CLI orchestration.
 onnx = ["pretrained"]
-gpu = ["burn/wgpu", "dep:burn-wgpu", "burn-wgpu/vulkan", "burn-wgpu/webgpu", "burn-wgpu/metal"]
+gpu = ["burn/wgpu", "dep:burn-wgpu", "burn-wgpu/webgpu", "burn-wgpu/metal"]
 training = [
     "pretrained",
     "gpu",
     "burn/autodiff",
-    "burn/dataset",
-    "burn/train",
+    "burn/optim",
+    # burn-optim 0.22.0 only compiles with std.
+    "burn/std",
     "dep:rand",
     "dep:rand_chacha",
     "dep:serde_yaml",
@@ -35,12 +36,14 @@ training = [
 cpu-simd = ["burn-flex/simd", "burn-flex/x86-v4"]
 
 [dependencies]
-burn = { version = "=0.22.0-pre.3", default-features = false }
-burn-flex = "=0.22.0-pre.3"
-burn-store = { version = "=0.22.0-pre.3", default-features = false, features = ["std", "pytorch", "memmap"], optional = true }
-burn-pack = { version = "=0.22.0-pre.3", default-features = false, features = ["std"], optional = true }
-burn-wgpu = { version = "=0.22.0-pre.3", optional = true }
-cubecl = { version = "=0.11.0-pre.3", default-features = false, optional = true }
+# Burn 0.22 gates its Flex CPU backend behind `burn/flex`; without it `Device::flex()` and the
+# default CPU device are unavailable.
+burn = { version = "=0.22.0", default-features = false, features = ["flex"] }
+burn-flex = "=0.22.0"
+burn-store = { version = "=0.22.0", default-features = false, features = ["std", "pytorch", "memmap"], optional = true }
+burn-pack = { version = "=0.22.0", default-features = false, features = ["std"], optional = true }
+burn-wgpu = { version = "=0.22.0", optional = true }
+cubecl = { version = "=0.11.0", default-features = false, optional = true }
 ciborium = { version = "0.2", optional = true }
 clap = { version = "4", features = ["derive"] }
 fast_image_resize = { version = "=6.0.0", features = ["image"] }
@@ -54,7 +57,21 @@ serde_json = "1"
 serde_yaml = { version = "0.9", optional = true }
 sha2 = { version = "0.10", optional = true }
 
+# Vulkan compiles kernels to SPIR-V, whose build script needs the Vulkan SDK on macOS. macOS uses
+# Metal instead, so only other targets enable it.
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+burn-wgpu = { version = "=0.22.0", optional = true, features = ["vulkan"] }
+
+[lib]
+# The library has no doc-comment examples, so skip the empty doc-test pass on every `cargo test`.
+doctest = false
+
 [[bin]]
 name = "montgomery"
 path = "src/main.rs"
 required-features = ["pretrained"]
+
+[profile.dev]
+# File and line numbers in panics without full debug info; cuts link time and target/ size.
+debug = "line-tables-only"
+

@@ -22,6 +22,8 @@ pub enum ExportFamily {
 pub enum ExportTask {
     Detect,
     Segment,
+    Semantic,
+    Depth,
     Classify,
 }
 
@@ -114,6 +116,16 @@ const SEGMENT_OUTPUTS: &[OutputTensorSpec] = &[
         semantic: "stride-4 mask prototypes",
     },
 ];
+const SEMANTIC_OUTPUTS: &[OutputTensorSpec] = &[OutputTensorSpec {
+    name: "logits",
+    rank: 4,
+    semantic: "unnormalized per-pixel class logits at stride 8",
+}];
+const DEPTH_OUTPUTS: &[OutputTensorSpec] = &[OutputTensorSpec {
+    name: "depth",
+    rank: 4,
+    semantic: "calibrated per-pixel depth in meters at stride 4",
+}];
 const CLASSIFY_OUTPUTS: &[OutputTensorSpec] = &[
     OutputTensorSpec {
         name: "logits",
@@ -460,6 +472,66 @@ impl ExportSpec {
                 "x",
                 "yolo26x-seg.yaml",
             ),
+            Yolo26NSem => (
+                ExportFamily::Yolo26,
+                ExportTask::Semantic,
+                "n",
+                "yolo26n-sem.yaml",
+            ),
+            Yolo26SSem => (
+                ExportFamily::Yolo26,
+                ExportTask::Semantic,
+                "s",
+                "yolo26s-sem.yaml",
+            ),
+            Yolo26MSem => (
+                ExportFamily::Yolo26,
+                ExportTask::Semantic,
+                "m",
+                "yolo26m-sem.yaml",
+            ),
+            Yolo26LSem => (
+                ExportFamily::Yolo26,
+                ExportTask::Semantic,
+                "l",
+                "yolo26l-sem.yaml",
+            ),
+            Yolo26XSem => (
+                ExportFamily::Yolo26,
+                ExportTask::Semantic,
+                "x",
+                "yolo26x-sem.yaml",
+            ),
+            Yolo26NDepth => (
+                ExportFamily::Yolo26,
+                ExportTask::Depth,
+                "n",
+                "yolo26n-depth.yaml",
+            ),
+            Yolo26SDepth => (
+                ExportFamily::Yolo26,
+                ExportTask::Depth,
+                "s",
+                "yolo26s-depth.yaml",
+            ),
+            Yolo26MDepth => (
+                ExportFamily::Yolo26,
+                ExportTask::Depth,
+                "m",
+                "yolo26m-depth.yaml",
+            ),
+            Yolo26LDepth => (
+                ExportFamily::Yolo26,
+                ExportTask::Depth,
+                "l",
+                "yolo26l-depth.yaml",
+            ),
+            Yolo26XDepth => (
+                ExportFamily::Yolo26,
+                ExportTask::Depth,
+                "x",
+                "yolo26x-depth.yaml",
+            ),
             Yolo26NCls => (
                 ExportFamily::Yolo26,
                 ExportTask::Classify,
@@ -496,10 +568,12 @@ impl ExportSpec {
         let outputs = match task {
             ExportTask::Detect => DETECT_OUTPUTS,
             ExportTask::Segment => SEGMENT_OUTPUTS,
+            ExportTask::Semantic => SEMANTIC_OUTPUTS,
+            ExportTask::Depth => DEPTH_OUTPUTS,
             ExportTask::Classify => CLASSIFY_OUTPUTS,
         };
         let box_format = match (family, task) {
-            (_, ExportTask::Classify) => None,
+            (_, ExportTask::Classify) | (_, ExportTask::Semantic) | (_, ExportTask::Depth) => None,
             (ExportFamily::Yolo11 | ExportFamily::Yolov8 | ExportFamily::Yolo12, _) => {
                 Some(BoxFormat::Xywh)
             }
@@ -525,6 +599,10 @@ impl ExportSpec {
             stride: 32,
             num_classes: if task == ExportTask::Classify {
                 1000
+            } else if task == ExportTask::Semantic {
+                19
+            } else if task == ExportTask::Depth {
+                1
             } else {
                 80
             },

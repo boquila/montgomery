@@ -42,7 +42,7 @@ struct BottleneckConfig {
 impl BottleneckConfig {
     /// Create a new instance of the bottleneck block [config](BottleneckConfig).
     pub fn new(in_channels: usize, out_channels: usize, shortcut: bool, depthwise: bool) -> Self {
-        // In practice, expansion = 1.0 and no shortcut connection is used
+        // In practice, expansion = 1.0; only the backbone's non-SPP stages use the shortcut
         let hidden_channels = out_channels;
 
         let conv1 = BaseConvConfig::new(in_channels, hidden_channels, 1, 1, 1);

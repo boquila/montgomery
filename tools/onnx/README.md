@@ -24,7 +24,7 @@ and NMS-free top-k rows below that threshold may reorder between runtimes. Shape
 finiteness, probability tolerances, all confidence-relevant rows, and the complete ungated error
 statistics remain mandatory. `--no-verify` skips the extra Burn comparison, never ONNX Runtime.
 
-`--reproducible` omits timestamps and uses a canonical digest over sorted tensor names, dtypes,
-shapes, and values; repeated exports to the same filename are byte-identical. SafeTensors' own
-container hash is retained only for private bridge integrity because metadata-map order is not a
-stable content identity.
+`--reproducible` omits timestamps, so repeated exports to the same filename are byte-identical.
+Every export records a canonical digest over sorted tensor names, dtypes, shapes, and values.
+SafeTensors' own container hash is retained only for private bridge integrity because metadata-map
+order is not a stable content identity.

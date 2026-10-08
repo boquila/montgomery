@@ -357,6 +357,10 @@ def export_and_validate(
 
 def postprocessing(manifest: dict) -> list[str]:
     family = manifest["family"]
+    if manifest["task"] == "semantic":
+        return ["bilinear upsample logits to the letterboxed canvas with align_corners=false", "crop letterbox padding", "bilinear resize to the source image", "per-pixel argmax over classes"]
+    if manifest["task"] == "depth":
+        return ["bilinear upsample depth to the letterboxed canvas with align_corners=false", "crop letterbox padding", "bilinear resize to the source image", "depth stays in float meters"]
     if family == "yolox":
         steps = ["multiply objectness by each class probability", "convert XYWH to XYXY", "confidence filter", "class-aware greedy NMS", "reverse top-left padding geometry"]
     elif family in {"yolov10", "yolo26"}:

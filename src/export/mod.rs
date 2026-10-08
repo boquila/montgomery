@@ -20,7 +20,10 @@ use std::{
 
 use sha2::{Digest, Sha256};
 
-use crate::{COCO_CLASSES, ModelId, PredictOptions, Predictor, Result, data::IMAGENET_CLASSES};
+use crate::{
+    CITYSCAPES_CLASSES, COCO_CLASSES, ModelId, PredictOptions, Predictor, Result,
+    data::IMAGENET_CLASSES,
+};
 
 pub use manifest::PublishedArtifact as OnnxArtifact;
 pub use spec::{ExternalDataPolicy, OnnxPrecision, OnnxProfile};
@@ -241,6 +244,11 @@ fn export_staged(
             .iter()
             .map(|name| (*name).to_owned())
             .collect(),
+        ExportTask::Semantic => CITYSCAPES_CLASSES
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect(),
+        ExportTask::Depth => vec!["depth".to_owned()],
         _ => COCO_CLASSES.iter().map(|name| (*name).to_owned()).collect(),
     };
     let preprocessing = match spec.family {
@@ -406,7 +414,7 @@ fn validate_options(
         return Err("argument validation: fp16 publication is disabled until its GPU parity gate is implemented; export fp32".into());
     }
     if options.checkpoint_state != CheckpointState::Ema {
-        return Err("argument validation: raw-model selection is disabled until native multi-state training checkpoints are supported; current inputs are already resolved inference states".into());
+        return Err("argument validation: raw-model selection is disabled until export accepts native multi-state training checkpoints; current .bpk inputs are already resolved inference states".into());
     }
     if options.dynamic_batch || options.dynamic_spatial {
         return Err("argument validation: dynamic axes are disabled until their multi-shape parity gates are implemented".into());

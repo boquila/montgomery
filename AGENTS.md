@@ -13,10 +13,13 @@ For a new family, scale, or task, follow [docs/MODEL_BRINGUP.md](docs/MODEL_BRIN
 - `src/models/yolov3_tiny/`, `yolov8/`, `yolov10/`, `yolo11/`, `yolo12/`, `yolo26/`:
   experimental Ultralytics-family graphs and native Burnpack loaders.
 - YOLOv8, YOLO11, and YOLO26 also provide `-seg` variants; YOLOv8, YOLO11, and YOLO26 provide
-  `-cls` variants.
+  `-cls` variants. YOLO26 additionally provides inference-only `-sem` semantic-segmentation
+  variants (dense class maps, no boxes; see `src/models/yolo26/semantic.rs`) and `-depth`
+  monocular depth-estimation variants (dense meters, no boxes; see `src/models/yolo26/depth.rs`).
 - `src/data/letterbox.rs`: inference preprocessing and reversible source-image geometry.
 - `src/data/augmentation/`: feature-gated, traceable detect/segment/classify augmentation pinned
-  to Ultralytics `v8.4.117-2-g461196cf0`. Parity lives in `tests/augmentation_parity.rs`.
+  to Ultralytics `v8.4.117-2-g461196cf0`. Parity lives in the `augmentation` module of
+  `tests/integration.rs`.
 - `src/training/`: WGPU-only native training, validation, checkpointing, and reporting.
 - `src/lib.rs`: `ModelId`, `Predictor`, result types, postprocessing, masks, and weight packing.
 - `src/main.rs`: CLI dispatch.
@@ -32,7 +35,7 @@ user-facing text.
 Run Python tools from the repository root with the tools project selected:
 
 ```console
-uv run --project tools tools/export_checkpoint_state.py yolo26n.pt target/yolo26n-state.pt
+uv run --project tools tools/export_checkpoint_state.py target/yolo26n.pt target/yolo26n-state.pt
 ```
 
 Stable YOLOX and Ultralytics-family models both run from native Burnpacks:
@@ -50,28 +53,43 @@ Python/PyTorch is conversion- and development-time only; normal inference is Rus
 
 ## Verification
 
-CI installs the current stable Rust toolchain on every run. Before handing off changes, run the
-exact CI sequence below. Do not substitute `cargo check` for Clippy, filter the training tests, or
-omit `cargo build`:
+Keep local checks light; CI runs the full set on every pull request. Don't run the whole CI matrix
+locally unless the user asks. Before handing off a change, run:
 
 ```console
 cargo fmt --check
-cargo build
-cargo test
 cargo clippy --all-targets -- -D warnings
-cargo test --features training
-cargo clippy --features training --all-targets -- -D warnings
-cargo clippy --no-default-features --lib -- -D warnings
+cargo test
 ```
 
-When external checkpoints and fixtures are available:
+Add the training checks only when the change touches `src/training/`, `src/data/augmentation/`, or
+code under `cfg(feature = "training")`. Drop `--lib` when it touches the training CLI:
 
 ```console
-cargo test -- --ignored
+cargo clippy --features training --all-targets -- -D warnings
+cargo test --features training --lib
 ```
 
-Training is opt-in at runtime, but its full test and Clippy commands above are mandatory before
-handing off any change because Linux CI always runs them.
+Run `cargo clippy --no-default-features --lib -- -D warnings` only when the change touches feature
+gates, optional dependencies, or `src/lib.rs` re-exports.
+
+CI installs the current stable Rust toolchain on every run. A Linux lint job runs formatting, all
+three Clippy passes, and `cargo doc` with warnings as errors. `cargo test` runs on Linux, Windows,
+and macOS; Windows and macOS also run `cargo clippy --all-features`, which matches the release
+build. Linux runs the ignored `every_scale` tests, `cargo test --features training`, and the WGPU
+training smoke test on a software Vulkan driver.
+
+Tests pin their device with `Device::flex()`. Don't use `Default::default()` or
+`Device::default()` for a test device: with the `gpu` or `training` feature it resolves to WGPU,
+which compiles and autotunes kernels in every test process. Keep default tests at N scale with
+small inputs. Mark tests that build several large graphs `#[ignore]` and give them a CI step.
+
+Checkpoint-backed parity tests are ignored too. When external checkpoints and fixtures are
+available:
+
+```console
+cargo test -- --ignored --skip latency
+```
 
 Real training, hardware smoke tests, and latency measurements must use `--release`. Single-image
 latency tests must use `--test-threads 1` to avoid CPU contention. When touching a runtime/backend
@@ -82,7 +100,8 @@ boundary, compare CPU and GPU JSON detections on the reference image.
 - Public detections are continuous, unnormalized source-image `XYXY` edges in pixels. They are not
   `XYWH`; `xmax == width` and `ymax == height` are valid.
 - YOLOX uses top-left letterboxing and raw RGB pixels. Ultralytics detection/segmentation models use
-  stride-aligned rectangular letterboxing and RGB values in `[0, 1]`.
+  stride-aligned rectangular letterboxing and RGB values in `[0, 1]`. Semantic models reuse that
+  letterbox at a 1024 px default input.
 - YOLOX batch norm uses eps `1e-3`, momentum `0.03`. Classification checkpoints use plain PyTorch
   defaults (eps `1e-5`, momentum `0.1`) through `BnFlavor::Pytorch`.
 - YOLOv10 and YOLO26 are NMS-free end-to-end heads with top-300 selection. YOLO26 is also DFL-free.
@@ -110,6 +129,18 @@ rescaling. Golden tensor tests are the authority for these quirks.
 - Classification uses the Ultralytics 224 px anti-aliased shortest-edge resize, centered crop, RGB
   `[0, 1]`, and a 1000-way softmax. End-to-end parity compares the top-5 set and probabilities,
   since near-tied class order is resize-rounding sensitive.
+- Semantic segmentation (`yolo26n/s/m/l/x-sem`, inference-only) reuses the stride-32
+  rectangular letterbox and RGB `[0, 1]` input, emits stride-8 logits from the P3-only
+  `SemanticSegment` tower, and returns a dense source-image class map (`SemanticMask`) via
+  bilinear upsample plus per-pixel argmax. `predict_semantic()` is the only entry point;
+  `predict()` exposes no boxes for these models. Training rejects `-sem` architectures.
+- Monocular depth estimation (`yolo26n/s/m/l/x-depth`, inference-only) reuses the same
+  letterbox at a 768 px default input, fuses P3/P4/P5 through the 256-wide `Depth` tower
+  with corner-aligned bilinear steps, and returns a dense source-image float map in meters
+  (`DepthMap`) via bilinear upsample plus letterbox inversion. `predict_depth()` is the
+  only entry point. The checkpoint's `refine.2` block is dead weight (never executed
+  upstream) and stays unmapped; the `cal_a`/`cal_b` buffers are load-bearing. Training
+  rejects `-depth` architectures.
 
 ## Augmentation and training
 

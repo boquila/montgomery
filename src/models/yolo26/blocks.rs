@@ -22,19 +22,10 @@ pub struct Conv {
     conv: Conv2d,
     bn: BatchNorm,
     act: bool,
-    #[cfg(feature = "training")]
-    depthwise_training_stencil: bool,
 }
 
 impl Conv {
     pub fn forward(&self, input: Tensor<4>) -> Tensor<4> {
-        #[cfg(feature = "training")]
-        let x = if self.depthwise_training_stencil && input.is_require_grad() {
-            crate::models::training_ops::depthwise_3x3_stride_1(input, self.conv.weight.val())
-        } else {
-            self.conv.forward(input)
-        };
-        #[cfg(not(feature = "training"))]
         let x = self.conv.forward(input);
         let x = self.bn.forward(x);
         if self.act { silu(x) } else { x }
@@ -138,11 +129,6 @@ impl ConvConfig {
             conv,
             bn,
             act: self.act,
-            #[cfg(feature = "training")]
-            depthwise_training_stencil: self.groups == self.in_channels
-                && self.in_channels == self.out_channels
-                && self.kernel_size == 3
-                && self.stride == 1,
         }
     }
 }
@@ -300,7 +286,7 @@ impl C3k2 {
 }
 
 /// Shared construction logic for the C3k2 variants: a split convolution, an output projection
-/// sized for the skip plus every chained block, and Ultralytics' default expansion of 0.5.
+/// sized for the skip plus every chained block, and the caller's expansion (`e`, default 0.5).
 pub(super) struct C3k2Shell {
     in_channels: usize,
     out_channels: usize,
@@ -778,8 +764,7 @@ pub(super) fn upsample_nearest_2x(input: Tensor<4>) -> Tensor<4> {
     let [_, _, height, width] = input.dims();
     interpolate(
         input,
-        [height * 2, width * 2],
-        InterpolateOptions::new(InterpolateMode::Nearest),
+        InterpolateOptions::new(InterpolateMode::Nearest).with_output_size([height * 2, width * 2]),
     )
 }
 
@@ -787,54 +772,12 @@ pub(super) fn upsample_nearest_2x(input: Tensor<4>) -> Tensor<4> {
 mod tests {
     use super::*;
 
-    #[cfg(feature = "training")]
-    #[test]
-    fn training_depthwise_stencil_matches_grouped_convolution_and_weight_gradient() {
-        let device = Device::default().autodiff();
-        let conv: Conv = ConvConfig::new(4, 4, 3, 1).depthwise().init(&device);
-        let values = (0..2 * 4 * 5 * 5)
-            .map(|index| (index as f32 - 50.0) / 37.0)
-            .collect::<Vec<_>>();
-        let input = Tensor::from_data(burn::tensor::TensorData::new(values, [2, 4, 5, 5]), &device);
-
-        let expected = conv.conv.forward(input.clone());
-        let actual = crate::models::training_ops::depthwise_3x3_stride_1(
-            input.clone(),
-            conv.conv.weight.val(),
-        );
-        let max_delta = (expected - actual)
-            .abs()
-            .max()
-            .into_data()
-            .as_slice::<f32>()
-            .unwrap()[0];
-        assert!(max_delta < 2e-5, "forward delta {max_delta}");
-
-        let expected_gradients = conv.conv.forward(input.clone()).sum().backward();
-        let actual_gradients =
-            crate::models::training_ops::depthwise_3x3_stride_1(input, conv.conv.weight.val())
-                .sum()
-                .backward();
-        let expected_weight = conv.conv.weight.grad(&expected_gradients).unwrap();
-        let actual_weight = conv.conv.weight.grad(&actual_gradients).unwrap();
-        let max_gradient_delta = (expected_weight - actual_weight)
-            .abs()
-            .max()
-            .into_data()
-            .as_slice::<f32>()
-            .unwrap()[0];
-        assert!(
-            max_gradient_delta < 2e-4,
-            "weight-gradient delta {max_gradient_delta}"
-        );
-    }
-
     #[test]
     fn produces_declared_shapes_for_yolo26n_blocks() {
         let worker = std::thread::Builder::new()
             .stack_size(32 * 1024 * 1024)
             .spawn(|| {
-                let device = Default::default();
+                let device = Device::flex();
                 let c3k2: C3k2 = C3k2Config::new(32, 64, 1, 0.25, true).init(&device);
                 let out = c3k2.forward(Tensor::zeros([1, 32, 40, 40], &device));
                 assert_eq!(out.dims(), [1, 64, 40, 40]);

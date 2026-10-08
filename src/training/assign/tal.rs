@@ -65,7 +65,8 @@ pub struct TalMatch {
     pub overlap: f32,
 }
 
-/// Deterministic Task-Aligned Assigner for fixture generation and CPU diagnosis.
+/// Deterministic host-side Task-Aligned Assigner used by the Ultralytics-family detection and
+/// segmentation losses.
 pub fn assign(
     ground_truth: &[TalGroundTruth],
     predictions: TalPredictions<'_>,

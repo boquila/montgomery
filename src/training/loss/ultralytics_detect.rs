@@ -576,7 +576,7 @@ mod tests {
     fn sparse_classification_matches_dense_bce() {
         use burn::tensor::Tensor;
 
-        let device = Default::default();
+        let device = burn::tensor::Device::flex();
         let raw_scores = Tensor::<3>::from_data(
             TensorData::new(vec![-2.0, 0.5, 1.2, 3.0, -0.7, 0.1], [1, 2, 3]),
             &device,
@@ -608,7 +608,7 @@ mod tests {
         const CLASSES: usize = 80;
         const ANCHORS: usize = 840;
 
-        let device = Device::default().autodiff();
+        let device = Device::flex().autodiff();
         let count = BATCH * CLASSES * ANCHORS;
         let logits = (0..count)
             .map(|index| ((index * 37 % 101) as f32 - 50.0) / 17.0)
@@ -678,7 +678,7 @@ mod tests {
     fn direct_loss_treats_inverted_early_predictions_as_zero_overlap() {
         use burn::tensor::Tensor;
 
-        let device = Default::default();
+        let device = burn::tensor::Device::flex();
         let raw_boxes = Tensor::<3>::from_floats([[[-1.0], [-1.0], [-1.0], [-1.0]]], &device);
         let raw_scores = Tensor::<3>::zeros([1, 1, 1], &device);
         let targets = vec![vec![TalGroundTruth {
@@ -706,7 +706,7 @@ mod tests {
     fn dual_loss_matches_two_independent_dfl_losses() {
         use burn::tensor::Tensor;
 
-        let device = Default::default();
+        let device = burn::tensor::Device::flex();
         let levels = [FeatureLevelLayout {
             height: 2,
             width: 2,
