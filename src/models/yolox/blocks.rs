@@ -1,7 +1,3 @@
-// burn-derive 0.22.0-pre.3 expands `#[derive(Config)]` constructors as `field: field`, which
-// Clippy 1.99 reports as redundant field names. Burn 0.22.0 no longer generates them.
-#![allow(clippy::redundant_field_names)]
-
 use alloc::vec;
 use burn::{
     config::Config,

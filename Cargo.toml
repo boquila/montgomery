@@ -16,7 +16,7 @@ pretrained = ["dep:burn-store", "dep:burn-pack", "dep:ciborium", "dep:sha2"]
 # Offline ONNX production is a Rust-to-SafeTensors-to-Python bridge. The feature adds no runtime
 # dependency to ONNX consumers; it only exposes the exporter and its CLI orchestration.
 onnx = ["pretrained"]
-gpu = ["burn/wgpu", "dep:burn-wgpu", "burn-wgpu/vulkan", "burn-wgpu/webgpu", "burn-wgpu/metal"]
+gpu = ["burn/wgpu", "dep:burn-wgpu", "burn-wgpu/webgpu", "burn-wgpu/metal"]
 training = [
     "pretrained",
     "gpu",
@@ -56,6 +56,11 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = { version = "0.9", optional = true }
 sha2 = { version = "0.10", optional = true }
+
+# Vulkan compiles kernels to SPIR-V, whose build script needs the Vulkan SDK on macOS. macOS uses
+# Metal instead, so only other targets enable it.
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+burn-wgpu = { version = "=0.22.0", optional = true, features = ["vulkan"] }
 
 [lib]
 # The library has no doc-comment examples, so skip the empty doc-test pass on every `cargo test`.

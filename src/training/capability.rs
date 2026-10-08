@@ -4,7 +4,7 @@ use burn::{
         BatchNorm, BatchNormConfig,
         conv::{Conv2d, Conv2dConfig},
     },
-    optim::{GradientsParams, SgdConfig},
+    optim::{GradientsParams, SgdConfig, momentum::MomentumConfig},
     tensor::{Device, Distribution, Tensor},
 };
 
@@ -41,7 +41,10 @@ fn wgpu_autodiff_capability() {
     let input = Tensor::random([2, 3, 16, 16], Distribution::Default, &device);
     let loss = model.forward(input);
     let grads = GradientsParams::from_grads(loss.backward(), &model);
-    let mut optimizer = SgdConfig::new().init();
+    // Momentum gives the optimizer per-parameter state, so its record is non-empty.
+    let mut optimizer = SgdConfig::new()
+        .with_momentum(Some(MomentumConfig::new()))
+        .init();
     let model = optimizer.step(1e-3, model, grads);
 
     // `valid` disables BatchNorm's training flag and gives the copy its own running state, so this
