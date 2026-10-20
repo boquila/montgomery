@@ -12,7 +12,7 @@ categories = ["computer-vision", "science"]
 
 [features]
 default = ["pretrained", "onnx"]
-pretrained = ["dep:burn-store", "dep:burn-pack", "dep:ciborium", "dep:sha2"]
+pretrained = ["dep:burn-store", "dep:burn-pack", "dep:ciborium", "dep:sha2", "dep:serde_yaml"]
 # Offline ONNX production is a Rust-to-SafeTensors-to-Python bridge. The feature adds no runtime
 # dependency to ONNX consumers; it only exposes the exporter and its CLI orchestration.
 onnx = ["pretrained"]
@@ -26,7 +26,6 @@ training = [
     "burn/std",
     "dep:rand",
     "dep:rand_chacha",
-    "dep:serde_yaml",
     "dep:sha2",
     "dep:cubecl",
 ]

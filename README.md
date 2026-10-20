@@ -70,6 +70,31 @@ Benchmark cold-start and steady-state inference without loading an image:
 montgomery bench --device gpu --model best.bpk
 ```
 
+## Datasets
+
+Inspect and prepare datasets entirely in Rust, without loading a model:
+
+```console
+montgomery data --path dataset/data.yaml
+montgomery data inspect --path dataset/data.yaml --verify-images --check
+montgomery data convert --path dataset/data.yaml --to detect --out-dir boxes
+montgomery data convert --path boxes/data.yaml --to classify --out-dir crops --imgsz 224
+montgomery data resize --path crops/data.yaml --imgsz 224 --mode letterbox --out-dir small
+```
+
+Inspection reports image/label counts, label types, class balance, image sizes, missing labels,
+and split leakage. Segmentation-to-detection retains images and replaces masks with boxes;
+classification conversion crops one image per object. Resizing preserves labels and splits.
+`--imgsz 224` fits within 224×224 without stretching or upscaling; `--mode letterbox` produces
+an exact 224×224 padded image, and `--mode stretch` produces an exact size by changing aspect ratio.
+
+Every transformation requires `--out-dir DIRECTORY` for a new dataset or `--override` to replace
+the source dataset after processing. Override retains a recovery backup; existing output
+directories are refused with `--out-dir`.
+Use `--dry-run` to preview a transformation and `--json` for scripting. YOLO, COCO, and class-folder
+datasets are supported in the standard build, without the training feature.
+See [the dataset guide](docs/DATASETS.md) for manifests, options, and complete workflows.
+
 ## Train
 
 ```console
