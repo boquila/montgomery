@@ -30,6 +30,8 @@ use montgomery::{
 };
 use serde::Serialize;
 
+mod data_cli;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ValueEnum)]
 #[serde(rename_all = "lowercase")]
 enum DeviceSelection {
@@ -59,6 +61,8 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Inspect, convert, and resize datasets without loading a model.
+    Data(data_cli::DataArgs),
     /// Run detection, instance segmentation, semantic segmentation, depth estimation, or
     /// classification on an image.
     Predict(PredictArgs),
@@ -631,6 +635,7 @@ fn main() -> montgomery::Result<()> {
     }
     let args = Args::parse();
     match args.command {
+        Command::Data(args) => data_cli::run(args),
         Command::Predict(args) => predict(args),
         Command::Bench(args) => bench(args),
         Command::PackWeights(args) => {

@@ -19,6 +19,9 @@ extern crate alloc;
 pub use burn::optim::{RecordState, StateSink, StateSource, join_path};
 
 mod data;
+/// Dataset inspection and offline transformations, independent of model execution.
+#[cfg(feature = "pretrained")]
+pub mod dataset;
 #[cfg(feature = "onnx")]
 pub mod export;
 pub mod models;
