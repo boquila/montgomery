@@ -37,12 +37,12 @@ cpu-simd = ["burn-flex/simd", "burn-flex/x86-v4"]
 [dependencies]
 # Burn 0.22 gates its Flex CPU backend behind `burn/flex`; without it `Device::flex()` and the
 # default CPU device are unavailable.
-burn = { version = "=0.22.0", default-features = false, features = ["flex"] }
-burn-flex = "=0.22.0"
-burn-store = { version = "=0.22.0", default-features = false, features = ["std", "pytorch", "memmap"], optional = true }
-burn-pack = { version = "=0.22.0", default-features = false, features = ["std"], optional = true }
-burn-wgpu = { version = "=0.22.0", optional = true }
-cubecl = { version = "=0.11.0", default-features = false, optional = true }
+burn = { version = "=0.22.1", default-features = false, features = ["flex"] }
+burn-flex = "=0.22.1"
+burn-store = { version = "=0.22.1", default-features = false, features = ["std", "pytorch", "memmap"], optional = true }
+burn-pack = { version = "=0.22.1", default-features = false, features = ["std"], optional = true }
+burn-wgpu = { version = "=0.22.1", optional = true }
+cubecl = { version = "=0.11.4", default-features = false, optional = true }
 ciborium = { version = "0.2", optional = true }
 clap = { version = "4", features = ["derive"] }
 fast_image_resize = { version = "=6.0.0", features = ["image"] }
@@ -59,7 +59,7 @@ sha2 = { version = "0.10", optional = true }
 # Vulkan compiles kernels to SPIR-V, whose build script needs the Vulkan SDK on macOS. macOS uses
 # Metal instead, so only other targets enable it.
 [target.'cfg(not(target_os = "macos"))'.dependencies]
-burn-wgpu = { version = "=0.22.0", optional = true, features = ["vulkan"] }
+burn-wgpu = { version = "=0.22.1", optional = true, features = ["vulkan"] }
 
 [lib]
 # The library has no doc-comment examples, so skip the empty doc-test pass on every `cargo test`.
