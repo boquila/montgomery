@@ -228,6 +228,13 @@ impl Yolov10HeadConfig {
     pub fn with_num_classes(mut self, num_classes: usize) -> Self {
         assert!(num_classes > 0, "class count must be positive");
         self.num_classes = num_classes;
+        // `v10Detect` sizes the classification tower from the real class count —
+        // `max(ch[0], min(nc, 100))` — but `new` cannot know nc yet, so it falls back to the COCO
+        // default. Leaving the tower at that default while nc is 3 makes it 80 wide instead of 64:
+        // harmless during training (the extra channels go unused) and only visible when an exported
+        // graph is audited against the Ultralytics reconstruction, where it shows up as every cv3
+        // tensor having the wrong shape.
+        self.cls_channels = self.p3_channels.max(num_classes.min(100));
         self
     }
 
@@ -268,4 +275,35 @@ fn make_anchors(levels: [(usize, usize, f32); 3], device: &Device) -> (Tensor<2>
         Tensor::from_data(TensorData::new(anchors, [total, 2]), device),
         Tensor::from_data(TensorData::new(strides, [total, 1]), device),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn class_tower_follows_the_class_count_at_the_n_rung() {
+        // `Detect` sizes the light classification tower as `max(ch[0], min(nc, 100))`. The `n`
+        // rung's P3 width is 64, so a 3-class model needs a 64-wide tower; left at the COCO
+        // default it keeps 80, which trains silently and only shows up when an exported graph's
+        // cv3 shapes are audited against the reference reconstruction.
+        let narrow = Yolov10HeadConfig::new(64, 128, 256);
+        assert_eq!(narrow.cls_channels, 80, "the COCO default still applies without a class count");
+        assert_eq!(narrow.with_num_classes(3).cls_channels, 64);
+
+        // Wider inputs track the channel count rather than the class count, and the 100 cap
+        // holds for both.
+        assert_eq!(
+            Yolov10HeadConfig::new(128, 256, 512)
+                .with_num_classes(3)
+                .cls_channels,
+            128
+        );
+        assert_eq!(
+            Yolov10HeadConfig::new(64, 128, 256)
+                .with_num_classes(200)
+                .cls_channels,
+            100
+        );
+    }
 }

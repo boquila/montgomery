@@ -12,7 +12,7 @@ use burn::{
     tensor::Device,
     tensor::Tensor,
 };
-use burn_store::{ModuleSnapshot, PathFilter};
+use burn_store::{ApplyError, ModuleSnapshot, PathFilter};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -777,6 +777,20 @@ impl ReplacedProjection {
     fn is_replaced(self, path: &str) -> bool {
         !(self.filter())(path, "")
     }
+
+    /// Whether this head can legitimately have a classification tower whose width differs from
+    /// the checkpoint's.
+    ///
+    /// The `Detect`-based heads size their tower from the class count — `max(ch[0], min(nc, 100))`
+    /// — so an 80-class checkpoint and a 3-class model disagree above the projection. The other
+    /// projections have no such tower: `head.linear` is a single projection, and YOLOX/YOLOv3 name
+    /// their class branches differently, so `is_class_tower` never matches them.
+    fn tolerates_tower_resize(self) -> bool {
+        match self {
+            Self::Detector | Self::Yolo26Segment => true,
+            Self::Classifier | Self::Yolox | Self::Yolov3 => false,
+        }
+    }
 }
 
 fn keep_without_classifier(path: &str, _container: &str) -> bool {
@@ -799,6 +813,23 @@ fn keep_without_yolo26_segment_classes(path: &str, container: &str) -> bool {
     keep_without_detector_classes(path, container) && !path.starts_with("head.proto.sem_out.")
 }
 
+/// Whether `path` names one of the convolutions that make up a `Detect` classification tower.
+///
+/// The tower width is `max(ch[0], min(nc, 100))`. Only the `n` rung has `ch[0] <= 100` (64), so
+/// only there does the width follow the class count: an 80-class checkpoint has an 80-wide tower,
+/// a 3-class model a 64-wide one. Ultralytics drops the mismatched keys in exactly the same place
+/// (`intersect_dicts`); this function is that place for the Rust side. The projection that follows
+/// the tower (`cls_out`) is already excluded by `projection.filter()`.
+///
+/// Matched by module segment rather than by substring so that YOLOX's `head.cls_preds.N` — whose
+/// per-scale index is a bare number — is not swept in by accident.
+fn is_class_tower(path: &str) -> bool {
+    const TOWER: [&str; 6] = [
+        "cls_0", "cls_1", "cls_dw_0", "cls_pw_0", "cls_dw_1", "cls_pw_1",
+    ];
+    path.split('.').any(|segment| TOWER.contains(&segment))
+}
+
 fn transfer_pretrained<M>(
     mut target: M,
     official: &M,
@@ -808,12 +839,27 @@ where
     M: Module,
 {
     let snapshots = official.collect(None, None, false);
-    let result = target.apply(
+    let mut result = target.apply(
         snapshots,
         Some(PathFilter::new().with_predicate(projection.filter())),
         None,
         false,
     );
+
+    // Shape mismatches inside the classification tower are expected, not a fault: they are what
+    // the `n` rung looks like when the class count crosses `ch[0]`. Burn leaves those parameters
+    // at their fresh initialization and reports them as errors, so they are reclassified as
+    // "freshly initialized" here. Everything else stays fatal — a wrong-architecture artifact
+    // mismatches body tensors too, and must not load as a silently half-random model.
+    let (tower, fatal): (Vec<ApplyError>, Vec<ApplyError>) = result
+        .errors
+        .drain(..)
+        .partition(|error| match error {
+            ApplyError::ShapeMismatch { path, .. } => is_class_tower(path),
+            _ => false,
+        });
+    result.errors = fatal;
+
     if !result.errors.is_empty() || !result.missing.is_empty() || !result.unused.is_empty() {
         return Err(format!(
             "pretrained transfer differed outside the documented class projections:\n{result}"
@@ -831,10 +877,25 @@ where
         )
         .into());
     }
+    if !tower.is_empty() && !projection.tolerates_tower_resize() {
+        return Err(format!(
+            "pretrained transfer resized the classification tower of a {}-class projection:\n{result}",
+            projection.official_classes()
+        )
+        .into());
+    }
     eprintln!(
-        "Initialized {} tensors from pretrained weights; freshly initialized {} class-projection tensors",
+        "Initialized {} tensors from pretrained weights; freshly initialized {} class-projection tensors{}",
         result.applied.len(),
-        result.skipped.len()
+        result.skipped.len(),
+        if tower.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " and {} classification-tower tensors (width follows the class count at this scale)",
+                tower.len()
+            )
+        }
     );
     Ok(target)
 }
