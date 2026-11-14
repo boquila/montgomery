@@ -1020,14 +1020,36 @@ fn train_inner(
     if batch_count == 0 {
         return Err("training split produces no batches".into());
     }
-    let trainer = if let Some(resume) = resume {
-        Trainer::from_checkpoint(resume)?
+    // `Trainer::from_checkpoint` rebuilds its config from the checkpoint manifest, so a CLI
+    // override applied to the local copy above never reached the scheduler or the next checkpoint
+    // — resuming with `--no-val` silently kept validating. Every later read goes through
+    // `trainer.config`; the local copy only seeds a brand new run.
+    let mut trainer = if let Some(resume) = resume {
+        let mut trainer = Trainer::from_checkpoint(resume)?;
+        trainer.config.validation_enabled = request.validation_enabled;
+        trainer.config.checkpoint_interval = request.checkpoint_interval;
+        trainer
     } else {
         let trainer = Trainer::create(config.clone(), &request.name, batch_count)?;
         trainer.run.write_dataset(&dataset)?;
         trainer.run.write_environment(&adapter, &dataset)?;
         trainer
     };
+    // The dataset can grow or shrink between runs, and the scheduler's total step count is
+    // persisted verbatim in the checkpoint. Left alone, the remaining learning-rate curve would
+    // follow the old data size: a bigger dataset would decay to `final_lr_ratio` too early.
+    let steps_per_epoch = (batch_count.div_ceil(trainer.config.accumulation)) as u64;
+    let total_steps = steps_per_epoch.saturating_mul(trainer.config.epochs as u64);
+    if total_steps > 0 && trainer.scheduler.total_steps != total_steps {
+        trainer.scheduler.total_steps = total_steps;
+        // Warmup was already paid for by the steps that ran, but it still has to stay inside the
+        // schedule or `current_lr` divides by a negative `regular_steps`.
+        trainer.scheduler.warmup_steps = trainer
+            .scheduler
+            .warmup_steps
+            .min(total_steps.saturating_sub(1));
+    }
+    let config = trainer.config.clone();
     let classes = config.model.num_classes;
     let model_id = config.model.architecture;
 
