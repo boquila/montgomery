@@ -39,6 +39,15 @@ const IMAGES: &[DemoImage] = &[
 const ACCENT: egui::Color32 = egui::Color32::from_rgb(94, 203, 255);
 /// Fill for the primary action button (dark enough for light label text).
 const RUN_FILL: egui::Color32 = egui::Color32::from_rgb(27, 105, 148);
+/// Success color for completed inference.
+const SUCCESS: egui::Color32 = egui::Color32::from_rgb(102, 217, 138);
+/// Warning color while a run is in flight.
+const RUNNING: egui::Color32 = egui::Color32::from_rgb(240, 190, 80);
+/// Which backend actually executes the graph.
+#[cfg(target_arch = "wasm32")]
+const BACKEND: &str = "Flex CPU · WebAssembly";
+#[cfg(not(target_arch = "wasm32"))]
+const BACKEND: &str = "Flex CPU · native";
 
 /// A finished inference run for one selected image.
 struct Outcome {
@@ -70,8 +79,6 @@ pub struct DemoApp {
     outcome: Arc<Mutex<Option<Outcome>>>,
     last_outcome: Option<Outcome>,
     threshold: f32,
-    /// The image index we last auto-ran, so selecting an image demonstrates inference immediately.
-    auto_image: Option<usize>,
 }
 
 impl DemoApp {
@@ -117,7 +124,14 @@ impl DemoApp {
             outcome: Arc::new(Mutex::new(None)),
             last_outcome: None,
             threshold: 0.25,
-            auto_image: None,
+        }
+    }
+
+    /// Selecting a different image clears the previous result, so boxes never look cached.
+    fn select_image(&mut self, index: usize) {
+        if self.selected != index {
+            self.selected = index;
+            self.last_outcome = None;
         }
     }
 
@@ -125,6 +139,8 @@ impl DemoApp {
         if self.busy.swap(true, Ordering::Relaxed) {
             return;
         }
+        self.last_outcome = None;
+        ctx.request_repaint();
         let image = self.images[self.selected].image.clone();
         spawn_inference(
             ctx.clone(),
@@ -141,36 +157,25 @@ impl eframe::App for DemoApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         if let Some(outcome) = self.outcome.lock().unwrap().take() {
-            self.last_outcome = Some(outcome);
+            // Ignore a run that finished after the user switched images.
+            if outcome.image_index == self.selected {
+                self.last_outcome = Some(outcome);
+            }
         }
         let busy = self.busy.load(Ordering::Relaxed);
         let (model_state, model_ready, status_color) = match &*self.model.lock().unwrap() {
-            ModelSlot::Loading => (
-                "loading model…".to_owned(),
-                false,
-                egui::Color32::from_rgb(240, 190, 80),
-            ),
+            ModelSlot::Loading => ("loading model…".to_owned(), false, RUNNING),
             ModelSlot::Failed(error) => (
                 format!("model error: {error}"),
                 false,
                 egui::Color32::from_rgb(240, 100, 100),
             ),
-            ModelSlot::Ready(_) => (
-                "YOLO26n ready".to_owned(),
-                true,
-                egui::Color32::from_rgb(110, 220, 150),
-            ),
+            ModelSlot::Ready(_) => ("YOLO26n ready".to_owned(), true, SUCCESS),
         };
-
-        // First run and every image switch demonstrate inference without an extra click.
-        if model_ready && !busy && self.auto_image != Some(self.selected) {
-            self.auto_image = Some(self.selected);
-            self.run_inference(&ctx);
-        }
 
         egui::Panel::left("images")
             .resizable(false)
-            .default_size(190.0)
+            .default_size(200.0)
             .show(ui, |ui| {
                 ui.add_space(10.0);
                 ui.label(
@@ -181,36 +186,70 @@ impl eframe::App for DemoApp {
                 );
                 ui.label(egui::RichText::new("YOLO26n demo").size(20.0).strong());
                 ui.label(
-                    egui::RichText::new("Pick a photo — detection runs automatically.")
+                    egui::RichText::new("1. Pick a photo\n2. Press Run inference")
                         .small()
                         .weak(),
                 );
                 ui.add_space(12.0);
                 ui.separator();
                 ui.add_space(8.0);
+                let mut clicked_card = None;
                 for (index, view) in self.images.iter().enumerate() {
                     let selected = self.selected == index;
-                    let image_response = ui.add(
-                        egui::Image::from_texture(&view.texture)
-                            .max_width(150.0)
-                            .max_height(96.0)
-                            .maintain_aspect_ratio(true),
+                    let card = egui::Frame::NONE
+                        .inner_margin(egui::Margin::same(5))
+                        .corner_radius(6)
+                        .fill(if selected {
+                            egui::Color32::from_rgb(24, 45, 58)
+                        } else {
+                            egui::Color32::TRANSPARENT
+                        })
+                        .stroke(if selected {
+                            egui::Stroke::new(2.0, ACCENT)
+                        } else {
+                            egui::Stroke::NONE
+                        })
+                        .show(ui, |ui| {
+                            ui.set_min_width(ui.available_width());
+                            ui.vertical_centered(|ui| {
+                                ui.add(
+                                    egui::Image::from_texture(&view.texture)
+                                        .max_width(150.0)
+                                        .max_height(96.0)
+                                        .maintain_aspect_ratio(true),
+                                );
+                                ui.label(egui::RichText::new(IMAGES[index].name).small().color(
+                                    if selected {
+                                        egui::Color32::WHITE
+                                    } else {
+                                        egui::Color32::from_gray(190)
+                                    },
+                                ));
+                            });
+                        });
+                    let response = ui.interact(
+                        card.response.rect,
+                        ui.id().with(("sample-image", index)),
+                        egui::Sense::click(),
                     );
-                    if selected {
-                        ui.painter().rect_stroke(
-                            image_response.rect.expand(2.0),
-                            4.0,
-                            egui::Stroke::new(2.0, ACCENT),
-                            egui::StrokeKind::Outside,
-                        );
+                    if response.hovered() {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                        if !selected {
+                            ui.painter().rect_stroke(
+                                card.response.rect,
+                                6.0,
+                                egui::Stroke::new(1.5, egui::Color32::from_gray(120)),
+                                egui::StrokeKind::Inside,
+                            );
+                        }
                     }
-                    if image_response.clicked() {
-                        self.selected = index;
+                    if response.clicked() {
+                        clicked_card = Some(index);
                     }
-                    if ui.selectable_label(selected, IMAGES[index].name).clicked() {
-                        self.selected = index;
-                    }
-                    ui.add_space(8.0);
+                    ui.add_space(6.0);
+                }
+                if let Some(index) = clicked_card {
+                    self.select_image(index);
                 }
                 ui.add_space(4.0);
                 ui.separator();
@@ -246,24 +285,35 @@ impl eframe::App for DemoApp {
                 });
             });
             ui.add_space(6.0);
+            let has_result = self
+                .last_outcome
+                .as_ref()
+                .is_some_and(|outcome| outcome.image_index == self.selected);
             ui.horizontal(|ui| {
                 let enabled = model_ready && !busy;
                 let run = ui.add_enabled(
                     enabled,
-                    egui::Button::new(egui::RichText::new("▶  Run inference").strong())
-                        .min_size(egui::vec2(150.0, 30.0))
-                        .fill(if enabled {
-                            RUN_FILL
+                    egui::Button::new(
+                        egui::RichText::new(if has_result {
+                            "▶  Run again"
                         } else {
-                            egui::Color32::from_gray(45)
-                        }),
+                            "▶  Run inference"
+                        })
+                        .strong(),
+                    )
+                    .min_size(egui::vec2(160.0, 32.0))
+                    .fill(if enabled {
+                        RUN_FILL
+                    } else {
+                        egui::Color32::from_gray(45)
+                    }),
                 );
                 if run.clicked() {
                     self.run_inference(&ctx);
                 }
                 if busy {
                     ui.spinner();
-                    ui.label("running inference…");
+                    ui.label(egui::RichText::new("Running…").color(RUNNING).strong());
                 }
                 ui.add_space(8.0);
                 ui.separator();
@@ -272,34 +322,66 @@ impl eframe::App for DemoApp {
                         .text("confidence")
                         .fixed_decimals(2),
                 );
-                if let Some(outcome) = self
-                    .last_outcome
-                    .as_ref()
-                    .filter(|outcome| outcome.image_index == self.selected)
-                {
-                    let shown = outcome
-                        .detections
-                        .iter()
-                        .filter(|detection| detection.confidence >= self.threshold)
-                        .count();
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(
-                            egui::RichText::new(format!(
-                                "{shown} shown · {} total · {:.0} ms",
-                                outcome.detections.len(),
-                                outcome.elapsed_ms
-                            ))
-                            .small()
-                            .weak(),
-                        );
-                    });
-                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(egui::RichText::new(BACKEND).small().weak());
+                });
             });
+            ui.add_space(6.0);
+
+            // Re-read the shared state: a click above just changed it.
+            let busy = self.busy.load(Ordering::Relaxed);
+            let current = self
+                .last_outcome
+                .as_ref()
+                .filter(|outcome| outcome.image_index == self.selected);
+            if busy {
+                status_banner(
+                    ui,
+                    RUNNING,
+                    "Running YOLO26n inference…",
+                    "Flex CPU · WebAssembly — this can take a moment.",
+                );
+            } else if let Some(outcome) = current {
+                let shown = outcome
+                    .detections
+                    .iter()
+                    .filter(|detection| detection.confidence >= self.threshold)
+                    .count();
+                status_banner(
+                    ui,
+                    SUCCESS,
+                    "Inference complete",
+                    &format!(
+                        "{} objects in {:.0} ms · {} · {} shown at ≥ {:.2}",
+                        outcome.detections.len(),
+                        outcome.elapsed_ms,
+                        BACKEND,
+                        shown,
+                        self.threshold
+                    ),
+                );
+            } else if model_ready {
+                status_banner(
+                    ui,
+                    egui::Color32::from_gray(150),
+                    "No inference yet",
+                    "Press Run inference to detect objects in this photo.",
+                );
+            } else if let ModelSlot::Failed(_) = &*self.model.lock().unwrap() {
+                status_banner(ui, status_color, "Model not available", &model_state);
+            } else {
+                status_banner(
+                    ui,
+                    RUNNING,
+                    "Loading model…",
+                    "Run inference unlocks when the Burnpack is ready.",
+                );
+            }
             ui.add_space(8.0);
 
             let view = &self.images[self.selected];
             let available = ui.available_size();
-            let footer = 36.0;
+            let footer = 40.0;
             let scale = (available.x / view.width as f32)
                 .min((available.y - footer).max(1.0) / view.height as f32)
                 .max(0.01);
@@ -311,13 +393,43 @@ impl eframe::App for DemoApp {
                 }
                 let response =
                     ui.add(egui::Image::from_texture(&view.texture).fit_to_exact_size(display));
-                if self
+                let image_rect = response.rect;
+                if let Some(outcome) = self
                     .last_outcome
                     .as_ref()
-                    .is_some_and(|outcome| outcome.image_index == self.selected)
+                    .filter(|outcome| outcome.image_index == self.selected)
                 {
-                    let outcome = self.last_outcome.as_ref().unwrap();
-                    draw_detections(ui, &response.rect, view, outcome, self.threshold);
+                    draw_detections(ui, &image_rect, view, outcome, self.threshold);
+                    ui.painter().rect_stroke(
+                        image_rect,
+                        0.0,
+                        egui::Stroke::new(2.0, SUCCESS),
+                        egui::StrokeKind::Inside,
+                    );
+                } else if busy {
+                    draw_status_overlay(
+                        ui,
+                        image_rect,
+                        "Running YOLO26n inference…",
+                        "Flex CPU · WebAssembly",
+                        RUNNING,
+                    );
+                } else if model_ready {
+                    draw_status_overlay(
+                        ui,
+                        image_rect,
+                        "No inference yet",
+                        "Press ▶ Run inference",
+                        ACCENT,
+                    );
+                } else {
+                    draw_status_overlay(
+                        ui,
+                        image_rect,
+                        "Loading YOLO26n…",
+                        "The Run button unlocks when ready.",
+                        RUNNING,
+                    );
                 }
             });
             ui.add_space(6.0);
@@ -326,28 +438,113 @@ impl eframe::App for DemoApp {
                 .as_ref()
                 .filter(|outcome| outcome.image_index == self.selected)
             {
-                ui.horizontal_wrapped(|ui| {
-                    for detection in outcome
-                        .detections
-                        .iter()
-                        .filter(|detection| detection.confidence >= self.threshold)
-                    {
-                        let color = class_color(detection.class_id);
-                        ui.label(egui::RichText::new("●").color(color).small());
-                        ui.label(
-                            egui::RichText::new(format!(
-                                "{} {:.0}%",
-                                detection.class_name,
-                                detection.confidence * 100.0
-                            ))
-                            .small(),
-                        );
-                        ui.add_space(6.0);
-                    }
-                });
+                let visible: Vec<&Detection> = outcome
+                    .detections
+                    .iter()
+                    .filter(|detection| detection.confidence >= self.threshold)
+                    .collect();
+                if visible.is_empty() {
+                    ui.label(
+                        egui::RichText::new(if outcome.detections.is_empty() {
+                            "No objects detected."
+                        } else {
+                            "No detections above the confidence threshold."
+                        })
+                        .small()
+                        .weak(),
+                    );
+                } else {
+                    ui.horizontal_wrapped(|ui| {
+                        for detection in visible {
+                            let color = class_color(detection.class_id);
+                            ui.label(egui::RichText::new("●").color(color).small());
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "{} {:.0}%",
+                                    detection.class_name,
+                                    detection.confidence * 100.0
+                                ))
+                                .small(),
+                            );
+                            ui.add_space(6.0);
+                        }
+                    });
+                }
             }
         });
     }
+}
+
+/// One-line status strip under the toolbar, colored by state.
+fn status_banner(ui: &mut egui::Ui, color: egui::Color32, title: &str, detail: &str) {
+    egui::Frame::NONE
+        .fill(egui::Color32::from_rgba_unmultiplied(
+            color.r(),
+            color.g(),
+            color.b(),
+            30,
+        ))
+        .stroke(egui::Stroke::new(1.0, color))
+        .corner_radius(5)
+        .inner_margin(egui::Margin::symmetric(10, 6))
+        .show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(egui::RichText::new(title).strong().color(color));
+                ui.label(egui::RichText::new(detail).small().weak());
+            });
+        });
+}
+
+/// Dim the image and place a centered, high-contrast state message over it.
+fn draw_status_overlay(
+    ui: &egui::Ui,
+    target: egui::Rect,
+    title: &str,
+    subtitle: &str,
+    accent: egui::Color32,
+) {
+    let painter = ui.painter_at(target);
+    painter.rect_filled(target, 0.0, egui::Color32::from_black_alpha(120));
+
+    let title_font = egui::TextStyle::Heading.resolve(ui.style());
+    let body_font = egui::TextStyle::Body.resolve(ui.style());
+    let title_galley = painter.layout(
+        title.to_owned(),
+        title_font,
+        egui::Color32::WHITE,
+        target.width() - 40.0,
+    );
+    let sub_galley = painter.layout(
+        subtitle.to_owned(),
+        body_font,
+        egui::Color32::from_gray(205),
+        target.width() - 40.0,
+    );
+    let padding = egui::vec2(28.0, 20.0);
+    let gap = 8.0;
+    let size = egui::vec2(
+        (title_galley.size().x.max(sub_galley.size().x) + padding.x * 2.0)
+            .min(target.width() - 24.0),
+        title_galley.size().y + gap + sub_galley.size().y + padding.y * 2.0,
+    );
+    let panel = egui::Rect::from_center_size(target.center(), size);
+    painter.rect_filled(panel, 10.0, egui::Color32::from_black_alpha(225));
+    painter.rect_stroke(
+        panel,
+        10.0,
+        egui::Stroke::new(1.5, accent),
+        egui::StrokeKind::Inside,
+    );
+    let title_pos = egui::pos2(
+        panel.center().x - title_galley.size().x * 0.5,
+        panel.top() + padding.y,
+    );
+    painter.galley(title_pos, title_galley.clone(), egui::Color32::WHITE);
+    let sub_pos = egui::pos2(
+        panel.center().x - sub_galley.size().x * 0.5,
+        title_pos.y + title_galley.size().y + gap,
+    );
+    painter.galley(sub_pos, sub_galley, egui::Color32::from_gray(205));
 }
 
 /// Draw detection boxes and labels over the displayed image, in source-image coordinates.
@@ -494,6 +691,8 @@ fn spawn_inference(
     #[cfg(target_arch = "wasm32")]
     {
         wasm_bindgen_futures::spawn_local(async move {
+            // Let egui paint the busy banner before the blocking CPU inference starts.
+            yield_to_paint().await;
             run();
         });
     }
@@ -501,6 +700,20 @@ fn spawn_inference(
     {
         std::thread::spawn(run);
     }
+}
+
+/// Yield to the browser event loop so the UI can paint the running state.
+#[cfg(target_arch = "wasm32")]
+async fn yield_to_paint() {
+    let promise = js_sys::Promise::new(&mut |resolve, _reject| match web_sys::window() {
+        Some(window) => {
+            let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 60);
+        }
+        None => {
+            let _ = resolve.call0(&wasm_bindgen::JsValue::NULL);
+        }
+    });
+    let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
 }
 
 #[cfg(target_arch = "wasm32")]
