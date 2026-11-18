@@ -1,0 +1,4 @@
+/dist
+/target
+/scripts/.venv
+/scripts/__pycache__

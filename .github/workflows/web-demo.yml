@@ -1,0 +1,97 @@
+name: Web demo
+
+on:
+  release:
+    types: [published]
+  pull_request:
+    paths:
+      - 'examples/web/**'
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'tools/export_checkpoint_state.py'
+      - '.github/workflows/web-demo.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: web-demo-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> examples/web/target/packer
+            examples/web -> target
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: examples/web/scripts/uv.lock
+      - uses: jetli/trunk-action@v0.5.1
+        with:
+          version: v0.22.1
+      - name: Install native window dependencies
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev
+      - name: Check demo
+        working-directory: examples/web
+        run: |
+          cargo fmt --check
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked
+      - name: Cache verified upstream checkpoints
+        uses: actions/cache@v4
+        with:
+          path: examples/web/target/checkpoints
+          key: web-demo-checkpoints-${{ hashFiles('examples/web/models.json') }}
+      - name: Prepare nano Burnpacks
+        run: uv run --locked --project examples/web/scripts python examples/web/scripts/prepare-models.py
+      - name: Build static demo
+        working-directory: examples/web
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name || 'preview' }}
+        run: |
+          trunk build --release --locked --public-url /montgomery-lib/ --dist target/site
+          cp ../../LICENSE target/site/LICENSE
+          jq -n --arg version "$RELEASE_TAG" --arg commit "$(git rev-parse HEAD)" '{version: $version, commit: $commit}' > target/site/source.json
+      - name: Exercise all five tasks
+        working-directory: examples/web
+        run: cargo test --release --locked all_nano_tasks_from_bytes -- --ignored --nocapture --test-threads 1
+      - name: Package demo
+        working-directory: examples/web/target/site
+        run: zip -q -r ../montgomery-web-demo.zip . -x '.trunk-lock'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: montgomery-web-demo
+          path: examples/web/target/montgomery-web-demo.zip
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    if: github.event_name == 'release'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: montgomery-web-demo
+      - name: Attach demo to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$RELEASE_TAG" montgomery-web-demo.zip --clobber

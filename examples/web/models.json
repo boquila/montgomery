@@ -1,0 +1,25 @@
+{
+  "release_url": "https://github.com/ultralytics/assets/releases/download/v8.4.0",
+  "models": [
+    {
+      "name": "yolo26n",
+      "sha256": "9b09cc8bf347f0fc8a5f7657480587f25db09b34bf33b0652110fb03a8ad4fef"
+    },
+    {
+      "name": "yolo26n-seg",
+      "sha256": "361fbfabab285c3237700b6bb91d7ecfa602cd945fffda8dbe1242829b71e73f"
+    },
+    {
+      "name": "yolo26n-cls",
+      "sha256": "0dd6f8dbc448870ac98a3cbb7156f923f7ce21fed3755d4019169ffffd279e81"
+    },
+    {
+      "name": "yolo26n-sem",
+      "sha256": "f3f293cca764de1f93044030d8d5612de9c5ffbf37c9c8ea1b69418b73038999"
+    },
+    {
+      "name": "yolo26n-depth",
+      "sha256": "befed1b8561d8b2eaa66274b070cdfc9c44853bda6d6d62a04759f9383af74e9"
+    }
+  ]
+}

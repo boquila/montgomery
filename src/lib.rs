@@ -1033,6 +1033,15 @@ impl Model {
         Predictor::with_options(checkpoint, options).map(Self)
     }
 
+    /// Load a native Burnpack artifact held in memory, inferring its architecture from
+    /// embedded metadata.
+    ///
+    /// The bytes-based twin of [`Model::new`], for WebAssembly and embedded environments
+    /// without a filesystem.
+    pub fn new_from_bytes(artifact: impl AsRef<[u8]>) -> Result<Self> {
+        Predictor::new_from_bytes(artifact).map(Self)
+    }
+
     /// Consume the convenience wrapper and return the underlying CPU predictor.
     pub fn into_predictor(self) -> Predictor {
         self.0
@@ -1101,10 +1110,6 @@ struct ArtifactMetadata {
 
 #[cfg(feature = "pretrained")]
 fn artifact_metadata(path: &Path) -> Result<ArtifactMetadata> {
-    #[derive(Deserialize)]
-    struct MetadataEnvelope {
-        metadata: std::collections::BTreeMap<String, String>,
-    }
     use std::io::Read as _;
 
     let mut file = std::fs::File::open(path)?;
@@ -1119,7 +1124,36 @@ fn artifact_metadata(path: &Path) -> Result<ArtifactMetadata> {
     }
     let mut metadata_bytes = vec![0_u8; metadata_size];
     file.read_exact(&mut metadata_bytes)?;
-    let envelope: MetadataEnvelope = ciborium::de::from_reader(metadata_bytes.as_slice())?;
+    parse_artifact_metadata(&metadata_bytes)
+}
+
+/// Parse a native Burnpack artifact's metadata from its in-memory bytes, for environments
+/// without a filesystem (WebAssembly) or with the artifact already resident.
+#[cfg(feature = "pretrained")]
+fn artifact_metadata_from_slice(artifact: &[u8]) -> Result<ArtifactMetadata> {
+    if artifact.len() < 10 || &artifact[0..4] != b"NRUB" {
+        return Err("trained artifact is not a Burnpack file".into());
+    }
+    let metadata_size = u32::from_le_bytes(artifact[6..10].try_into().unwrap()) as usize;
+    if metadata_size > 100 * 1024 * 1024 {
+        return Err("trained artifact metadata exceeds the Burnpack safety limit".into());
+    }
+    let end = 10 + metadata_size;
+    if artifact.len() < end {
+        return Err("trained artifact is truncated before its metadata block".into());
+    }
+    parse_artifact_metadata(&artifact[10..end])
+}
+
+/// Decode the CBOR metadata envelope shared by every Burnpack artifact.
+#[cfg(feature = "pretrained")]
+fn parse_artifact_metadata(metadata_bytes: &[u8]) -> Result<ArtifactMetadata> {
+    #[derive(Deserialize)]
+    struct MetadataEnvelope {
+        metadata: std::collections::BTreeMap<String, String>,
+    }
+
+    let envelope: MetadataEnvelope = ciborium::de::from_reader(metadata_bytes)?;
     let metadata = &envelope.metadata;
     let model_id = metadata
         .get("montgomery.model")
@@ -1183,8 +1217,13 @@ pub type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 #[cfg(feature = "pretrained")]
 type ModelLoader = Box<dyn FnOnce(&Device) -> Result<RuntimeModel> + Send>;
 
+/// A deferred Burnpack store construction, so one loader body serves both file-backed
+/// (memmapped) and in-memory (WebAssembly) artifacts.
+#[cfg(feature = "pretrained")]
+type StoreFactory = Box<dyn FnOnce() -> burn_store::BurnpackStore + Send>;
+
 /// Construct the requested model inside a large-stack worker and load its native Burnpack
-/// artifact.
+/// artifact from a file path.
 ///
 /// Deep module construction overflows the small default main-thread stack on Windows in debug
 /// builds, so the graph is built in the worker thread.
@@ -1195,13 +1234,45 @@ fn load_model_checkpoint(
     device: Device,
     num_classes: usize,
 ) -> Result<RuntimeModel> {
+    let factory: StoreFactory = Box::new(move || burn_store::BurnpackStore::from_file(&checkpoint));
+    run_model_loader(model_id, num_classes, factory, device)
+}
+
+/// Construct the requested model and load its native Burnpack artifact from in-memory bytes.
+///
+/// WebAssembly has no filesystem, and embedded hosts keep the artifact resident; both share
+/// this path with the file-backed loader.
+#[cfg(feature = "pretrained")]
+fn load_model_checkpoint_bytes(
+    model_id: ModelId,
+    artifact: burn::tensor::Bytes,
+    device: Device,
+    num_classes: usize,
+) -> Result<RuntimeModel> {
+    let factory: StoreFactory =
+        Box::new(move || burn_store::BurnpackStore::from_bytes(Some(artifact)));
+    run_model_loader(model_id, num_classes, factory, device)
+}
+
+/// Build the graph for `model_id` on `device` and load its weights through a deferred Burnpack
+/// store.
+///
+/// On native targets the work runs on a large-stack worker thread; on WebAssembly, where
+/// threads are unavailable, it runs directly on the calling stack.
+#[cfg(feature = "pretrained")]
+fn run_model_loader(
+    model_id: ModelId,
+    num_classes: usize,
+    factory: StoreFactory,
+    device: Device,
+) -> Result<RuntimeModel> {
     use burn_store::ModuleSnapshot as _;
 
     macro_rules! load_variant {
         ($config:ty, $variant:path) => {
             move |device: &Device| -> Result<RuntimeModel> {
                 let mut model = <$config>::default().init_with_classes(num_classes, device);
-                let mut store = burn_store::BurnpackStore::from_file(&checkpoint)
+                let mut store = factory()
                     .with_from_adapter(burn_store::HalfPrecisionAdapter::new())
                     .allow_partial(cfg!(feature = "training"));
                 let result = model.load_from(&mut store)?;
@@ -1226,7 +1297,8 @@ fn load_model_checkpoint(
         | ModelId::YoloxX => Box::new(move |device: &Device| {
             let constructor = yolox_constructor(model_id);
             let mut model = constructor(num_classes, device);
-            model.load_burnpack_weights(checkpoint)?;
+            let mut store = factory().with_from_adapter(burn_store::HalfPrecisionAdapter::new());
+            model.load_from(&mut store)?;
             Ok(RuntimeModel::Yolox(Box::new(model)))
         }),
         ModelId::Yolov3TinyU => Box::new(load_variant!(Yolov3TinyConfig, RuntimeModel::Yolov3Tiny)),
@@ -1312,13 +1384,22 @@ fn load_model_checkpoint(
         ModelId::Yolo26LCls => Box::new(load_variant!(Yolo26ClsLConfig, RuntimeModel::Yolo26ClsL)),
         ModelId::Yolo26XCls => Box::new(load_variant!(Yolo26ClsXConfig, RuntimeModel::Yolo26ClsX)),
     };
-    let worker = std::thread::Builder::new()
-        .name("montgomery-model-loader".into())
-        .stack_size(64 * 1024 * 1024)
-        .spawn(move || loader(&device))?;
-    worker
-        .join()
-        .map_err(|_| format!("{model_id} model loader thread panicked"))?
+    // Native targets build and load on a dedicated large-stack worker; wasm32 is single-threaded
+    // and runs on the calling stack.
+    #[cfg(not(target_arch = "wasm32"))]
+    let model = {
+        let worker = std::thread::Builder::new()
+            .name("montgomery-model-loader".into())
+            .stack_size(64 * 1024 * 1024)
+            .spawn(move || loader(&device))?;
+        // `join` wraps the loader's own Result, hence the doubled `?`.
+        worker
+            .join()
+            .map_err(|_| format!("{model_id} model loader thread panicked"))??
+    };
+    #[cfg(target_arch = "wasm32")]
+    let model = loader(&device)?;
+    Ok(model)
 }
 
 /// Resolve the YOLOX graph constructor for a YOLOX scale identifier. Every YOLOX scale shares the
@@ -2345,6 +2426,50 @@ impl Predictor {
         Self::load_from_metadata(checkpoint, device, options, metadata)
     }
 
+    /// Load a native Burnpack artifact held in memory, inferring its architecture from
+    /// embedded metadata.
+    ///
+    /// The bytes-based twin of [`Predictor::new`]. WebAssembly and embedded environments have
+    /// no filesystem: fetch or bundle the `.bpk` artifact and hand its bytes here.
+    #[cfg(feature = "pretrained")]
+    pub fn new_from_bytes(artifact: impl AsRef<[u8]>) -> Result<Self> {
+        Self::with_options_from_bytes_on_device(artifact, Device::flex(), PredictOptions::default())
+    }
+
+    /// Load an in-memory artifact with explicit prediction thresholds.
+    #[cfg(feature = "pretrained")]
+    pub fn with_options_from_bytes(
+        artifact: impl AsRef<[u8]>,
+        options: PredictOptions,
+    ) -> Result<Self> {
+        Self::with_options_from_bytes_on_device(artifact, Device::flex(), options)
+    }
+
+    /// Load an in-memory artifact on an explicit device with explicit prediction thresholds.
+    #[cfg(feature = "pretrained")]
+    pub fn with_options_from_bytes_on_device(
+        artifact: impl AsRef<[u8]>,
+        device: Device,
+        options: PredictOptions,
+    ) -> Result<Self> {
+        let options = options.validate()?;
+        let artifact = artifact.as_ref();
+        let metadata = artifact_metadata_from_slice(artifact)?;
+        if metadata.model_id.is_none() {
+            return Err(
+                "Burnpack artifact is missing montgomery.model metadata; repack it or use \
+                 Predictor::from_checkpoint with an explicit ModelId"
+                    .into(),
+            );
+        }
+        Self::load_from_metadata_bytes(
+            burn::tensor::Bytes::from_bytes_vec(artifact.to_vec()),
+            device,
+            options,
+            metadata,
+        )
+    }
+
     #[cfg(feature = "pretrained")]
     fn load_from_metadata(
         checkpoint: PathBuf,
@@ -2363,6 +2488,36 @@ impl Predictor {
             .input_size
             .unwrap_or_else(|| catalog_input_size(model_id));
         let model = load_model_checkpoint(model_id, checkpoint, device.clone(), class_names.len())?;
+        Ok(Self {
+            model_id,
+            model,
+            device,
+            options,
+            class_names,
+            input_size,
+        })
+    }
+
+    /// Build the graph described by artifact metadata and load its weights from in-memory bytes.
+    #[cfg(feature = "pretrained")]
+    fn load_from_metadata_bytes(
+        artifact: burn::tensor::Bytes,
+        device: Device,
+        options: PredictOptions,
+        metadata: ArtifactMetadata,
+    ) -> Result<Self> {
+        let options = options.validate()?;
+        let model_id = metadata
+            .model_id
+            .ok_or("internal error: artifact architecture was not resolved")?;
+        let class_names = metadata
+            .class_names
+            .unwrap_or_else(|| catalog_class_names(model_id));
+        let input_size = metadata
+            .input_size
+            .unwrap_or_else(|| catalog_input_size(model_id));
+        let model =
+            load_model_checkpoint_bytes(model_id, artifact, device.clone(), class_names.len())?;
         Ok(Self {
             model_id,
             model,
