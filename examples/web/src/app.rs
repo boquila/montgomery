@@ -187,8 +187,8 @@ impl eframe::App for DemoApp {
                 ui.label(egui::RichText::new("YOLO26n demo").size(20.0).strong());
                 ui.label(
                     egui::RichText::new("1. Pick a photo\n2. Press Run inference")
-                        .small()
-                        .weak(),
+                        .size(12.5)
+                        .color(egui::Color32::from_gray(205)),
                 );
                 ui.add_space(12.0);
                 ui.separator();
@@ -254,11 +254,14 @@ impl eframe::App for DemoApp {
                 ui.add_space(4.0);
                 ui.separator();
                 ui.add_space(4.0);
-                ui.label(
-                    egui::RichText::new(format!("● {model_state}"))
-                        .small()
-                        .color(status_color),
-                );
+                ui.horizontal(|ui| {
+                    status_dot(ui, status_color);
+                    ui.label(
+                        egui::RichText::new(model_state.as_str())
+                            .size(12.0)
+                            .color(status_color),
+                    );
+                });
                 ui.label(
                     egui::RichText::new("Burnpack · ~5 MB · WebAssembly")
                         .small()
@@ -274,14 +277,19 @@ impl eframe::App for DemoApp {
                         .size(22.0)
                         .strong(),
                 );
-                ui.add_space(4.0);
-                ui.label(egui::RichText::new("client-side inference").small().weak());
+                ui.add_space(6.0);
+                ui.label(
+                    egui::RichText::new("runs entirely in your browser")
+                        .size(12.5)
+                        .color(egui::Color32::from_gray(190)),
+                );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(
-                        egui::RichText::new(format!("● {model_state}"))
-                            .small()
+                        egui::RichText::new(model_state.as_str())
+                            .size(12.5)
                             .color(status_color),
                     );
+                    status_dot(ui, status_color);
                 });
             });
             ui.add_space(6.0);
@@ -457,22 +465,28 @@ impl eframe::App for DemoApp {
                     ui.horizontal_wrapped(|ui| {
                         for detection in visible {
                             let color = class_color(detection.class_id);
-                            ui.label(egui::RichText::new("●").color(color).small());
+                            status_dot(ui, color);
                             ui.label(
                                 egui::RichText::new(format!(
                                     "{} {:.0}%",
                                     detection.class_name,
                                     detection.confidence * 100.0
                                 ))
-                                .small(),
+                                .size(12.5),
                             );
-                            ui.add_space(6.0);
+                            ui.add_space(8.0);
                         }
                     });
                 }
             }
         });
     }
+}
+
+/// A small painted status dot. The default egui font lacks U+25CF, which rendered as tofu.
+fn status_dot(ui: &mut egui::Ui, color: egui::Color32) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(10.0, 12.0), egui::Sense::hover());
+    ui.painter().circle_filled(rect.center(), 3.5, color);
 }
 
 /// One-line status strip under the toolbar, colored by state.
@@ -486,11 +500,16 @@ fn status_banner(ui: &mut egui::Ui, color: egui::Color32, title: &str, detail: &
         ))
         .stroke(egui::Stroke::new(1.0, color))
         .corner_radius(5)
-        .inner_margin(egui::Margin::symmetric(10, 6))
+        .inner_margin(egui::Margin::symmetric(10, 7))
         .show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
-                ui.label(egui::RichText::new(title).strong().color(color));
-                ui.label(egui::RichText::new(detail).small().weak());
+                status_dot(ui, color);
+                ui.label(egui::RichText::new(title).strong().size(14.0).color(color));
+                ui.label(
+                    egui::RichText::new(detail)
+                        .size(13.0)
+                        .color(egui::Color32::from_gray(215)),
+                );
             });
         });
 }
@@ -561,11 +580,14 @@ fn draw_detections(
         target.height() / view.height as f32,
     );
     let font = egui::TextStyle::Body.resolve(ui.style());
-    for detection in outcome
+    let visible: Vec<_> = outcome
         .detections
         .iter()
         .filter(|detection| detection.confidence >= threshold)
-    {
+        .collect();
+
+    // Boxes first, then labels, so no later box stroke crosses an earlier label.
+    for detection in &visible {
         let color = class_color(detection.class_id);
         let rect = egui::Rect::from_min_max(
             target.left_top() + egui::vec2(detection.xmin * scale.x, detection.ymin * scale.y),
@@ -574,30 +596,39 @@ fn draw_detections(
         painter.rect_stroke(
             rect,
             0.0,
-            egui::Stroke::new(2.5, color),
+            egui::Stroke::new(3.0, color),
             egui::StrokeKind::Inside,
         );
+    }
 
+    for detection in visible {
+        let color = class_color(detection.class_id);
+        let rect = egui::Rect::from_min_max(
+            target.left_top() + egui::vec2(detection.xmin * scale.x, detection.ymin * scale.y),
+            target.left_top() + egui::vec2(detection.xmax * scale.x, detection.ymax * scale.y),
+        );
         let text = format!(
             "{} {:.0}%",
             detection.class_name,
             detection.confidence * 100.0
         );
-        let galley = painter.layout(text, font.clone(), color, f32::INFINITY);
-        let label_rect = egui::Rect::from_min_size(
-            rect.left_top() - egui::vec2(0.0, galley.size().y + 4.0),
-            galley.size() + egui::vec2(6.0, 2.0),
+        let galley = painter.layout(text, font.clone(), egui::Color32::WHITE, f32::INFINITY);
+        let pad = egui::vec2(8.0, 4.0);
+        let size = galley.size() + pad * 2.0;
+        let mut pos = egui::pos2(rect.left(), rect.top() - size.y);
+        if pos.y < target.top() {
+            pos.y = rect.top() + 2.0;
+        }
+        if pos.x + size.x > target.right() {
+            pos.x = (target.right() - size.x).max(target.left());
+        }
+        let label_rect = egui::Rect::from_min_size(pos, size);
+        painter.rect_filled(
+            label_rect,
+            3.0,
+            egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 235),
         );
-        let label_rect = if label_rect.top() < target.top() {
-            egui::Rect::from_min_size(
-                rect.left_top() + egui::vec2(0.0, 2.0),
-                galley.size() + egui::vec2(6.0, 2.0),
-            )
-        } else {
-            label_rect
-        };
-        painter.rect_filled(label_rect, 0.0, egui::Color32::from_black_alpha(160));
-        painter.galley(label_rect.left_top() + egui::vec2(3.0, 1.0), galley, color);
+        painter.galley(label_rect.left_top() + pad, galley, egui::Color32::WHITE);
     }
 }
 
@@ -707,7 +738,7 @@ fn spawn_inference(
 async fn yield_to_paint() {
     let promise = js_sys::Promise::new(&mut |resolve, _reject| match web_sys::window() {
         Some(window) => {
-            let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 60);
+            let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 120);
         }
         None => {
             let _ = resolve.call0(&wasm_bindgen::JsValue::NULL);
