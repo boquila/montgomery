@@ -39,8 +39,22 @@ artifact into the served bundle.
 trunk serve
 ```
 
-Then open <http://127.0.0.1:8080>. The model (~5 MB) is fetched after the page loads; on a
-first cold run the graph compiles and the first inference takes a few seconds.
+Then open <http://127.0.0.1:8080>. The model (~5 MB) is fetched after the page loads;
+inference runs automatically, and each image selection runs it again. On a first cold run the
+graph compiles and inference takes a few seconds; the wasm release build here measured about
+0.3 s per frame after warm-up.
+
+## Share on your tailnet
+
+`Trunk.toml` binds `trunk serve` to `0.0.0.0`, so Tailscale peers can reach
+`http://<machine>.<tailnet>.ts.net:8080` if the Windows firewall allows it. For a clean HTTPS
+URL without opening a port, serve the built bundle and let Tailscale proxy it:
+
+```console
+trunk build --release
+node scripts/serve.cjs          # static server for dist on 0.0.0.0:8080
+tailscale serve --bg 8080       # prints https://<machine>.<tailnet>.ts.net/
+```
 
 ## Run natively
 

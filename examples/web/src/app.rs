@@ -4,8 +4,8 @@
 //! (WebAssembly, inference on the main thread until a worker port lands).
 
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
 };
 
 use eframe::egui;
@@ -34,6 +34,11 @@ const IMAGES: &[DemoImage] = &[
         encoded: include_bytes!("../assets/zidane.jpg"),
     },
 ];
+
+/// Accent used for selection outlines and status text.
+const ACCENT: egui::Color32 = egui::Color32::from_rgb(94, 203, 255);
+/// Fill for the primary action button (dark enough for light label text).
+const RUN_FILL: egui::Color32 = egui::Color32::from_rgb(27, 105, 148);
 
 /// A finished inference run for one selected image.
 struct Outcome {
@@ -64,10 +69,20 @@ pub struct DemoApp {
     busy: Arc<AtomicBool>,
     outcome: Arc<Mutex<Option<Outcome>>>,
     last_outcome: Option<Outcome>,
+    threshold: f32,
+    /// The image index we last auto-ran, so selecting an image demonstrates inference immediately.
+    auto_image: Option<usize>,
 }
 
 impl DemoApp {
     pub fn new(ctx: &egui::Context) -> Self {
+        let mut visuals = egui::Visuals::dark();
+        visuals.panel_fill = egui::Color32::from_rgb(15, 17, 21);
+        visuals.window_fill = visuals.panel_fill;
+        visuals.selection.bg_fill = egui::Color32::from_rgb(30, 74, 96);
+        visuals.selection.stroke = egui::Stroke::new(1.0, ACCENT);
+        ctx.set_visuals(visuals);
+
         let images = IMAGES
             .iter()
             .map(|entry| {
@@ -101,6 +116,8 @@ impl DemoApp {
             busy: Arc::new(AtomicBool::new(false)),
             outcome: Arc::new(Mutex::new(None)),
             last_outcome: None,
+            threshold: 0.25,
+            auto_image: None,
         }
     }
 
@@ -127,94 +144,231 @@ impl eframe::App for DemoApp {
             self.last_outcome = Some(outcome);
         }
         let busy = self.busy.load(Ordering::Relaxed);
-        let (model_state, model_ready) = match &*self.model.lock().unwrap() {
-            ModelSlot::Loading => ("loading yolo26n.bpk…".to_owned(), false),
-            ModelSlot::Failed(error) => (format!("model error: {error}"), false),
-            ModelSlot::Ready(_) => ("yolo26n ready".to_owned(), true),
+        let (model_state, model_ready, status_color) = match &*self.model.lock().unwrap() {
+            ModelSlot::Loading => (
+                "loading model…".to_owned(),
+                false,
+                egui::Color32::from_rgb(240, 190, 80),
+            ),
+            ModelSlot::Failed(error) => (
+                format!("model error: {error}"),
+                false,
+                egui::Color32::from_rgb(240, 100, 100),
+            ),
+            ModelSlot::Ready(_) => (
+                "YOLO26n ready".to_owned(),
+                true,
+                egui::Color32::from_rgb(110, 220, 150),
+            ),
         };
+
+        // First run and every image switch demonstrate inference without an extra click.
+        if model_ready && !busy && self.auto_image != Some(self.selected) {
+            self.auto_image = Some(self.selected);
+            self.run_inference(&ctx);
+        }
 
         egui::Panel::left("images")
             .resizable(false)
-            .default_size(160.0)
+            .default_size(190.0)
             .show(ui, |ui| {
-                ui.add_space(6.0);
-                ui.heading("Images");
-                ui.add_space(6.0);
+                ui.add_space(10.0);
+                ui.label(
+                    egui::RichText::new("MONTGOMERY")
+                        .size(11.0)
+                        .strong()
+                        .color(ACCENT),
+                );
+                ui.label(egui::RichText::new("YOLO26n demo").size(20.0).strong());
+                ui.label(
+                    egui::RichText::new("Pick a photo — detection runs automatically.")
+                        .small()
+                        .weak(),
+                );
+                ui.add_space(12.0);
+                ui.separator();
+                ui.add_space(8.0);
                 for (index, view) in self.images.iter().enumerate() {
                     let selected = self.selected == index;
-                    ui.horizontal(|ui| {
-                        if ui
-                            .add(
-                                egui::Image::from_texture(&view.texture)
-                                    .max_width(110.0)
-                                    .max_height(72.0)
-                                    .maintain_aspect_ratio(true),
-                            )
-                            .clicked()
-                        {
-                            self.selected = index;
-                        }
-                        if ui.selectable_label(selected, IMAGES[index].name).clicked() {
-                            self.selected = index;
-                        }
-                    });
-                    ui.add_space(6.0);
+                    let image_response = ui.add(
+                        egui::Image::from_texture(&view.texture)
+                            .max_width(150.0)
+                            .max_height(96.0)
+                            .maintain_aspect_ratio(true),
+                    );
+                    if selected {
+                        ui.painter().rect_stroke(
+                            image_response.rect.expand(2.0),
+                            4.0,
+                            egui::Stroke::new(2.0, ACCENT),
+                            egui::StrokeKind::Outside,
+                        );
+                    }
+                    if image_response.clicked() {
+                        self.selected = index;
+                    }
+                    if ui.selectable_label(selected, IMAGES[index].name).clicked() {
+                        self.selected = index;
+                    }
+                    ui.add_space(8.0);
                 }
+                ui.add_space(4.0);
+                ui.separator();
+                ui.add_space(4.0);
+                ui.label(
+                    egui::RichText::new(format!("● {model_state}"))
+                        .small()
+                        .color(status_color),
+                );
+                ui.label(
+                    egui::RichText::new("Burnpack · ~5 MB · WebAssembly")
+                        .small()
+                        .weak(),
+                );
             });
 
         egui::CentralPanel::default().show(ui, |ui| {
+            ui.add_space(8.0);
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("Montgomery — YOLO26n detection").strong());
-                ui.separator();
-                ui.label(&model_state);
-                if model_ready && !busy {
-                    if ui.button("Run inference").clicked() {
-                        self.run_inference(&ctx);
-                    }
-                } else if busy {
+                ui.label(
+                    egui::RichText::new("YOLO26n object detection")
+                        .size(22.0)
+                        .strong(),
+                );
+                ui.add_space(4.0);
+                ui.label(egui::RichText::new("client-side inference").small().weak());
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(
+                        egui::RichText::new(format!("● {model_state}"))
+                            .small()
+                            .color(status_color),
+                    );
+                });
+            });
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                let enabled = model_ready && !busy;
+                let run = ui.add_enabled(
+                    enabled,
+                    egui::Button::new(egui::RichText::new("▶  Run inference").strong())
+                        .min_size(egui::vec2(150.0, 30.0))
+                        .fill(if enabled {
+                            RUN_FILL
+                        } else {
+                            egui::Color32::from_gray(45)
+                        }),
+                );
+                if run.clicked() {
+                    self.run_inference(&ctx);
+                }
+                if busy {
+                    ui.spinner();
                     ui.label("running inference…");
                 }
-                if let Some(outcome) = self.last_outcome.as_ref() {
+                ui.add_space(8.0);
+                ui.separator();
+                ui.add(
+                    egui::Slider::new(&mut self.threshold, 0.05..=0.95)
+                        .text("confidence")
+                        .fixed_decimals(2),
+                );
+                if let Some(outcome) = self
+                    .last_outcome
+                    .as_ref()
+                    .filter(|outcome| outcome.image_index == self.selected)
+                {
+                    let shown = outcome
+                        .detections
+                        .iter()
+                        .filter(|detection| detection.confidence >= self.threshold)
+                        .count();
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(format!(
-                            "{} detections in {:.0} ms",
-                            outcome.detections.len(),
-                            outcome.elapsed_ms
-                        ));
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "{shown} shown · {} total · {:.0} ms",
+                                outcome.detections.len(),
+                                outcome.elapsed_ms
+                            ))
+                            .small()
+                            .weak(),
+                        );
                     });
                 }
             });
-            ui.add_space(4.0);
+            ui.add_space(8.0);
 
             let view = &self.images[self.selected];
             let available = ui.available_size();
-            let scale = (available.x / view.width as f32).min(available.y / view.height as f32);
+            let footer = 36.0;
+            let scale = (available.x / view.width as f32)
+                .min((available.y - footer).max(1.0) / view.height as f32)
+                .max(0.01);
             let display = egui::vec2(view.width as f32 * scale, view.height as f32 * scale);
-            let response = ui.add(
-                egui::Image::from_texture(&view.texture).fit_to_exact_size(display),
-            );
-
-            let show_outcome = self
+            ui.horizontal(|ui| {
+                let offset = ((available.x - display.x) * 0.5).max(0.0);
+                if offset > 0.0 {
+                    ui.add_space(offset);
+                }
+                let response =
+                    ui.add(egui::Image::from_texture(&view.texture).fit_to_exact_size(display));
+                if self
+                    .last_outcome
+                    .as_ref()
+                    .is_some_and(|outcome| outcome.image_index == self.selected)
+                {
+                    let outcome = self.last_outcome.as_ref().unwrap();
+                    draw_detections(ui, &response.rect, view, outcome, self.threshold);
+                }
+            });
+            ui.add_space(6.0);
+            if let Some(outcome) = self
                 .last_outcome
                 .as_ref()
-                .is_some_and(|outcome| outcome.image_index == self.selected);
-            if show_outcome {
-                let outcome = self.last_outcome.as_ref().unwrap();
-                draw_detections(ui, &response.rect, view, outcome);
+                .filter(|outcome| outcome.image_index == self.selected)
+            {
+                ui.horizontal_wrapped(|ui| {
+                    for detection in outcome
+                        .detections
+                        .iter()
+                        .filter(|detection| detection.confidence >= self.threshold)
+                    {
+                        let color = class_color(detection.class_id);
+                        ui.label(egui::RichText::new("●").color(color).small());
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "{} {:.0}%",
+                                detection.class_name,
+                                detection.confidence * 100.0
+                            ))
+                            .small(),
+                        );
+                        ui.add_space(6.0);
+                    }
+                });
             }
         });
     }
 }
 
 /// Draw detection boxes and labels over the displayed image, in source-image coordinates.
-fn draw_detections(ui: &mut egui::Ui, target: &egui::Rect, view: &ImageView, outcome: &Outcome) {
+fn draw_detections(
+    ui: &mut egui::Ui,
+    target: &egui::Rect,
+    view: &ImageView,
+    outcome: &Outcome,
+    threshold: f32,
+) {
     let painter = ui.painter_at(*target);
     let scale = egui::vec2(
         target.width() / view.width as f32,
         target.height() / view.height as f32,
     );
     let font = egui::TextStyle::Body.resolve(ui.style());
-    for detection in &outcome.detections {
+    for detection in outcome
+        .detections
+        .iter()
+        .filter(|detection| detection.confidence >= threshold)
+    {
         let color = class_color(detection.class_id);
         let rect = egui::Rect::from_min_max(
             target.left_top() + egui::vec2(detection.xmin * scale.x, detection.ymin * scale.y),
@@ -227,7 +381,11 @@ fn draw_detections(ui: &mut egui::Ui, target: &egui::Rect, view: &ImageView, out
             egui::StrokeKind::Inside,
         );
 
-        let text = format!("{} {:.0}%", detection.class_name, detection.confidence * 100.0);
+        let text = format!(
+            "{} {:.0}%",
+            detection.class_name,
+            detection.confidence * 100.0
+        );
         let galley = painter.layout(text, font.clone(), color, f32::INFINITY);
         let label_rect = egui::Rect::from_min_size(
             rect.left_top() - egui::vec2(0.0, galley.size().y + 4.0),
@@ -242,11 +400,7 @@ fn draw_detections(ui: &mut egui::Ui, target: &egui::Rect, view: &ImageView, out
             label_rect
         };
         painter.rect_filled(label_rect, 0.0, egui::Color32::from_black_alpha(160));
-        painter.galley(
-            label_rect.left_top() + egui::vec2(3.0, 1.0),
-            galley,
-            color,
-        );
+        painter.galley(label_rect.left_top() + egui::vec2(3.0, 1.0), galley, color);
     }
 }
 
@@ -271,8 +425,18 @@ fn class_color(class_id: usize) -> egui::Color32 {
 fn spawn_model_load(ctx: egui::Context, slot: Arc<Mutex<ModelSlot>>) {
     let fill = move |result: Result<Predictor, String>, slot: &Arc<Mutex<ModelSlot>>| {
         *slot.lock().unwrap() = match result {
-            Ok(model) => ModelSlot::Ready(Box::new(model)),
-            Err(error) => ModelSlot::Failed(error),
+            Ok(model) => {
+                #[cfg(target_arch = "wasm32")]
+                web_sys::console::log_1(&"montgomery: model ready".into());
+                ModelSlot::Ready(Box::new(model))
+            }
+            Err(error) => {
+                #[cfg(target_arch = "wasm32")]
+                web_sys::console::error_1(
+                    &format!("montgomery: model load failed: {error}").into(),
+                );
+                ModelSlot::Failed(error)
+            }
         };
     };
 
@@ -310,6 +474,14 @@ fn spawn_inference(
             _ => Vec::new(),
         };
         let elapsed_ms = now_ms() - started;
+        #[cfg(target_arch = "wasm32")]
+        web_sys::console::log_1(
+            &format!(
+                "montgomery: {} detections in {elapsed_ms:.0} ms",
+                detections.len()
+            )
+            .into(),
+        );
         *outcome.lock().unwrap() = Some(Outcome {
             image_index,
             detections,
@@ -380,11 +552,10 @@ fn load_model() -> Result<Predictor, String> {
                 .map_err(|error| format!("{path:?}: {error}"));
         }
     }
-    Err(format!(
-        "yolo26n.bpk not found. From the repository root run \
+    Err("yolo26n.bpk not found. From the repository root run \
          `montgomery pack-weights --architecture yolo26n --state target/yolo26n-state.pt`, \
          or point MONTGOMERY_WEB_DEMO_MODEL at an existing artifact."
-    ))
+        .to_owned())
 }
 
 /// Milliseconds since the epoch; `std::time::Instant` is unavailable on wasm32-unknown-unknown.
