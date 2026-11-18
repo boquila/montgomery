@@ -17,21 +17,46 @@ const MODEL_URL: &str = "yolo26n.bpk";
 /// One selectable demo image, embedded so the app also works fully offline.
 struct DemoImage {
     name: &'static str,
+    /// Short label shown under the thumbnail.
+    label: &'static str,
     encoded: &'static [u8],
 }
 
 const IMAGES: &[DemoImage] = &[
     DemoImage {
         name: "dog_bike_man.jpg",
+        label: "Dog & bike",
         encoded: include_bytes!("../assets/dog_bike_man.jpg"),
     },
     DemoImage {
         name: "bus.jpg",
+        label: "Bus",
         encoded: include_bytes!("../assets/bus.jpg"),
     },
     DemoImage {
         name: "zidane.jpg",
+        label: "Zidane",
         encoded: include_bytes!("../assets/zidane.jpg"),
+    },
+    DemoImage {
+        name: "camera.jpg",
+        label: "Cameraman",
+        encoded: include_bytes!("../assets/camera.jpg"),
+    },
+    DemoImage {
+        name: "astronaut.jpg",
+        label: "Astronaut",
+        encoded: include_bytes!("../assets/astronaut.jpg"),
+    },
+    DemoImage {
+        name: "chelsea.jpg",
+        label: "Chelsea",
+        encoded: include_bytes!("../assets/chelsea.jpg"),
+    },
+    DemoImage {
+        name: "coffee.jpg",
+        label: "Coffee",
+        encoded: include_bytes!("../assets/coffee.jpg"),
     },
 ];
 
@@ -177,7 +202,7 @@ impl eframe::App for DemoApp {
 
         egui::Panel::left("images")
             .resizable(false)
-            .default_size(200.0)
+            .default_size(230.0)
             .show(ui, |ui| {
                 ui.add_space(10.0);
                 ui.label(
@@ -196,67 +221,78 @@ impl eframe::App for DemoApp {
                 ui.separator();
                 ui.add_space(8.0);
                 let mut clicked_card = None;
-                for (index, view) in self.images.iter().enumerate() {
-                    let selected = self.selected == index;
-                    let card = egui::Frame::NONE
-                        .inner_margin(egui::Margin::same(5))
-                        .corner_radius(6)
-                        .fill(if selected {
-                            egui::Color32::from_rgb(24, 45, 58)
-                        } else {
-                            egui::Color32::TRANSPARENT
-                        })
-                        .stroke(if selected {
-                            egui::Stroke::new(2.0, ACCENT)
-                        } else {
-                            egui::Stroke::NONE
-                        })
-                        .show(ui, |ui| {
-                            ui.set_min_width(ui.available_width());
-                            ui.vertical_centered(|ui| {
-                                ui.add(
-                                    egui::Image::from_texture(&view.texture)
-                                        .max_width(150.0)
-                                        .max_height(96.0)
-                                        .maintain_aspect_ratio(true),
-                                );
-                                let label = ui.label(
-                                    egui::RichText::new(IMAGES[index].name).small().color(
-                                        if selected {
-                                            egui::Color32::WHITE
-                                        } else {
-                                            egui::Color32::from_gray(190)
-                                        },
-                                    ),
-                                );
-                                if self.outcomes[index].is_some() {
-                                    let center =
-                                        egui::pos2(label.rect.right() + 7.0, label.rect.center().y);
-                                    ui.painter().circle_filled(center, 3.0, SUCCESS);
+                // One column, scrollable so every sample stays reachable in a short window.
+                let list_height = (ui.available_height() - 52.0).max(120.0);
+                egui::ScrollArea::vertical()
+                    .max_height(list_height)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        for (index, view) in self.images.iter().enumerate() {
+                            let selected = self.selected == index;
+                            let card = egui::Frame::NONE
+                                .inner_margin(egui::Margin::same(5))
+                                .corner_radius(6)
+                                .fill(if selected {
+                                    egui::Color32::from_rgb(24, 45, 58)
+                                } else {
+                                    egui::Color32::TRANSPARENT
+                                })
+                                .stroke(if selected {
+                                    egui::Stroke::new(2.0, ACCENT)
+                                } else {
+                                    egui::Stroke::NONE
+                                })
+                                .show(ui, |ui| {
+                                    ui.set_min_width(ui.available_width());
+                                    ui.vertical_centered(|ui| {
+                                        ui.add(
+                                            egui::Image::from_texture(&view.texture)
+                                                .max_width(150.0)
+                                                .max_height(96.0)
+                                                .maintain_aspect_ratio(true),
+                                        );
+                                        let label = ui.label(
+                                            egui::RichText::new(IMAGES[index].label)
+                                                .size(11.5)
+                                                .color(if selected {
+                                                    egui::Color32::WHITE
+                                                } else {
+                                                    egui::Color32::from_gray(190)
+                                                }),
+                                        );
+                                        if self.outcomes[index].is_some() {
+                                            let center = egui::pos2(
+                                                label.rect.right() + 6.0,
+                                                label.rect.center().y,
+                                            );
+                                            ui.painter().circle_filled(center, 2.5, SUCCESS);
+                                        }
+                                    });
+                                });
+                            let response = ui
+                                .interact(
+                                    card.response.rect,
+                                    ui.id().with(("sample-image", index)),
+                                    egui::Sense::click(),
+                                )
+                                .on_hover_text(IMAGES[index].name);
+                            if response.hovered() {
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                if !selected {
+                                    ui.painter().rect_stroke(
+                                        card.response.rect,
+                                        6.0,
+                                        egui::Stroke::new(1.5, egui::Color32::from_gray(120)),
+                                        egui::StrokeKind::Inside,
+                                    );
                                 }
-                            });
-                        });
-                    let response = ui.interact(
-                        card.response.rect,
-                        ui.id().with(("sample-image", index)),
-                        egui::Sense::click(),
-                    );
-                    if response.hovered() {
-                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                        if !selected {
-                            ui.painter().rect_stroke(
-                                card.response.rect,
-                                6.0,
-                                egui::Stroke::new(1.5, egui::Color32::from_gray(120)),
-                                egui::StrokeKind::Inside,
-                            );
+                            }
+                            if response.clicked() {
+                                clicked_card = Some(index);
+                            }
+                            ui.add_space(6.0);
                         }
-                    }
-                    if response.clicked() {
-                        clicked_card = Some(index);
-                    }
-                    ui.add_space(6.0);
-                }
+                    });
                 if let Some(index) = clicked_card {
                     self.selected = index;
                 }
@@ -323,9 +359,6 @@ impl eframe::App for DemoApp {
                     ui.spinner();
                     ui.label(egui::RichText::new("Running…").color(RUNNING).strong());
                 }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(egui::RichText::new(BACKEND).small().weak());
-                });
             });
             ui.add_space(4.0);
             ui.horizontal(|ui| {
@@ -359,7 +392,7 @@ impl eframe::App for DemoApp {
                     ui,
                     RUNNING,
                     "Running YOLO26n inference…",
-                    "Flex CPU · WebAssembly — this can take a moment.",
+                    &format!("{BACKEND} — this can take a moment."),
                 );
             } else if let Some(outcome) = current {
                 let shown = outcome
@@ -409,18 +442,12 @@ impl eframe::App for DemoApp {
                 let image_rect = response.rect;
                 if let Some(outcome) = self.outcomes[self.selected].as_ref() {
                     draw_detections(ui, &image_rect, view, outcome, self.threshold);
-                    ui.painter().rect_stroke(
-                        image_rect,
-                        0.0,
-                        egui::Stroke::new(2.0, SUCCESS),
-                        egui::StrokeKind::Inside,
-                    );
                 } else if running_here {
                     draw_status_overlay(
                         ui,
                         image_rect,
                         "Running YOLO26n inference…",
-                        "Flex CPU · WebAssembly",
+                        BACKEND,
                         RUNNING,
                     );
                 } else if !model_ready {

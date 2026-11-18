@@ -9,7 +9,8 @@ The same code also builds as a native desktop app for quick iteration.
 
 ## Layout
 
-- Left panel: a few bundled sample images. Click one to select it.
+- Left panel: seven bundled sample images. Click one to select it; images that already have a
+  result show a small green dot.
 - Central panel: the selected image, a **Run inference** button once the model is ready, and
   the detection boxes painted over the image with class names and confidences.
 
@@ -66,6 +67,15 @@ cargo run --release
 Native builds look for `yolo26n.bpk` in the current directory, the repository root
 (`../../yolo26n.bpk` when launched from `examples/web`), or the path in
 `MONTGOMERY_WEB_DEMO_MODEL`.
+
+## Sample images
+
+`assets/` contains COCO-style scenes from the [Ultralytics assets
+repository](https://github.com/ultralytics/assets) (`dog_bike_man`, `bus`, `zidane`, AGPL-3.0)
+plus public-domain and CC0 classics used by [scikit-image](https://scikit-image.org): `camera`
+(CC0, Lav Varshney), `astronaut` (NASA, public domain), `chelsea` (CC0, Stefan van der Walt),
+and `coffee` (CC0, Rachel Michetti). They are embedded at compile time, so the demo works
+offline.
 
 ## Test
 
