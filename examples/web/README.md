@@ -40,10 +40,10 @@ trunk serve
 ```
 
 Then open <http://127.0.0.1:8080>. The model (~5 MB) is fetched after the page loads; press
-**Run inference** to detect objects in the selected photo. Switching images clears the previous
-result, and a status banner reports the object count, latency, and active backend. On a first
-cold run the graph compiles and inference takes a few seconds; the wasm release build here
-measured about 0.3 s per frame after warm-up.
+**Run inference** to detect objects in the selected photo. Results stay cached per image, so
+switching photos and coming back keeps the boxes, and a status banner reports the object count,
+latency, and active backend. On a first cold run the graph compiles and inference takes a few
+seconds; the wasm release build here measured about 0.3 s per frame after warm-up.
 
 ## Share on your tailnet
 
