@@ -4,7 +4,9 @@ use burn::{
     module::{Module, Param},
     tensor::{Tensor, TensorData},
 };
-use burn_store::{BurnToPyTorchAdapter, ModuleSnapshot, ModuleStore, SafetensorsStore};
+use burn_store::{
+    BurnToPyTorchAdapter, ModuleSnapshot, ModuleStore, PathFilter, SafetensorsStore,
+};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
@@ -67,6 +69,13 @@ pub(crate) fn write_snapshot(
     let mut store = SafetensorsStore::from_file(path)
         .with_to_adapter(BurnToPyTorchAdapter)
         .skip_enum_variants(true)
+        // YOLO26 carries a one-to-many head purely as a training aid: `forward` (the inference path
+        // the exported graph reproduces) only calls `head.forward`, and `forward_train_dual` is the
+        // sole user of `head.o2m_*`. Writing those 102 tensors into the snapshot makes the
+        // Ultralytics reconstruction report them as unexpected keys and abort the export, even though
+        // no inference graph can consume them. Drop them here rather than teaching the audit to
+        // ignore a name that only exists on this side of the bridge.
+        .filter(PathFilter::new().with_predicate(|path, _container| !path.contains("o2m_")))
         .metadata("montgomery.schema", "onnx-parameter-snapshot-v1")
         .metadata("montgomery.model_id", spec.model_id.as_str())
         .metadata("montgomery.key_map_version", spec.key_map_version);

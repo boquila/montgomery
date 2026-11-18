@@ -88,7 +88,14 @@ fn average_precision(
     targets: &[MetricTarget],
 ) -> f32 {
     let (precision, recall) = precision_recall_curve(class, threshold, predictions, targets);
-    // COCO-style 101-point interpolated precision.
+    // COCO-style 101-point AP.
+    //
+    // pycocotools first builds the precision envelope (`p[i] = max(p[i..])`) and then, for each of
+    // the 101 recall thresholds, reads the envelope at the first recall at or above the threshold.
+    // Taking the maximum over every point whose recall clears the threshold — what this fold does —
+    // is the same number, because the envelope at that index is by definition that maximum. Do not
+    // "fix" this into a linear interpolation between neighbouring points: pycocotools does not
+    // interpolate, and adding it would move every reported mAP away from the reference.
     (0..=100)
         .map(|point| {
             let threshold = point as f32 / 100.0;
@@ -190,6 +197,44 @@ fn best_precision_recall(curve: (Vec<f32>, Vec<f32>)) -> (f32, f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn average_precision_reads_the_precision_envelope() {
+        // One class, two ground truths, one hit and one miss. The PR curve has a single recall
+        // value (0.5) at two precisions (1.0 then 0.5); the envelope keeps 1.0 for every threshold
+        // up to 0.5 and drops to 0 beyond, so exactly 51 of the 101 points contribute.
+        let hit = BoxXyxy::new([0.0, 0.0, 10.0, 10.0]).unwrap();
+        let targets = [
+            MetricTarget {
+                image_id: "a".into(),
+                class_id: 0,
+                bbox: hit,
+                crowd: false,
+            },
+            MetricTarget {
+                image_id: "a".into(),
+                class_id: 0,
+                bbox: BoxXyxy::new([20.0, 20.0, 30.0, 30.0]).unwrap(),
+                crowd: false,
+            },
+        ];
+        let predictions = [
+            MetricPrediction {
+                image_id: "a".into(),
+                class_id: 0,
+                confidence: 0.9,
+                bbox: hit,
+            },
+            MetricPrediction {
+                image_id: "a".into(),
+                class_id: 0,
+                confidence: 0.5,
+                bbox: BoxXyxy::new([50.0, 50.0, 60.0, 60.0]).unwrap(),
+            },
+        ];
+        let ap = average_precision(0, 0.5, &predictions, &targets);
+        assert!((ap - 51.0 / 101.0).abs() < 1e-5, "{ap}");
+    }
 
     #[test]
     fn perfect_prediction_has_unit_map() {

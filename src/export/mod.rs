@@ -103,7 +103,24 @@ fn export_onnx_inner(
     weights: &Path,
     mut options: OnnxExportOptions,
 ) -> Result<OnnxArtifact> {
-    let spec = ExportSpec::for_model(model_id);
+    let mut spec = ExportSpec::for_model(model_id);
+    // `for_model` only knows the upstream defaults — 80 for COCO, 1000 for ImageNet, 19 for
+    // Cityscapes. A checkpoint trained on a user's own dataset almost never carries those
+    // counts, and the graph adapter sizes the head from `num_classes`, so an unadjusted spec
+    // rebuilds a 1000-wide classifier for a 3-class checkpoint and dies in the state-dict audit
+    // with "0 missing, 0 unexpected, 2 wrong-shape keys". The checkpoint's own class table is
+    // the only correct source; a checkpoint that carries none keeps the catalog default, which
+    // is also what `Predictor::from_checkpoint` falls back to.
+    if matches!(
+        spec.task,
+        ExportTask::Detect | ExportTask::Segment | ExportTask::Classify
+    ) {
+        if let Ok(metadata) = crate::artifact_metadata(weights) {
+            if let Some(names) = metadata.class_names.as_ref().filter(|names| !names.is_empty()) {
+                spec.num_classes = names.len();
+            }
+        }
+    }
     validate_options(spec, weights, &mut options)?;
     let output = absolute_path(&options.output)?;
     let sidecar = sidecar_path(&output);
