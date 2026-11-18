@@ -547,17 +547,30 @@ fn ciou_tensor(predicted: Tensor<3>, target: Tensor<3>) -> Tensor<3> {
         .powi_scalar(2)
         + enclosing.slice([0..batch, 0..anchors, 1..2]).powi_scalar(2)
         + 1e-7;
-    let pred_angle = pred_size
-        .clone()
-        .slice([0..batch, 0..anchors, 0..1])
-        .atan2(pred_size.slice([0..batch, 0..anchors, 1..2]));
-    let target_angle = target_size
-        .clone()
-        .slice([0..batch, 0..anchors, 0..1])
-        .atan2(target_size.slice([0..batch, 0..anchors, 1..2]));
+    let pred_angle = ciou_aspect_angle(
+        pred_size.clone().slice([0..batch, 0..anchors, 0..1]),
+        pred_size.slice([0..batch, 0..anchors, 1..2]),
+    );
+    let target_angle = ciou_aspect_angle(
+        target_size.clone().slice([0..batch, 0..anchors, 0..1]),
+        target_size.slice([0..batch, 0..anchors, 1..2]),
+    );
     let v = (target_angle - pred_angle).powi_scalar(2) * (4.0 / std::f64::consts::PI.powi(2));
     let alpha = v.clone() / ((overlap.clone().neg() + 1.0) + v.clone() + 1e-7);
     overlap - center_distance / diagonal - alpha * v
+}
+
+// A zero-sized box has no aspect direction. Define its angle and angular gradient
+// as zero. Replace both inputs before atan2: masking the output or weighting the
+// loss by zero still leaves atan2(0, 0)'s undefined derivative in the graph.
+fn ciou_aspect_angle(width: Tensor<3>, height: Tensor<3>) -> Tensor<3> {
+    let origin = width
+        .clone()
+        .equal_elem(0.0)
+        .bool_and(height.clone().equal_elem(0.0));
+    width
+        .mask_fill(origin.clone(), 0.0)
+        .atan2(height.mask_fill(origin, 1.0))
 }
 
 #[cfg(test)]
@@ -700,6 +713,147 @@ mod tests {
         assert!(loss.finite);
         assert_eq!(loss.targets, 1);
         assert_eq!(loss.foreground, 0);
+    }
+
+    #[test]
+    fn ciou_aspect_angle_preserves_non_origin_values_and_gradients() {
+        let device = Device::flex().autodiff();
+        for (width, height) in [
+            (0.0, 0.0),
+            (0.0, 1.0),
+            (1.0, 0.0),
+            (1.0, 1.0),
+            (2.0, 3.0),
+            (1e-4, 1e-4),
+        ] {
+            let w = Tensor::<3>::full([1, 1, 1], width, &device).require_grad();
+            let h = Tensor::<3>::full([1, 1, 1], height, &device).require_grad();
+            let angle = ciou_aspect_angle(w.clone(), h.clone()).sum();
+            let value = angle.clone().into_scalar::<f32>();
+            let grads = angle.backward();
+            let dw = w.grad(&grads).unwrap().into_scalar::<f32>();
+            let dh = h.grad(&grads).unwrap().into_scalar::<f32>();
+            assert!(
+                value.is_finite() && dw.is_finite() && dh.is_finite(),
+                "width={width}, height={height}, angle={value}, dw={dw}, dh={dh}"
+            );
+            if width == 0.0 && height == 0.0 {
+                assert_eq!((value, dw, dh), (0.0, 0.0, 0.0));
+            } else {
+                let w = Tensor::<3>::full([1, 1, 1], width, &device).require_grad();
+                let h = Tensor::<3>::full([1, 1, 1], height, &device).require_grad();
+                let original = w.clone().atan2(h.clone()).sum();
+                assert_eq!(
+                    value,
+                    original.clone().into_scalar::<f32>(),
+                    "width={width}, height={height}"
+                );
+                let grads = original.backward();
+                assert_eq!(
+                    dw,
+                    w.grad(&grads).unwrap().into_scalar::<f32>(),
+                    "width={width}, height={height}, width gradient"
+                );
+                assert_eq!(
+                    dh,
+                    h.grad(&grads).unwrap().into_scalar::<f32>(),
+                    "width={width}, height={height}, height gradient"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ciou_backward_is_finite_for_degenerate_and_zero_weight_boxes() {
+        let device = Device::flex().autodiff();
+        let boxes = [
+            [1., 2., 7., 6.], // Valid, non-perfect match with a nonzero gradient.
+            [4., 4., 4., 4.], // Point.
+            [5., 5., 3., 3.], // Inverted.
+            [4., 0., 4., 8.], // Zero width.
+            [0., 4., 8., 4.], // Zero height.
+        ]
+        .concat();
+        for weights in [vec![1.; 5], vec![1., 0., 0., 0., 0.]] {
+            let zero_weight_degenerate_boxes = weights[1] == 0.0;
+            let predicted =
+                Tensor::<3>::from_data(TensorData::new(boxes.clone(), [1, 5, 4]), &device)
+                    .require_grad();
+            let target = Tensor::<3>::from_data(
+                TensorData::new([0., 0., 8., 8.].repeat(5), [1, 5, 4]),
+                &device,
+            );
+            let weights = Tensor::<3>::from_data(TensorData::new(weights, [1, 5, 1]), &device);
+            let loss = ((ciou_tensor(predicted.clone(), target).neg() + 1.) * weights).sum();
+            assert!(
+                loss.clone().into_scalar::<f32>().is_finite(),
+                "zero_weight_degenerate_boxes={zero_weight_degenerate_boxes}"
+            );
+            let gradient = predicted.grad(&loss.backward()).unwrap().into_data();
+            let gradient = gradient.as_slice::<f32>().unwrap();
+            assert!(
+                gradient.iter().all(|v| v.is_finite()),
+                "zero_weight_degenerate_boxes={zero_weight_degenerate_boxes}, gradient={gradient:?}"
+            );
+            assert!(
+                gradient[..4].iter().any(|v| *v != 0.0),
+                "valid non-perfect match must retain a gradient: {gradient:?}"
+            );
+            if zero_weight_degenerate_boxes {
+                assert!(
+                    gradient[4..].iter().all(|v| *v == 0.0),
+                    "zero-weight box gradients={:?}",
+                    &gradient[4..]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn direct_loss_backward_is_finite_for_unmatched_zero_boxes() {
+        let device = Device::flex().autodiff();
+        for has_target in [false, true] {
+            let raw_boxes = Tensor::<3>::zeros([1, 4, 1], &device).require_grad();
+            let raw_scores = Tensor::<3>::zeros([1, 1, 1], &device).require_grad();
+            let targets = vec![if has_target {
+                vec![TalGroundTruth {
+                    class_id: 0,
+                    bbox: crate::training::geometry::BoxXyxy::new([0., 0., 8., 8.]).unwrap(),
+                }]
+            } else {
+                vec![]
+            }];
+            let loss = tensor_loss(
+                raw_boxes.clone(),
+                raw_scores.clone(),
+                &[FeatureLevelLayout {
+                    height: 1,
+                    width: 1,
+                    stride: 8,
+                }],
+                &targets,
+                DetectionLossConfig::direct([8, 8], 1),
+            )
+            .unwrap();
+            assert_eq!(loss.foreground, 0);
+            assert!(loss.total.clone().into_scalar::<f32>().is_finite());
+            let gradients = loss.total.backward();
+            let box_gradient = raw_boxes.grad(&gradients).unwrap().into_data();
+            let box_gradient = box_gradient.as_slice::<f32>().unwrap();
+            assert!(
+                box_gradient.iter().all(|v| v.is_finite()),
+                "has_target={has_target}, box gradient={box_gradient:?}"
+            );
+            assert!(box_gradient.iter().all(|v| *v == 0.));
+            let score_gradient = raw_scores.grad(&gradients).unwrap().into_data();
+            assert!(
+                score_gradient
+                    .as_slice::<f32>()
+                    .unwrap()
+                    .iter()
+                    .all(|v| v.is_finite())
+            );
+        }
     }
 
     #[test]
