@@ -1,105 +1,138 @@
 # Montgomery web demo
 
-A small egui app that runs YOLO26n object detection in the browser through Rust and
-WebAssembly, with Montgomery's native Burnpack artifact and the same preprocessing and
-postprocessing contract as the CLI. Everything runs client-side; images never leave the
-browser.
+Rust, egui, and Trunk. All inference runs locally in the browser with Burn's Flex CPU backend;
+images never leave the browser. The same app also builds natively.
 
-The same code also builds as a native desktop app for quick iteration.
+The selector offers all five experimental YOLO26 nano tasks supported by Montgomery:
 
-## Layout
+| Task | Model | Result |
+| --- | --- | --- |
+| Detection | `yolo26n` | Labeled boxes |
+| Instance segmentation | `yolo26n-seg` | Masks and boxes |
+| Classification | `yolo26n-cls` | Top five ImageNet classes |
+| Semantic segmentation | `yolo26n-sem` | Cityscapes class overlay |
+| Depth estimation | `yolo26n-depth` | Depth heatmap and distances in meters |
 
-- Left panel: seven bundled sample images. Click one to select it; images that already have a
-  result show a small green dot.
-- Central panel: the selected image, a **Run inference** button once the model is ready, and
-  the detection boxes painted over the image with class names and confidences.
+Models load on first selection. Results stay cached per task and photo. The confidence slider
+filters both boxes and instance masks without rerunning. While loading or running, the image
+dims; status stays above it. The wordmark is the original Montgomery SVG, rendered at display
+resolution by egui's SVG loader.
 
-## Prerequisites
+## Prepare models
+
+From the repository root:
+
+```console
+uv run --locked --project examples/web/scripts python examples/web/scripts/prepare-models.py
+```
+
+This builds the native packer, downloads the five official checkpoints, verifies their SHA-256
+hashes from `models.json`, exports their tensor states using the repository's conversion tool,
+and packs them. The pinned Python environment uses CPU-only PyTorch. Python is needed only for
+model preparation, never browser inference.
+
+All generated data stays under `examples/web/target/`: `checkpoints/`, `models/`, and `packer/`.
+Nothing is written to root-level Burnpacks. An existing executable can be supplied with
+`--packer /path/to/montgomery`. Repacking replaces artifacts only after each pack succeeds.
+
+## Run
 
 ```console
 rustup target add wasm32-unknown-unknown
-cargo install wasm-bindgen-cli --version 0.2.130   # match examples/web/Cargo.lock
-cargo install trunk --locked                      # or grab a prebuilt binary
+cargo install trunk --locked --version 0.22.1
+cd examples/web
+trunk serve --release
 ```
 
-## Pack the model
+Open <http://127.0.0.1:8080>. Trunk copies the prepared artifacts from `target/models/` and
+fetches only the selected model (approximately 3-11 MB). Use `cargo run --release` for the native
+app; it reads the same artifacts. `MONTGOMERY_WEB_DEMO_MODELS` can override that directory.
 
-The demo fetches `yolo26n.bpk` from the repository root at runtime; pack it once:
+`Trunk.toml` listens on `0.0.0.0`, so the same server can be used over your LAN or tailnet.
+For an HTTPS tailnet URL, run `tailscale serve --bg 8080` while Trunk is running.
+
+## Deployment
+
+The deployment target is **https://boquila.org/montgomery-lib/**, served by the existing
+`boquila.github.io` website. No additional repository, hosting service, DNS record, or
+cross-repository secret is needed.
+
+Publishing a Montgomery GitHub release runs `.github/workflows/web-demo.yml`. It checks
+the demo, prepares all five models, builds the browser app, and attaches
+`montgomery-web-demo.zip` to that release. Pull requests and manual runs perform the same
+validation and provide a preview ZIP as a one-day Actions artifact; they do not publish.
+
+The ZIP contains the contents of `examples/web/target/site/`:
+
+```text
+index.html          built with /montgomery-lib/ as its public URL
+montgomery.svg
+source.json         release version and exact source commit
+*.js, *.wasm, *.bpk, LICENSE
+```
+
+The existing website deployment downloads the latest stable release that has a completed
+demo ZIP and extracts it into `dist/montgomery-lib/`. A website text edit never compiles
+Rust, installs Python, or rebuilds models. It only downloads and includes the released files.
+The release ZIP persists independently of Actions caches and temporary artifacts.
+
+Before including the demo, the website records hashes of every existing output file.
+Before deploying, it verifies that all those files are unchanged and that no
+`dist/montgomery/` directory was created. The original `montgomery.html` page and its
+`/montgomery` URL remain intact.
+
+Website pushes and manual runs deploy the combined site. A lightweight scheduled check
+at minutes 17 and 47 compares the available demo release with the published `source.json`;
+unchanged versions skip deployment. GitHub may delay scheduled runs. Prereleases and releases
+whose demo upload has not completed are skipped, leaving the previous demo available.
+If no released demo exists or downloading it fails, deployment stops before changing the live site.
+
+For the initial rollout, merge Montgomery's changes and publish a release containing the
+demo ZIP before merging the website workflow change. Keep Pages disabled on Montgomery:
+only `boquila.github.io` publishes to Pages. The unused `demo` DNS record can be removed.
+
+Demo source, assets, model manifest, conversion environment, and documentation remain under
+`examples/`. Only the GitHub workflow entry lives in `.github/workflows/`, as GitHub requires.
+There are no Node/npm build or serving scripts.
+
+To build the deployment locally, from `examples/web`:
 
 ```console
-uv run --project tools tools/export_checkpoint_state.py target/yolo26n.pt target/yolo26n-state.pt
-cargo run --bin montgomery -- pack-weights --architecture yolo26n --state target/yolo26n-state.pt
+trunk build --release --locked --public-url /montgomery-lib/ --dist target/site
 ```
 
-`target/yolo26n.pt` is the official Ultralytics checkpoint; `Trunk.toml` copies the packed
-artifact into the served bundle.
+To preview the combined site, copy `target/site/` into the website's built
+`dist/montgomery-lib/` directory and serve the website's `dist/` directory. CI also includes
+the repository license and release metadata in the ZIP.
 
-## Run in the browser
+## Verification
+
+From `examples/web`:
 
 ```console
-trunk serve
+cargo fmt --check
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked
+cargo test --release --locked all_nano_tasks_from_bytes -- --ignored --nocapture --test-threads 1
 ```
 
-Then open <http://127.0.0.1:8080>. The model (~5 MB) is fetched after the page loads; press
-**Run inference** to detect objects in the selected photo. Results stay cached per image, so
-switching photos and coming back keeps the boxes, and a status banner reports the object count,
-latency, and active backend. On a first cold run the graph compiles and inference takes a few
-seconds; the wasm release build here measured about 0.3 s per frame after warm-up.
+The last check requires prepared models and validates reference-image objects and masks,
+ranked class probabilities, source-sized semantic labels, and finite positive depth. Default
+tests check source-space overlays and confidence filtering without external weights.
 
-## Share on your tailnet
+Browser inference currently runs on the main thread. Dense tasks take longer than detection,
+and the UI pauses during a run. Model preprocessing is unchanged: 640 px for detection and
+instances, a 224 px center crop for classification, 1024 px for semantics, and 768 px for depth.
 
-`Trunk.toml` binds `trunk serve` to `0.0.0.0`, so Tailscale peers can reach
-`http://<machine>.<tailnet>.ts.net:8080` if the Windows firewall allows it. For a clean HTTPS
-URL without opening a port, serve the built bundle and let Tailscale proxy it:
+## Assets and licensing
 
-```console
-trunk build --release
-node scripts/serve.cjs          # static server for dist on 0.0.0.0:8080
-tailscale serve --bg 8080       # prints https://<machine>.<tailnet>.ts.net/
-```
-
-## Run natively
-
-```console
-cargo run --release
-```
-
-Native builds look for `yolo26n.bpk` in the current directory, the repository root
-(`../../yolo26n.bpk` when launched from `examples/web`), or the path in
-`MONTGOMERY_WEB_DEMO_MODEL`.
-
-## Sample images
-
-`assets/` contains COCO-style scenes from the [Ultralytics assets
-repository](https://github.com/ultralytics/assets) (`dog_bike_man`, `bus`, `zidane`, AGPL-3.0)
-plus public-domain and CC0 classics used by [scikit-image](https://scikit-image.org): `camera`
+`assets/montgomery.svg` is a copy of the project's wordmark from `docs/logo.svg`.
+The bundled `dog_bike_man`, `bus`, and `zidane` photos come from
+[Ultralytics assets](https://github.com/ultralytics/assets) (AGPL-3.0). The other samples are
+public-domain and CC0 classics used by [scikit-image](https://scikit-image.org): `camera`
 (CC0, Lav Varshney), `astronaut` (NASA, public domain), `chelsea` (CC0, Stefan van der Walt),
-and `coffee` (CC0, Rachel Michetti). They are embedded at compile time, so the demo works
-offline.
+and `coffee` (CC0, Rachel Michetti).
 
-## Test
-
-`cargo test` verifies the demo's headline claim headlessly: a bytes-loaded YOLO26n detects
-the dog, bicycle, and person on the bundled reference image.
-
-The wasm runtime can be checked without a browser. After packing `yolo26n.bpk` at the
-repository root:
-
-```console
-cargo build --release --target wasm32-unknown-unknown
-wasm-bindgen --target nodejs --out-dir target/smoke_pkg \
-    target/wasm32-unknown-unknown/release/montgomery-web-demo.wasm
-node scripts/smoke.cjs
-```
-
-The script loads the Burnpack, runs the full bytes-to-detections path inside WebAssembly, and
-exits non-zero if the expected detections are missing.
-
-## Notes
-
-- Inference currently runs on the main thread in the browser build, so the UI freezes while
-  a frame is processed; a web-worker port is the natural next step.
-- Montgomery compiles the same Flex CPU backend for `wasm32-unknown-unknown`; burn's flex
-  backend falls back to single-threaded execution there.
-- Packaging a different detection model means pointing `MODEL_URL` in `src/app.rs` at the
-  new artifact and updating the pack step above.
+Montgomery and the upstream checkpoints/derived Burnpacks are AGPL-3.0. Weights and build
+output remain uncommitted. The task catalog is in `src/app.rs`; `src/results.rs` handles
+presentation.

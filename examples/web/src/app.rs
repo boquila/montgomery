@@ -1,4 +1,4 @@
-//! Montgomery web demo: pick an image on the left, run YOLO26n detection, see the boxes.
+//! Montgomery web demo: pick an image on the left, run any supported YOLO26 nano task.
 //!
 //! The same Rust code builds natively (inference on a worker thread) and for the browser
 //! (WebAssembly, inference on the main thread until a worker port lands).
@@ -9,10 +9,53 @@ use std::sync::{
 };
 
 use eframe::egui;
-use montgomery::{Detection, Predictor};
+use montgomery::{Detection, ModelId, PredictOptions, Predictor};
 
-/// Artifact served next to the page (see `Trunk.toml` and the demo README).
-const MODEL_URL: &str = "yolo26n.bpk";
+use crate::results::ResultView;
+
+const GITHUB_URL: &str = "https://github.com/boquila/montgomery";
+
+/// Only nano variants already implemented by Montgomery are offered here.
+#[derive(Clone, Copy)]
+struct DemoModel {
+    id: ModelId,
+    label: &'static str,
+    artifact: &'static str,
+    boxes: bool,
+}
+
+const MODELS: &[DemoModel] = &[
+    DemoModel {
+        id: ModelId::Yolo26N,
+        label: "Object detection",
+        artifact: "yolo26n.bpk",
+        boxes: true,
+    },
+    DemoModel {
+        id: ModelId::Yolo26NSeg,
+        label: "Instance segmentation",
+        artifact: "yolo26n-seg.bpk",
+        boxes: true,
+    },
+    DemoModel {
+        id: ModelId::Yolo26NCls,
+        label: "Classification",
+        artifact: "yolo26n-cls.bpk",
+        boxes: false,
+    },
+    DemoModel {
+        id: ModelId::Yolo26NSem,
+        label: "Semantic segmentation",
+        artifact: "yolo26n-sem.bpk",
+        boxes: false,
+    },
+    DemoModel {
+        id: ModelId::Yolo26NDepth,
+        label: "Depth estimation",
+        artifact: "yolo26n-depth.bpk",
+        boxes: false,
+    },
+];
 
 /// One selectable demo image, embedded so the app also works fully offline.
 struct DemoImage {
@@ -61,29 +104,27 @@ const IMAGES: &[DemoImage] = &[
 ];
 
 /// Accent used for selection outlines and status text.
-const ACCENT: egui::Color32 = egui::Color32::from_rgb(94, 203, 255);
+const ACCENT: egui::Color32 = egui::Color32::from_rgb(51, 218, 114);
 /// Fill for the primary action button (dark enough for light label text).
-const RUN_FILL: egui::Color32 = egui::Color32::from_rgb(27, 105, 148);
+const RUN_FILL: egui::Color32 = egui::Color32::from_rgb(27, 104, 62);
 /// Success color for completed inference.
 const SUCCESS: egui::Color32 = egui::Color32::from_rgb(102, 217, 138);
 /// Warning color while a run is in flight.
 const RUNNING: egui::Color32 = egui::Color32::from_rgb(240, 190, 80);
-/// Which backend actually executes the graph.
-#[cfg(target_arch = "wasm32")]
-const BACKEND: &str = "Flex CPU · WebAssembly";
-#[cfg(not(target_arch = "wasm32"))]
-const BACKEND: &str = "Flex CPU · native";
 
 /// A finished inference run for one selected image.
 struct Outcome {
     image_index: usize,
-    detections: Vec<Detection>,
+    model_index: usize,
+    result: Result<ResultView, String>,
     elapsed_ms: f64,
 }
 
 /// Model availability shared between the UI thread and the loading/inference task.
 enum ModelSlot {
+    Unloaded,
     Loading,
+    Running,
     Ready(Box<Predictor>),
     Failed(String),
 }
@@ -99,24 +140,37 @@ struct ImageView {
 pub struct DemoApp {
     images: Vec<ImageView>,
     selected: usize,
-    model: Arc<Mutex<ModelSlot>>,
+    selected_model: usize,
+    models: Vec<Arc<Mutex<ModelSlot>>>,
     busy: Arc<AtomicBool>,
     outcome: Arc<Mutex<Option<Outcome>>>,
-    /// Finished runs, one slot per sample image, so switching photos keeps results.
-    outcomes: Vec<Option<Outcome>>,
-    /// The image whose inference is currently executing, if any.
-    run_image: Option<usize>,
+    /// Finished runs indexed by model, then image.
+    outcomes: Vec<Vec<Option<Outcome>>>,
+    /// Model and image whose inference is executing, even if the selection changes.
+    run_image: Option<(usize, usize)>,
     threshold: f32,
 }
 
 impl DemoApp {
     pub fn new(ctx: &egui::Context) -> Self {
+        egui_extras::install_image_loaders(ctx);
+        ctx.set_theme(egui::Theme::Dark);
         let mut visuals = egui::Visuals::dark();
         visuals.panel_fill = egui::Color32::from_rgb(15, 17, 21);
         visuals.window_fill = visuals.panel_fill;
-        visuals.selection.bg_fill = egui::Color32::from_rgb(30, 74, 96);
+        visuals.selection.bg_fill = egui::Color32::from_rgb(25, 65, 43);
         visuals.selection.stroke = egui::Stroke::new(1.0, ACCENT);
         ctx.set_visuals(visuals);
+        ctx.style_mut_of(egui::Theme::Dark, |style| {
+            style.spacing.item_spacing = egui::vec2(8.0, 7.0);
+            style.spacing.button_padding = egui::vec2(12.0, 7.0);
+            style
+                .text_styles
+                .insert(egui::TextStyle::Body, egui::FontId::proportional(14.0));
+            style
+                .text_styles
+                .insert(egui::TextStyle::Button, egui::FontId::proportional(14.0));
+        });
 
         let images = IMAGES
             .iter()
@@ -141,36 +195,113 @@ impl DemoApp {
             })
             .collect();
 
-        let model = Arc::new(Mutex::new(ModelSlot::Loading));
-        spawn_model_load(ctx.clone(), model.clone());
+        let models: Vec<_> = MODELS
+            .iter()
+            .map(|_| Arc::new(Mutex::new(ModelSlot::Unloaded)))
+            .collect();
+        *models[0].lock().unwrap() = ModelSlot::Loading;
+        spawn_model_load(ctx.clone(), models[0].clone(), MODELS[0]);
 
         Self {
             images,
             selected: 0,
-            model,
+            selected_model: 0,
+            models,
             busy: Arc::new(AtomicBool::new(false)),
             outcome: Arc::new(Mutex::new(None)),
-            outcomes: (0..IMAGES.len()).map(|_| None).collect(),
+            outcomes: MODELS
+                .iter()
+                .map(|_| (0..IMAGES.len()).map(|_| None).collect())
+                .collect(),
             run_image: None,
             threshold: 0.25,
         }
+    }
+
+    fn photo_card(&self, ui: &mut egui::Ui, index: usize, compact: bool) -> egui::Response {
+        let view = &self.images[index];
+        let selected = self.selected == index;
+        let card = egui::Frame::NONE
+            .inner_margin(egui::Margin::same(5))
+            .corner_radius(6)
+            .fill(if selected {
+                egui::Color32::from_rgb(21, 45, 32)
+            } else {
+                egui::Color32::TRANSPARENT
+            })
+            .stroke(if selected {
+                egui::Stroke::new(2.0, ACCENT)
+            } else {
+                egui::Stroke::NONE
+            })
+            .show(ui, |ui| {
+                if compact {
+                    ui.set_width(100.0);
+                } else {
+                    ui.set_min_width(ui.available_width());
+                }
+                ui.vertical_centered(|ui| {
+                    ui.add(
+                        egui::Image::from_texture(&view.texture)
+                            .max_width(if compact { 96.0 } else { 150.0 })
+                            .max_height(if compact { 56.0 } else { 96.0 })
+                            .maintain_aspect_ratio(true),
+                    );
+                    let label =
+                        ui.label(egui::RichText::new(IMAGES[index].label).size(14.0).color(
+                            if selected {
+                                egui::Color32::WHITE
+                            } else {
+                                egui::Color32::from_gray(190)
+                            },
+                        ));
+                    if !compact
+                        && self.outcomes[self.selected_model][index]
+                            .as_ref()
+                            .is_some_and(|o| o.result.is_ok())
+                    {
+                        let center = egui::pos2(label.rect.right() + 6.0, label.rect.center().y);
+                        ui.painter().circle_filled(center, 2.5, SUCCESS);
+                    }
+                });
+            });
+        let response = ui
+            .interact(
+                card.response.rect,
+                ui.id().with(("sample-image", index)),
+                egui::Sense::click(),
+            )
+            .on_hover_text(IMAGES[index].name);
+        if response.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            if !selected {
+                ui.painter().rect_stroke(
+                    card.response.rect,
+                    6.0,
+                    egui::Stroke::new(1.5, egui::Color32::from_gray(120)),
+                    egui::StrokeKind::Inside,
+                );
+            }
+        }
+        response
     }
 
     fn run_inference(&mut self, ctx: &egui::Context) {
         if self.busy.swap(true, Ordering::Relaxed) {
             return;
         }
-        self.outcomes[self.selected] = None;
-        self.run_image = Some(self.selected);
+        self.outcomes[self.selected_model][self.selected] = None;
+        self.run_image = Some((self.selected_model, self.selected));
         ctx.request_repaint();
         let image = self.images[self.selected].image.clone();
         spawn_inference(
             ctx.clone(),
-            self.model.clone(),
+            self.models[self.selected_model].clone(),
             self.busy.clone(),
             self.outcome.clone(),
             image,
             self.selected,
+            self.selected_model,
         );
     }
 }
@@ -179,149 +310,155 @@ impl eframe::App for DemoApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         if let Some(outcome) = self.outcome.lock().unwrap().take() {
-            // Cache by image: a run that finished while another photo is shown is not lost.
-            let image_index = outcome.image_index;
-            self.outcomes[image_index] = Some(outcome);
-            if self.run_image == Some(image_index) {
+            let key = (outcome.model_index, outcome.image_index);
+            self.outcomes[key.0][key.1] = Some(outcome);
+            if self.run_image == Some(key) {
                 self.run_image = None;
             }
         }
         let busy = self.busy.load(Ordering::Relaxed);
-        let running_here = busy && self.run_image == Some(self.selected);
-        let (model_state, model_ready, model_failed, status_color) =
-            match &*self.model.lock().unwrap() {
-                ModelSlot::Loading => ("loading model…".to_owned(), false, false, RUNNING),
-                ModelSlot::Failed(error) => (
-                    format!("model error: {error}"),
-                    false,
-                    true,
-                    egui::Color32::from_rgb(240, 100, 100),
-                ),
-                ModelSlot::Ready(_) => ("YOLO26n ready".to_owned(), true, false, SUCCESS),
-            };
-
-        egui::Panel::left("images")
-            .resizable(false)
-            .default_size(230.0)
-            .show(ui, |ui| {
-                ui.add_space(10.0);
-                ui.label(
-                    egui::RichText::new("MONTGOMERY")
-                        .size(11.0)
-                        .strong()
-                        .color(ACCENT),
-                );
-                ui.label(egui::RichText::new("YOLO26n demo").size(20.0).strong());
-                ui.label(
-                    egui::RichText::new("1. Pick a photo\n2. Press Run inference")
-                        .size(12.5)
-                        .color(egui::Color32::from_gray(205)),
-                );
-                ui.add_space(12.0);
-                ui.separator();
-                ui.add_space(8.0);
-                let mut clicked_card = None;
-                // One column, scrollable so every sample stays reachable in a short window.
-                let list_height = (ui.available_height() - 52.0).max(120.0);
-                egui::ScrollArea::vertical()
-                    .max_height(list_height)
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        for (index, view) in self.images.iter().enumerate() {
-                            let selected = self.selected == index;
-                            let card = egui::Frame::NONE
-                                .inner_margin(egui::Margin::same(5))
-                                .corner_radius(6)
-                                .fill(if selected {
-                                    egui::Color32::from_rgb(24, 45, 58)
-                                } else {
-                                    egui::Color32::TRANSPARENT
-                                })
-                                .stroke(if selected {
-                                    egui::Stroke::new(2.0, ACCENT)
-                                } else {
-                                    egui::Stroke::NONE
-                                })
-                                .show(ui, |ui| {
-                                    ui.set_min_width(ui.available_width());
-                                    ui.vertical_centered(|ui| {
-                                        ui.add(
-                                            egui::Image::from_texture(&view.texture)
-                                                .max_width(150.0)
-                                                .max_height(96.0)
-                                                .maintain_aspect_ratio(true),
-                                        );
-                                        let label = ui.label(
-                                            egui::RichText::new(IMAGES[index].label)
-                                                .size(11.5)
-                                                .color(if selected {
-                                                    egui::Color32::WHITE
-                                                } else {
-                                                    egui::Color32::from_gray(190)
-                                                }),
-                                        );
-                                        if self.outcomes[index].is_some() {
-                                            let center = egui::pos2(
-                                                label.rect.right() + 6.0,
-                                                label.rect.center().y,
-                                            );
-                                            ui.painter().circle_filled(center, 2.5, SUCCESS);
-                                        }
-                                    });
-                                });
-                            let response = ui
-                                .interact(
-                                    card.response.rect,
-                                    ui.id().with(("sample-image", index)),
-                                    egui::Sense::click(),
-                                )
-                                .on_hover_text(IMAGES[index].name);
-                            if response.hovered() {
-                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                                if !selected {
-                                    ui.painter().rect_stroke(
-                                        card.response.rect,
-                                        6.0,
-                                        egui::Stroke::new(1.5, egui::Color32::from_gray(120)),
-                                        egui::StrokeKind::Inside,
-                                    );
-                                }
-                            }
-                            if response.clicked() {
-                                clicked_card = Some(index);
-                            }
-                            ui.add_space(6.0);
+        let compact = ui.available_width() < 700.0;
+        // A task can be selected while another model loads or a native run finishes.
+        // Each slot owns its load result, so a late completion cannot replace another task.
+        egui::Panel::top("task-selector").show(ui, |ui| {
+            ui.add_space(5.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.label("Task");
+                egui::ComboBox::from_id_salt("task")
+                    .selected_text(MODELS[self.selected_model].label)
+                    .width(220.0)
+                    .show_ui(ui, |ui| {
+                        for (index, model) in MODELS.iter().enumerate() {
+                            ui.selectable_value(&mut self.selected_model, index, model.label);
                         }
                     });
-                if let Some(index) = clicked_card {
-                    self.selected = index;
-                }
-                ui.add_space(4.0);
-                ui.separator();
-                ui.add_space(4.0);
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{} · experimental",
+                        MODELS[self.selected_model].id
+                    ))
+                    .weak(),
+                );
+                ui.add(
+                    egui::Hyperlink::from_label_and_url("GitHub", GITHUB_URL).open_in_new_tab(true),
+                )
+                .on_hover_text("View the Montgomery source code");
+            });
+            ui.add_space(5.0);
+        });
+        let spec = MODELS[self.selected_model];
+        let slot = &self.models[self.selected_model];
+        let should_load = {
+            let mut state = slot.lock().unwrap();
+            if matches!(*state, ModelSlot::Unloaded) {
+                *state = ModelSlot::Loading;
+                true
+            } else {
+                false
+            }
+        };
+        if should_load {
+            spawn_model_load(ctx.clone(), slot.clone(), spec);
+        }
+        let (model_state, model_ready, model_failed, status_color) = match &*slot.lock().unwrap() {
+            ModelSlot::Unloaded | ModelSlot::Loading => {
+                (format!("Loading {}…", spec.id), false, false, RUNNING)
+            }
+            ModelSlot::Running => (format!("{} running…", spec.id), false, false, RUNNING),
+            ModelSlot::Failed(error) => (
+                format!("Model error: {error}"),
+                false,
+                true,
+                egui::Color32::from_rgb(240, 100, 100),
+            ),
+            ModelSlot::Ready(_) => (format!("{} ready", spec.id), true, false, SUCCESS),
+        };
+
+        if compact {
+            egui::Panel::top("compact-images").show(ui, |ui| {
+                ui.add_space(5.0);
                 ui.horizontal(|ui| {
-                    status_dot(ui, status_color);
+                    wordmark(ui, 174.0);
+                    ui.label("Choose a photo");
+                });
+                ui.add_space(4.0);
+                egui::ScrollArea::horizontal().show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        for index in 0..self.images.len() {
+                            if self.photo_card(ui, index, true).clicked() {
+                                self.selected = index;
+                            }
+                        }
+                    });
+                });
+                if model_failed && ui.button("Retry loading").clicked() {
+                    *self.models[self.selected_model].lock().unwrap() = ModelSlot::Loading;
+                    spawn_model_load(ctx.clone(), self.models[self.selected_model].clone(), spec);
+                }
+            });
+        } else {
+            egui::Panel::left("images")
+                .resizable(false)
+                .default_size(230.0)
+                .show(ui, |ui| {
+                    ui.add_space(18.0);
+                    wordmark(ui, 206.0);
+                    ui.add_space(12.0);
                     ui.label(
-                        egui::RichText::new(model_state.as_str())
+                        egui::RichText::new("Choose a photo").color(egui::Color32::from_gray(205)),
+                    );
+                    ui.add_space(4.0);
+                    ui.separator();
+                    ui.add_space(8.0);
+                    let mut clicked_card = None;
+                    // One column, scrollable so every sample stays reachable in a short window.
+                    let status_height = if model_failed { 96.0 } else { 56.0 };
+                    let list_height = (ui.available_height() - status_height).max(120.0);
+                    egui::ScrollArea::vertical()
+                        .max_height(list_height)
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            for index in 0..self.images.len() {
+                                if self.photo_card(ui, index, false).clicked() {
+                                    clicked_card = Some(index);
+                                }
+                                ui.add_space(6.0);
+                            }
+                        });
+                    if let Some(index) = clicked_card {
+                        self.selected = index;
+                    }
+                    ui.add_space(4.0);
+                    ui.separator();
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        status_dot(ui, status_color);
+                        ui.label(
+                            egui::RichText::new(if model_failed {
+                                "Model unavailable"
+                            } else {
+                                model_state.as_str()
+                            })
                             .size(12.0)
                             .color(status_color),
-                    );
+                        );
+                    });
+                    if model_failed && ui.button("Retry loading").clicked() {
+                        *self.models[self.selected_model].lock().unwrap() = ModelSlot::Loading;
+                        spawn_model_load(
+                            ctx.clone(),
+                            self.models[self.selected_model].clone(),
+                            spec,
+                        );
+                    }
                 });
-                ui.label(
-                    egui::RichText::new("Burnpack · ~5 MB · WebAssembly")
-                        .small()
-                        .weak(),
-                );
-            });
+        }
 
+        // Photo selection is processed above; derive status from the current selection.
         egui::CentralPanel::default().show(ui, |ui| {
             ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                ui.label(
-                    egui::RichText::new("YOLO26n object detection")
-                        .size(22.0)
-                        .strong(),
-                );
+            ui.horizontal_wrapped(|ui| {
+                ui.label(egui::RichText::new(spec.label).size(22.0).strong());
                 ui.add_space(6.0);
                 ui.label(
                     egui::RichText::new("runs entirely in your browser")
@@ -330,16 +467,16 @@ impl eframe::App for DemoApp {
                 );
             });
             ui.add_space(6.0);
-            let has_result = self.outcomes[self.selected].is_some();
+            let has_result = self.outcomes[self.selected_model][self.selected].is_some();
             ui.horizontal(|ui| {
                 let enabled = model_ready && !busy;
                 let run = ui.add_enabled(
                     enabled,
                     egui::Button::new(
                         egui::RichText::new(if has_result {
-                            "▶  Run again"
+                            "Run again"
                         } else {
-                            "▶  Run inference"
+                            "Run inference"
                         })
                         .strong(),
                     )
@@ -353,81 +490,81 @@ impl eframe::App for DemoApp {
                 if run.clicked() {
                     self.run_inference(&ctx);
                 }
-                let busy = self.busy.load(Ordering::Relaxed);
-                let running_here = busy && self.run_image == Some(self.selected);
-                if running_here {
-                    ui.spinner();
-                    ui.label(egui::RichText::new("Running…").color(RUNNING).strong());
-                }
             });
+            // Recompute after handling Run so dimming appears in the first painted frame.
+            let busy = self.busy.load(Ordering::Relaxed);
+            let running_here = busy && self.run_image == Some((self.selected_model, self.selected));
             ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.label(
-                    egui::RichText::new("Show detections above")
-                        .size(12.5)
-                        .color(egui::Color32::from_gray(205)),
-                );
-                // A wide track is easy to grab; the percentage is easier to read than 0.25.
-                ui.spacing_mut().slider_width = 220.0;
-                let slider = ui.add(
-                    egui::Slider::new(&mut self.threshold, 0.05..=0.95)
-                        .show_value(true)
-                        .step_by(0.01)
-                        .custom_formatter(|value, _| format!("{:.0}%", value * 100.0)),
-                );
-                if slider.hovered() {
-                    ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
-                    let wheel = ui.input(|input| input.smooth_scroll_delta.y);
-                    if wheel != 0.0 {
-                        let next = self.threshold + wheel * 0.0005;
-                        self.threshold = (next.clamp(0.05, 0.95) * 100.0).round() / 100.0;
+            if spec.boxes {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(
+                        egui::RichText::new("Show objects above")
+                            .size(12.5)
+                            .color(egui::Color32::from_gray(205)),
+                    );
+                    // A wide track is easy to grab; the percentage is easier to read than 0.25.
+                    ui.spacing_mut().slider_width = if compact {
+                        (ui.available_width() - 190.0).clamp(90.0, 220.0)
+                    } else {
+                        220.0
+                    };
+                    let slider = ui.add(
+                        egui::Slider::new(&mut self.threshold, 0.05..=0.95)
+                            .show_value(true)
+                            .step_by(0.01)
+                            .custom_formatter(|value, _| format!("{:.0}%", value * 100.0)),
+                    );
+                    if slider.hovered() {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+                        let wheel = ui.input(|input| input.smooth_scroll_delta.y);
+                        if wheel != 0.0 {
+                            let next = self.threshold + wheel * 0.0005;
+                            self.threshold = (next.clamp(0.05, 0.95) * 100.0).round() / 100.0;
+                        }
                     }
-                }
-            });
+                });
+            }
             ui.add_space(6.0);
 
-            let current = self.outcomes[self.selected].as_ref();
-            if running_here {
-                status_banner(
-                    ui,
-                    RUNNING,
-                    "Running YOLO26n inference…",
-                    &format!("{BACKEND} — this can take a moment."),
-                );
-            } else if let Some(outcome) = current {
-                let shown = outcome
-                    .detections
-                    .iter()
-                    .filter(|detection| detection.confidence >= self.threshold)
-                    .count();
-                status_banner(
-                    ui,
-                    SUCCESS,
-                    "Inference complete",
-                    &format!(
-                        "{} objects in {:.0} ms · {} · {} shown at confidence ≥ {:.0}%",
-                        outcome.detections.len(),
-                        outcome.elapsed_ms,
-                        BACKEND,
-                        shown,
-                        self.threshold * 100.0
-                    ),
-                );
-            } else if model_failed {
-                status_banner(ui, status_color, "Model not available", &model_state);
-            } else if !model_ready {
-                status_banner(
-                    ui,
-                    RUNNING,
-                    "Loading YOLO26n…",
-                    "Run inference unlocks when the Burnpack is ready.",
-                );
-            }
+            // Reserve the status row so starting inference does not move the image.
+            let status_height = if compact { 72.0 } else { 42.0 };
+            ui.allocate_ui(egui::vec2(ui.available_width(), status_height), |ui| {
+                ui.set_min_height(status_height);
+                let current = self.outcomes[self.selected_model][self.selected].as_ref();
+                if running_here {
+                    status_banner(ui, RUNNING, "Running inference…", "This can take a moment.");
+                } else if let Some(outcome) = current {
+                    match &outcome.result {
+                        Ok(result) => status_banner(
+                            ui,
+                            SUCCESS,
+                            "Inference complete",
+                            &format!(
+                                "{} · {:.0} ms",
+                                result.summary(self.threshold),
+                                outcome.elapsed_ms
+                            ),
+                        ),
+                        Err(error) => {
+                            status_banner(ui, egui::Color32::LIGHT_RED, "Inference failed", error)
+                        }
+                    }
+                } else if model_failed {
+                    status_banner(ui, status_color, "Model not available", &model_state);
+                } else if !model_ready {
+                    status_banner(
+                        ui,
+                        RUNNING,
+                        "Loading model…",
+                        "Run inference will be available when ready.",
+                    );
+                }
+            });
             ui.add_space(8.0);
 
             let view = &self.images[self.selected];
             let available = ui.available_size();
-            let footer = 40.0;
+            let footer = if spec.boxes { 54.0 } else { 90.0 };
             let scale = (available.x / view.width as f32)
                 .min((available.y - footer).max(1.0) / view.height as f32)
                 .max(0.01);
@@ -440,79 +577,59 @@ impl eframe::App for DemoApp {
                 let response =
                     ui.add(egui::Image::from_texture(&view.texture).fit_to_exact_size(display));
                 let image_rect = response.rect;
-                if let Some(outcome) = self.outcomes[self.selected].as_ref() {
-                    draw_detections(ui, &image_rect, view, outcome, self.threshold);
-                } else if running_here {
-                    draw_status_overlay(
-                        ui,
-                        image_rect,
-                        "Running YOLO26n inference…",
-                        BACKEND,
-                        RUNNING,
-                    );
-                } else if !model_ready {
-                    if model_failed {
-                        draw_status_overlay(
-                            ui,
+                if let Some(Ok(result)) = self.outcomes[self.selected_model][self.selected]
+                    .as_mut()
+                    .map(|o| &mut o.result)
+                {
+                    if let Some(texture) = result.overlay(&ctx, self.threshold) {
+                        ui.painter_at(image_rect).image(
+                            texture.id(),
                             image_rect,
-                            "Model failed to load",
-                            "See the browser console for the error.",
-                            egui::Color32::from_rgb(240, 100, 100),
-                        );
-                    } else {
-                        draw_status_overlay(
-                            ui,
-                            image_rect,
-                            "Loading YOLO26n…",
-                            "The Run button unlocks when ready.",
-                            RUNNING,
+                            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                            egui::Color32::WHITE,
                         );
                     }
+                    draw_detections(ui, &image_rect, view, &result.boxes(), self.threshold);
+                } else if running_here || !model_ready {
+                    ui.painter_at(image_rect).rect_filled(
+                        image_rect,
+                        0.0,
+                        egui::Color32::from_black_alpha(120),
+                    );
                 }
             });
             ui.add_space(6.0);
-            if let Some(outcome) = self.outcomes[self.selected].as_ref() {
-                let visible: Vec<&Detection> = outcome
-                    .detections
-                    .iter()
-                    .filter(|detection| detection.confidence >= self.threshold)
-                    .collect();
-                if visible.is_empty() {
-                    ui.label(
-                        egui::RichText::new(if outcome.detections.is_empty() {
-                            "No objects detected."
-                        } else {
-                            "No detections above the confidence threshold."
-                        })
-                        .small()
-                        .weak(),
-                    );
-                } else {
-                    ui.horizontal_wrapped(|ui| {
-                        for detection in visible {
-                            let color = class_color(detection.class_id);
-                            status_dot(ui, color);
-                            ui.label(
-                                egui::RichText::new(format!(
-                                    "{} {:.0}%",
-                                    detection.class_name,
-                                    detection.confidence * 100.0
-                                ))
-                                .size(12.5),
-                            );
-                            ui.add_space(8.0);
-                        }
-                    });
-                }
+            if let Some(Ok(result)) = self.outcomes[self.selected_model][self.selected]
+                .as_ref()
+                .map(|o| &o.result)
+            {
+                egui::ScrollArea::vertical()
+                    .max_height(80.0)
+                    .show(ui, |ui| result.legend(ui, self.threshold));
             }
         });
     }
 }
 
 /// A small painted status dot. The default egui font lacks U+25CF, which rendered as tofu.
-fn status_dot(ui: &mut egui::Ui, color: egui::Color32) {
+pub(crate) fn status_dot(ui: &mut egui::Ui, color: egui::Color32) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(10.0, 12.0), egui::Sense::hover());
     ui.painter().circle_filled(rect.center(), 3.5, color);
+}
+
+fn wordmark(ui: &mut egui::Ui, width: f32) {
+    let logo = ui
+        .add(
+            egui::Image::new(egui::include_image!("../assets/montgomery.svg"))
+                .fit_to_exact_size(egui::vec2(width, width * 31.15 / 206.0))
+                .alt_text("Montgomery on GitHub")
+                .sense(egui::Sense::click()),
+        )
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text("Montgomery on GitHub");
+    if logo.clicked() {
+        ui.ctx().open_url(egui::OpenUrl::new_tab(GITHUB_URL));
+    }
 }
 
 /// One-line status strip under the toolbar, colored by state.
@@ -540,64 +657,12 @@ fn status_banner(ui: &mut egui::Ui, color: egui::Color32, title: &str, detail: &
         });
 }
 
-/// Dim the image and place a centered, high-contrast state message over it.
-fn draw_status_overlay(
-    ui: &egui::Ui,
-    target: egui::Rect,
-    title: &str,
-    subtitle: &str,
-    accent: egui::Color32,
-) {
-    let painter = ui.painter_at(target);
-    painter.rect_filled(target, 0.0, egui::Color32::from_black_alpha(120));
-
-    let title_font = egui::TextStyle::Heading.resolve(ui.style());
-    let body_font = egui::TextStyle::Body.resolve(ui.style());
-    let title_galley = painter.layout(
-        title.to_owned(),
-        title_font,
-        egui::Color32::WHITE,
-        target.width() - 40.0,
-    );
-    let sub_galley = painter.layout(
-        subtitle.to_owned(),
-        body_font,
-        egui::Color32::from_gray(205),
-        target.width() - 40.0,
-    );
-    let padding = egui::vec2(28.0, 20.0);
-    let gap = 8.0;
-    let size = egui::vec2(
-        (title_galley.size().x.max(sub_galley.size().x) + padding.x * 2.0)
-            .min(target.width() - 24.0),
-        title_galley.size().y + gap + sub_galley.size().y + padding.y * 2.0,
-    );
-    let panel = egui::Rect::from_center_size(target.center(), size);
-    painter.rect_filled(panel, 10.0, egui::Color32::from_black_alpha(225));
-    painter.rect_stroke(
-        panel,
-        10.0,
-        egui::Stroke::new(1.5, accent),
-        egui::StrokeKind::Inside,
-    );
-    let title_pos = egui::pos2(
-        panel.center().x - title_galley.size().x * 0.5,
-        panel.top() + padding.y,
-    );
-    painter.galley(title_pos, title_galley.clone(), egui::Color32::WHITE);
-    let sub_pos = egui::pos2(
-        panel.center().x - sub_galley.size().x * 0.5,
-        title_pos.y + title_galley.size().y + gap,
-    );
-    painter.galley(sub_pos, sub_galley, egui::Color32::from_gray(205));
-}
-
 /// Draw detection boxes and labels over the displayed image, in source-image coordinates.
 fn draw_detections(
     ui: &mut egui::Ui,
     target: &egui::Rect,
     view: &ImageView,
-    outcome: &Outcome,
+    detections: &[Detection],
     threshold: f32,
 ) {
     let painter = ui.painter_at(*target);
@@ -606,8 +671,7 @@ fn draw_detections(
         target.height() / view.height as f32,
     );
     let font = egui::TextStyle::Body.resolve(ui.style());
-    let visible: Vec<_> = outcome
-        .detections
+    let visible: Vec<_> = detections
         .iter()
         .filter(|detection| detection.confidence >= threshold)
         .collect();
@@ -659,7 +723,7 @@ fn draw_detections(
 }
 
 /// Stable per-class box colors (tableau palette).
-fn class_color(class_id: usize) -> egui::Color32 {
+pub(crate) fn class_color(class_id: usize) -> egui::Color32 {
     const PALETTE: &[egui::Color32] = &[
         egui::Color32::from_rgb(31, 119, 180),
         egui::Color32::from_rgb(255, 127, 14),
@@ -671,12 +735,21 @@ fn class_color(class_id: usize) -> egui::Color32 {
         egui::Color32::from_rgb(127, 127, 127),
         egui::Color32::from_rgb(188, 189, 34),
         egui::Color32::from_rgb(23, 190, 207),
+        egui::Color32::from_rgb(174, 199, 232),
+        egui::Color32::from_rgb(255, 187, 120),
+        egui::Color32::from_rgb(152, 223, 138),
+        egui::Color32::from_rgb(255, 152, 150),
+        egui::Color32::from_rgb(197, 176, 213),
+        egui::Color32::from_rgb(196, 156, 148),
+        egui::Color32::from_rgb(247, 182, 210),
+        egui::Color32::from_rgb(199, 199, 199),
+        egui::Color32::from_rgb(219, 219, 141),
     ];
     PALETTE[class_id % PALETTE.len()]
 }
 
 /// Kick off model loading off the current call site.
-fn spawn_model_load(ctx: egui::Context, slot: Arc<Mutex<ModelSlot>>) {
+fn spawn_model_load(ctx: egui::Context, slot: Arc<Mutex<ModelSlot>>, spec: DemoModel) {
     let fill = move |result: Result<Predictor, String>, slot: &Arc<Mutex<ModelSlot>>| {
         *slot.lock().unwrap() = match result {
             Ok(model) => {
@@ -697,7 +770,7 @@ fn spawn_model_load(ctx: egui::Context, slot: Arc<Mutex<ModelSlot>>) {
     #[cfg(target_arch = "wasm32")]
     {
         wasm_bindgen_futures::spawn_local(async move {
-            let result = load_model().await;
+            let result = load_model(spec).await;
             fill(result, &slot);
             ctx.request_repaint();
         });
@@ -705,14 +778,14 @@ fn spawn_model_load(ctx: egui::Context, slot: Arc<Mutex<ModelSlot>>) {
     #[cfg(not(target_arch = "wasm32"))]
     {
         std::thread::spawn(move || {
-            let result = load_model();
+            let result = load_model(spec);
             fill(result, &slot);
             ctx.request_repaint();
         });
     }
 }
 
-/// Run YOLO26n detection on the selected image and publish the outcome.
+/// Run the selected task and publish its result without holding the UI model lock.
 fn spawn_inference(
     ctx: egui::Context,
     slot: Arc<Mutex<ModelSlot>>,
@@ -720,25 +793,32 @@ fn spawn_inference(
     outcome: Arc<Mutex<Option<Outcome>>>,
     image: image::DynamicImage,
     image_index: usize,
+    model_index: usize,
 ) {
     let run = move || {
         let started = now_ms();
-        let detections = match &mut *slot.lock().unwrap() {
-            ModelSlot::Ready(model) => model.predict(&image),
-            _ => Vec::new(),
+        let state = std::mem::replace(&mut *slot.lock().unwrap(), ModelSlot::Running);
+        let result = match &state {
+            ModelSlot::Ready(model) => model
+                .inference(&image)
+                .map(|prediction| ResultView::new(prediction, model.class_names().to_vec()))
+                .map_err(|error| error.to_string()),
+            _ => Err("The selected model is not ready. Retry once it has loaded.".into()),
         };
+        *slot.lock().unwrap() = state;
         let elapsed_ms = now_ms() - started;
         #[cfg(target_arch = "wasm32")]
         web_sys::console::log_1(
             &format!(
-                "montgomery: {} detections in {elapsed_ms:.0} ms",
-                detections.len()
+                "montgomery: {} completed in {elapsed_ms:.0} ms",
+                MODELS[model_index].id
             )
             .into(),
         );
         *outcome.lock().unwrap() = Some(Outcome {
             image_index,
-            detections,
+            model_index,
+            result,
             elapsed_ms,
         });
         busy.store(false, Ordering::Relaxed);
@@ -774,26 +854,26 @@ async fn yield_to_paint() {
 }
 
 #[cfg(target_arch = "wasm32")]
-async fn load_model() -> Result<Predictor, String> {
-    let bytes = fetch_model_bytes().await?;
-    Predictor::new_from_bytes(bytes.as_slice()).map_err(|error| error.to_string())
+async fn load_model(spec: DemoModel) -> Result<Predictor, String> {
+    let bytes = fetch_model_bytes(spec.artifact).await?;
+    predictor_from_bytes(&bytes, spec)
 }
 
 #[cfg(target_arch = "wasm32")]
-async fn fetch_model_bytes() -> Result<Vec<u8>, String> {
+async fn fetch_model_bytes(model_url: &str) -> Result<Vec<u8>, String> {
     use wasm_bindgen::{JsCast, JsValue};
     use wasm_bindgen_futures::JsFuture;
 
     let window = web_sys::window().ok_or("no browser window")?;
-    let response = JsFuture::from(window.fetch_with_str(MODEL_URL))
+    let response = JsFuture::from(window.fetch_with_str(model_url))
         .await
-        .map_err(|error| format!("fetching {MODEL_URL} failed: {:?}", JsValue::from(error)))?;
+        .map_err(|error| format!("fetching {model_url} failed: {:?}", JsValue::from(error)))?;
     let response: web_sys::Response = response
         .dyn_into()
         .map_err(|_| "fetch did not return a Response")?;
     if !response.ok() {
         return Err(format!(
-            "fetching {MODEL_URL} returned HTTP {} — pack yolo26n.bpk first (see the README)",
+            "Could not download the model (HTTP {}). Use Retry loading to try again.",
             response.status()
         ));
     }
@@ -803,29 +883,58 @@ async fn fetch_model_bytes() -> Result<Vec<u8>, String> {
             .map_err(|error| JsValue::from(error).as_string().unwrap_or_default())?,
     )
     .await
-    .map_err(|error| format!("reading {MODEL_URL} body failed: {error:?}"))?;
+    .map_err(|error| format!("reading {model_url} body failed: {error:?}"))?;
     Ok(js_sys::Uint8Array::new(&buffer).to_vec())
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn load_model() -> Result<Predictor, String> {
+fn load_model(spec: DemoModel) -> Result<Predictor, String> {
     let mut candidates: Vec<std::path::PathBuf> = vec![
-        MODEL_URL.into(),
-        "../../yolo26n.bpk".into(), // cargo run from examples/web
+        spec.artifact.into(),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target/models")
+            .join(spec.artifact),
     ];
-    if let Ok(path) = std::env::var("MONTGOMERY_WEB_DEMO_MODEL") {
+    if let Ok(directory) = std::env::var("MONTGOMERY_WEB_DEMO_MODELS") {
+        candidates.insert(0, std::path::Path::new(&directory).join(spec.artifact));
+    }
+    // Preserve the original detection-only override.
+    if spec.id == ModelId::Yolo26N
+        && let Ok(path) = std::env::var("MONTGOMERY_WEB_DEMO_MODEL")
+    {
         candidates.insert(0, path.into());
     }
     for path in candidates {
         if let Ok(bytes) = std::fs::read(&path) {
-            return Predictor::new_from_bytes(bytes.as_slice())
+            return predictor_from_bytes(&bytes, spec)
                 .map_err(|error| format!("{path:?}: {error}"));
         }
     }
-    Err("yolo26n.bpk not found. From the repository root run \
-         `montgomery pack-weights --architecture yolo26n --state target/yolo26n-state.pt`, \
-         or point MONTGOMERY_WEB_DEMO_MODEL at an existing artifact."
-        .to_owned())
+    Err(format!(
+        "{} not found. Run the demo's prepare-models.py script (see examples/web/README.md), or set MONTGOMERY_WEB_DEMO_MODELS to your artifact directory.",
+        spec.artifact
+    ))
+}
+
+fn predictor_from_bytes(bytes: &[u8], spec: DemoModel) -> Result<Predictor, String> {
+    // Retain low-confidence objects so the display slider can reveal them without rerunning.
+    let model = Predictor::with_options_from_bytes(
+        bytes,
+        PredictOptions {
+            confidence: 0.05,
+            ..PredictOptions::default()
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    if model.model_id() != spec.id {
+        return Err(format!(
+            "Expected {}, found {} in {}",
+            spec.id,
+            model.model_id(),
+            spec.artifact
+        ));
+    }
+    Ok(model)
 }
 
 /// Milliseconds since the epoch; `std::time::Instant` is unavailable on wasm32-unknown-unknown.
@@ -842,15 +951,84 @@ fn now_ms() -> f64 {
         .unwrap_or_default()
 }
 
-/// The demo's headline claim, verified headlessly: bytes-loaded YOLO26n detects the reference
-/// image's dog, bicycle, and person. Requires `yolo26n.bpk` at the repository root (see README).
+/// Exercise the same bytes loader and task dispatch used by the browser.
+#[cfg(test)]
+pub(crate) fn smoke_from_bytes(bytes: &[u8], model_name: &str) -> Result<String, String> {
+    use montgomery::Prediction;
+
+    let spec = *MODELS
+        .iter()
+        .find(|spec| spec.id.as_str() == model_name)
+        .ok_or("Unsupported demo model")?;
+    let id = spec.id;
+    let model = predictor_from_bytes(bytes, spec)?;
+    let image = image::load_from_memory(IMAGES[0].encoded).map_err(|error| error.to_string())?;
+    let prediction = model.inference(&image).map_err(|error| error.to_string())?;
+    let source_size = (image.width(), image.height());
+    let valid = match &prediction {
+        Prediction::Detections(items) => ["dog", "bicycle", "person"].iter().all(|name| {
+            items
+                .iter()
+                .any(|item| item.class_name == *name && item.confidence >= 0.25)
+        }),
+        Prediction::Segmentations(items) => {
+            !items.is_empty()
+                && items.iter().all(|item| {
+                    (item.mask.width, item.mask.height) == source_size
+                        && item.mask.data.len() == (source_size.0 * source_size.1) as usize
+                        && item.mask.data.iter().any(|covered| *covered)
+                })
+                && ["dog", "bicycle", "person"]
+                    .iter()
+                    .all(|name| items.iter().any(|item| item.class_name == *name))
+        }
+        Prediction::Classifications(items) => {
+            items.len() == 5
+                && items.iter().all(|item| {
+                    !item.class_name.is_empty()
+                        && item.confidence.is_finite()
+                        && (0.0..=1.0).contains(&item.confidence)
+                })
+                && items
+                    .windows(2)
+                    .all(|pair| pair[0].confidence >= pair[1].confidence)
+        }
+        Prediction::Semantics(mask) => {
+            (mask.width, mask.height) == source_size
+                && mask.data.len() == (source_size.0 * source_size.1) as usize
+                && mask
+                    .data
+                    .iter()
+                    .all(|id| (*id as usize) < model.class_names().len())
+                && mask.data.iter().any(|id| *id != mask.data[0])
+        }
+        Prediction::Depth(map) => {
+            (map.width, map.height) == source_size
+                && map.data.len() == (source_size.0 * source_size.1) as usize
+                && map
+                    .data
+                    .iter()
+                    .all(|value| value.is_finite() && *value > 0.0)
+                && map.stats().max > map.stats().min
+        }
+    };
+    if !valid {
+        return Err(format!(
+            "{id}: invalid or unexpected prediction on the reference image"
+        ));
+    }
+    let view = ResultView::new(prediction, model.class_names().to_vec());
+    Ok(format!("{id}: {}", view.summary(0.25)))
+}
+
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "requires packed YOLO26n weights"]
     fn yolo26n_from_bytes_detects_reference_image() {
-        let model = load_model().expect("yolo26n.bpk must be packed before running tests");
+        let model = load_model(MODELS[0]).expect("yolo26n.bpk must be packed before running tests");
         let image = image::load_from_memory(IMAGES[0].encoded).expect("embedded image decodes");
         let detections = model.predict(&image);
         let classes: Vec<&str> = detections
@@ -863,5 +1041,24 @@ mod tests {
                 "expected {expected} in detections: {classes:?}"
             );
         }
+    }
+
+    #[test]
+    #[ignore = "requires all five packed YOLO26 nano artifacts"]
+    fn all_nano_tasks_from_bytes() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                for spec in MODELS {
+                    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                        .join("target/models")
+                        .join(spec.artifact);
+                    let bytes = std::fs::read(path).expect("pack all demo artifacts first");
+                    println!("{}", smoke_from_bytes(&bytes, spec.id.as_str()).unwrap());
+                }
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 }

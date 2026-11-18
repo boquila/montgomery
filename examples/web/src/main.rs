@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod results;
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result {
@@ -19,8 +20,7 @@ fn main() -> eframe::Result {
 #[cfg(target_arch = "wasm32")]
 fn main() {
     use eframe::wasm_bindgen::JsCast;
-    // A wasm bin is started on instantiation. Headless runtimes (the Node smoke check) have
-    // no `window`, so skip the browser bootstrap instead of panicking.
+    // A wasm bin is started on instantiation; skip bootstrap outside a browser window.
     let Some(window) = web_sys::window() else {
         return;
     };
@@ -53,32 +53,4 @@ fn main() {
             }
         }
     });
-}
-
-/// Headless runtime check for the wasm build, invoked by `scripts/smoke.cjs`.
-///
-/// The JS side reads the Burnpack bytes and passes them in; this runs the full
-/// bytes-to-detections path inside the wasm module and returns a summary string. Browsers
-/// never call it.
-#[cfg(target_arch = "wasm32")]
-#[wasm_bindgen::prelude::wasm_bindgen]
-pub fn run_smoke(artifact: &[u8]) -> String {
-    let model = match montgomery::Predictor::new_from_bytes(artifact) {
-        Ok(model) => model,
-        Err(error) => return format!("load failed: {error}"),
-    };
-    let image = image::load_from_memory(include_bytes!("../assets/dog_bike_man.jpg"))
-        .expect("embedded reference image decodes");
-    let detections = model.predict(&image);
-    let summary: Vec<String> = detections
-        .iter()
-        .map(|detection| {
-            format!(
-                "{}:{:.0}%",
-                detection.class_name,
-                detection.confidence * 100.0
-            )
-        })
-        .collect();
-    format!("{} detections: {}", detections.len(), summary.join(", "))
 }

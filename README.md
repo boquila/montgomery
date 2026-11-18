@@ -58,25 +58,6 @@ fn main() -> montgomery::Result<()> {
 }
 ```
 
-Artifacts can also be loaded from memory with `Model::new_from_bytes` /
-`Predictor::with_options_from_bytes_on_device` for WebAssembly and embedded targets without a
-filesystem; see the [web demo](examples/web) for a browser build that runs YOLO26n detection
-entirely client-side.
-
-## Web demo
-
-`examples/web` is a small egui app that runs YOLO26n detection in the browser via WebAssembly,
-with the same preprocessing and postprocessing contract as native Montgomery:
-
-```console
-montgomery pack-weights --architecture yolo26n --state target/yolo26n-state.pt
-cd examples/web
-trunk serve
-```
-
-See [examples/web/README.md](examples/web/README.md) for details.
-
-
 ## Inference
 
 ```console
