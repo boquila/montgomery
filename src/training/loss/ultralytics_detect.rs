@@ -733,17 +733,32 @@ mod tests {
             let grads = angle.backward();
             let dw = w.grad(&grads).unwrap().into_scalar::<f32>();
             let dh = h.grad(&grads).unwrap().into_scalar::<f32>();
-            assert!(value.is_finite() && dw.is_finite() && dh.is_finite());
+            assert!(
+                value.is_finite() && dw.is_finite() && dh.is_finite(),
+                "width={width}, height={height}, angle={value}, dw={dw}, dh={dh}"
+            );
             if width == 0.0 && height == 0.0 {
                 assert_eq!((value, dw, dh), (0.0, 0.0, 0.0));
             } else {
                 let w = Tensor::<3>::full([1, 1, 1], width, &device).require_grad();
                 let h = Tensor::<3>::full([1, 1, 1], height, &device).require_grad();
                 let original = w.clone().atan2(h.clone()).sum();
-                assert_eq!(value, original.clone().into_scalar::<f32>());
+                assert_eq!(
+                    value,
+                    original.clone().into_scalar::<f32>(),
+                    "width={width}, height={height}"
+                );
                 let grads = original.backward();
-                assert_eq!(dw, w.grad(&grads).unwrap().into_scalar::<f32>());
-                assert_eq!(dh, h.grad(&grads).unwrap().into_scalar::<f32>());
+                assert_eq!(
+                    dw,
+                    w.grad(&grads).unwrap().into_scalar::<f32>(),
+                    "width={width}, height={height}, width gradient"
+                );
+                assert_eq!(
+                    dh,
+                    h.grad(&grads).unwrap().into_scalar::<f32>(),
+                    "width={width}, height={height}, height gradient"
+                );
             }
         }
     }
@@ -751,10 +766,14 @@ mod tests {
     #[test]
     fn ciou_backward_is_finite_for_degenerate_and_zero_weight_boxes() {
         let device = Device::flex().autodiff();
-        // A valid box, a point, an inverted box, and boxes with one zero dimension.
-        let boxes = vec![
-            0., 0., 8., 8., 4., 4., 4., 4., 5., 5., 3., 3., 4., 0., 4., 8., 0., 4., 8., 4.,
-        ];
+        let boxes = [
+            [1., 2., 7., 6.], // Valid, non-perfect match with a nonzero gradient.
+            [4., 4., 4., 4.], // Point.
+            [5., 5., 3., 3.], // Inverted.
+            [4., 0., 4., 8.], // Zero width.
+            [0., 4., 8., 4.], // Zero height.
+        ]
+        .concat();
         for weights in [vec![1.; 5], vec![1., 0., 0., 0., 0.]] {
             let zero_weight_degenerate_boxes = weights[1] == 0.0;
             let predicted =
@@ -766,12 +785,26 @@ mod tests {
             );
             let weights = Tensor::<3>::from_data(TensorData::new(weights, [1, 5, 1]), &device);
             let loss = ((ciou_tensor(predicted.clone(), target).neg() + 1.) * weights).sum();
-            assert!(loss.clone().into_scalar::<f32>().is_finite());
+            assert!(
+                loss.clone().into_scalar::<f32>().is_finite(),
+                "zero_weight_degenerate_boxes={zero_weight_degenerate_boxes}"
+            );
             let gradient = predicted.grad(&loss.backward()).unwrap().into_data();
             let gradient = gradient.as_slice::<f32>().unwrap();
-            assert!(gradient.iter().all(|v| v.is_finite()));
+            assert!(
+                gradient.iter().all(|v| v.is_finite()),
+                "zero_weight_degenerate_boxes={zero_weight_degenerate_boxes}, gradient={gradient:?}"
+            );
+            assert!(
+                gradient[..4].iter().any(|v| *v != 0.0),
+                "valid non-perfect match must retain a gradient: {gradient:?}"
+            );
             if zero_weight_degenerate_boxes {
-                assert!(gradient[4..].iter().all(|v| *v == 0.0));
+                assert!(
+                    gradient[4..].iter().all(|v| *v == 0.0),
+                    "zero-weight box gradients={:?}",
+                    &gradient[4..]
+                );
             }
         }
     }
