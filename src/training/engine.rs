@@ -98,22 +98,32 @@ impl Trainer {
         if batches_per_epoch == 0 {
             return Err(EngineError("training split produces no batches".into()));
         }
+        let recipe = crate::training::dispatch::recipe_for(config.model.architecture);
         let optimizer_steps_per_epoch = batches_per_epoch.div_ceil(config.accumulation);
         let total_steps = optimizer_steps_per_epoch
             .checked_mul(config.epochs)
             .ok_or_else(|| EngineError("optimizer step count overflow".into()))?
             as u64;
+        // `warmup_steps` is a step count, not an epoch count — the scheduler advances it once per
+        // optimizer update. An explicit value still wins so a caller that knows better (a probe
+        // run, a unit test) can skip or extend the ramp.
+        let warmup_steps = if config.warmup_steps > 0 {
+            config.warmup_steps
+        } else {
+            automatic_warmup_steps(recipe.loss, total_steps, optimizer_steps_per_epoch as u64)
+        }
+        .min(total_steps.saturating_sub(1));
         let scheduler = LrScheduler::new(
             config.schedule,
             config.initial_lr,
             config.final_lr_ratio,
-            config.warmup_steps.min(total_steps.saturating_sub(1)),
+            warmup_steps,
             total_steps,
         )
         .map_err(|error| EngineError(error.into()))?;
         let mut state = TrainingState::new(config.seed);
         if matches!(
-            crate::training::dispatch::recipe_for(config.model.architecture).loss,
+            recipe.loss,
             crate::training::dispatch::LossFamily::Yolo26DualDirect
                 | crate::training::dispatch::LossFamily::Yolo26DualSegment
         ) {
@@ -388,6 +398,31 @@ impl Trainer {
     }
 }
 
+/// Ramp length in optimizer steps, derived from the family's published recipe.
+///
+/// Left at zero, every run started at full learning rate: the scheduler's warmup branch needs
+/// `warmup_steps > 0`, so `ScheduleKind::YoloxWarmCosine` never warmed up and behaved exactly like
+/// a plain cosine. `TrainingConfig::warmup_steps` also had no CLI flag, which made the field
+/// unreachable — the value was zero for every run this engine ever produced.
+///
+/// Ultralytics ramps over three epochs of iterations and YOLOX over five. A run too short for that
+/// would spend its whole budget ramping, so the result is capped at a tenth of the schedule; below
+/// ten steps there is no ramp at all, because a tenth of nothing is nothing.
+fn automatic_warmup_steps(
+    loss: crate::training::dispatch::LossFamily,
+    total_steps: u64,
+    steps_per_epoch: u64,
+) -> u64 {
+    let ramp_epochs = match loss {
+        crate::training::dispatch::LossFamily::YoloxSimOta => 5,
+        _ => 3,
+    };
+    steps_per_epoch
+        .saturating_mul(ramp_epochs)
+        .min(total_steps / 10)
+        .min(total_steps.saturating_sub(1))
+}
+
 fn resolve_deferred_totals(
     epoch: usize,
     deferred: &mut Vec<DeferredDiagnostic>,
@@ -500,7 +535,8 @@ impl Error for EngineError {}
 #[cfg(test)]
 mod tests {
     use super::{
-        DIAGNOSTIC_CHUNK_SIZE, DeferredDiagnostic, diagnostic_chunk_full, resolve_deferred_totals,
+        DIAGNOSTIC_CHUNK_SIZE, DeferredDiagnostic, automatic_warmup_steps, diagnostic_chunk_full,
+        resolve_deferred_totals,
     };
     use burn::tensor::Tensor;
 
@@ -515,6 +551,23 @@ mod tests {
             targets: 0,
             foreground: 0,
         }
+    }
+
+    #[test]
+    fn warmup_covers_the_published_epochs_and_is_capped_for_short_runs() {
+        use crate::training::dispatch::LossFamily;
+        // 100 steps per epoch: three Ultralytics epochs, five YOLOX epochs.
+        assert_eq!(automatic_warmup_steps(LossFamily::TalDfl, 30_000, 100), 300);
+        assert_eq!(
+            automatic_warmup_steps(LossFamily::YoloxSimOta, 30_000, 100),
+            500
+        );
+        // A schedule of 50 steps cannot afford 60 ramp steps; it gets a tenth instead.
+        assert_eq!(automatic_warmup_steps(LossFamily::TalDfl, 50, 20), 5);
+        // Fewer than ten steps means no ramp at all — a tenth rounds down to zero.
+        assert_eq!(automatic_warmup_steps(LossFamily::TalDfl, 9, 3), 0);
+        // The ramp can never consume the whole schedule.
+        assert!(automatic_warmup_steps(LossFamily::YoloxSimOta, 11, 11) < 11);
     }
 
     #[test]
